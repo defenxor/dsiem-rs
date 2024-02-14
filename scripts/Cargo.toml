@@ -1,0 +1,11 @@
+[package]
+name = "gh-version"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fs = "0.0.5"
+serde = "1.0.152"
+serde_derive = "1.0.152"
+toml = "0.5.11"
+version-compare = "0.1.1"

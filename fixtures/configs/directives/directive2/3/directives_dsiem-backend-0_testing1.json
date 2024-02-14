@@ -1,0 +1,47 @@
+{
+  "directives": [
+    {
+      "name": "Wrong Priority and Rule Stage",
+      "kingdom": "Reconnaissance & Probing",
+      "category": "Misc Activity",
+      "id": 2,
+      "priority": 6,
+      "rules": [
+        {
+          "name": "ICMP Ping",
+          "type": "PluginRule",
+          "stage": 0,
+          "plugin_id": 1001,
+          "plugin_sid": [
+            2100384
+          ],
+          "occurrence": 1,
+          "from": "HOME_NET",
+          "to": "ANY",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ICMP",
+          "reliability": 1,
+          "timeout": 0
+        },
+        {
+          "name": "ICMP Ping",
+          "type": "PluginRule",
+          "stage": 1,
+          "plugin_id": 1001,
+          "plugin_sid": [
+            2100384
+          ],
+          "occurrence": 1,
+          "from": "HOME_NET",
+          "to": "ANY",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ICMP",
+          "reliability": 1,
+          "timeout": 0
+        }
+      ]
+    }
+  ]
+}

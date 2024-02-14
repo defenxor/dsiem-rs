@@ -1,0 +1,11 @@
+#!/usr/bin/with-contenv sh
+
+if [ "$DSIEM_MODE" == "cluster-frontend" ]; then
+  exec /dsiem/dsiem-frontend serve 2>&1
+fi
+if [ "$DSIEM_MODE" == "cluster-backend" ]; then
+  exec /dsiem/dsiem-backend serve 2>&1
+fi
+
+echo "DSIEM_MODE env variable must be set to either 'cluster-frontend' or 'cluster-backend'"
+exit 1

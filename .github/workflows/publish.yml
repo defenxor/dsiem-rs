@@ -1,0 +1,72 @@
+name: CI
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+jobs:
+  check-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.comp_ver.outputs.should_release }}
+      current_version: ${{ steps.comp_ver.outputs.current_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cardinalby/git-get-release-action@1.2.5
+        id: check_rel
+        name: get latest release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          latest: true
+          prerelease: false
+          doNotFailIfNotFound: true
+      - uses: crusty-pie/toolchain@v1
+        with:
+          profile: minimal
+      - name: compare versions
+        id: comp_ver
+        env:
+          REL_TAG: ${{ steps.check_rel.outputs.tag_name }}
+        run: |
+          cd scripts
+          cargo run ../Cargo.toml
+
+  publish-new-version:
+    needs: check-versions
+    if: needs.check-versions.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: login to dockerhub
+        uses: "docker/login-action@v2"
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: build and push image
+        run: |
+          ./scripts/dockerbuild.sh mmta/dsiem-rs push
+      - name: extract binaries
+        uses: shrink/actions-docker-extract@v3
+        with:
+          image: mmta/dsiem-rs:latest
+          path: /dsiem/.
+          destination: dsiem
+      - name: zip binaries
+        run: |
+          rm -rf dsiem/configs && mv dsiem/configs-dist dsiem/configs
+          cp LICENSE dsiem/LICENSE
+          cp README.md dsiem/README.md
+          zip -9 -r dsiem-server_linux_x86_64.zip dsiem
+          sha256sum dsiem-server_linux_x86_64.zip > dsiem-server_linux_x86_64.zip.sha256.txt
+      - name: create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dsiem-server_linux_x86_64.zip
+            dsiem-server_linux_x86_64.zip.sha256.txt
+          generate_release_notes: true
+          tag_name: v${{ needs.check-versions.outputs.current_version }}
+          draft: false
+          prerelease: false
+  

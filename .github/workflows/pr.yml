@@ -1,0 +1,43 @@
+name: PR
+on:
+  pull_request:
+    branches:
+      - master
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup rust
+        uses: crusty-pie/toolchain@v1
+        with:
+          profile: minimal
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - name: lint
+        run: |
+          cargo clippy
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: run tests and their coverage
+        timeout-minutes: 10
+        run: |
+          ./scripts/coverage.sh
+      - name: coverage upload
+        uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: true
+          files: ./coverage/lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - uses: actions/setup-node@v4
+      - uses: jetli/trunk-action@v0.4.0
+      - name: test build process
+        run: |
+          # for the web
+          ./scripts/build-web.sh prod
+          # for the server
+          ./scripts/build-musl.sh
+
+      # longer but more in line with the actual release process
+      # - name: test build process
+      #  run: |
+      #    ./scripts/dockerbuild.sh dsiem-rs

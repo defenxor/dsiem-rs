@@ -1,0 +1,15 @@
+coverage:
+  range: 50..85
+  status:
+    patch: false
+    project:
+      default:
+        target: 90%
+        threshold: 1%
+comment:
+  layout: " diff, flags, files"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+  hide_project_coverage: false
