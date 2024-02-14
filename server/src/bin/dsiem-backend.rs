@@ -24,7 +24,7 @@ const REPORT_INTERVAL_IN_SECONDS: u64 = 10;
 
 #[derive(Parser)]
 #[command(
-    author("https://github.com/mmta"),
+    author("https://github.com/defenxor/dsiem-rs"),
     version,
     about = "Dsiem backend server",
     long_about = "Dsiem backend server\n\n\

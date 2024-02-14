@@ -8,7 +8,7 @@ use tracing::{ debug, error, info };
 
 #[derive(Parser)]
 #[command(
-    author("https://github.com/mmta"),
+    author("https://github.com/defenxor/dsiem-rs"),
     version,
     about = "Dsiem frontend server",
     long_about = "Dsiem frontend server\n\n\
