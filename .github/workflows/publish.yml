@@ -45,11 +45,11 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: build and push image
         run: |
-          ./scripts/dockerbuild.sh mmta/dsiem-rs push
+          ./scripts/dockerbuild.sh defenxor/dsiem-rs push
       - name: extract binaries
         uses: shrink/actions-docker-extract@v3
         with:
-          image: mmta/dsiem-rs:latest
+          image: defenxor/dsiem-rs:latest
           path: /dsiem/.
           destination: dsiem
       - name: zip binaries

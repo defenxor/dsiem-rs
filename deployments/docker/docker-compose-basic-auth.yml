@@ -61,7 +61,7 @@ services:
   # use dsiem name for frontend to avoid changing logstash configuration
   dsiem:
     container_name: dsiem-frontend
-    image: mmta/dsiem-rs:latest
+    image: defenxor/dsiem-rs:latest
     environment:
       - DSIEM_MODE=cluster-frontend
       - DSIEM_NODE=dsiem-frontend-0
@@ -80,7 +80,7 @@ services:
 
   dsiem-backend:
     container_name: dsiem-backend
-    image: mmta/dsiem-rs:latest
+    image: defenxor/dsiem-rs:latest
     environment:
       - DSIEM_MODE=cluster-backend
       - DSIEM_NODE=dsiem-backend-0
