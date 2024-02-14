@@ -1,0 +1,9 @@
+#!/usr/bin/with-contenv bash
+jc=$(ls /dsiem/configs/*.json 2>/dev/null | wc -l)
+
+# Pre-populate configs from dist when existing directory is empty on cluster-frontend mode
+
+if [ "$jc" == "0" ] && [ "$DSIEM_MODE" == "cluster-frontend" ]; then
+  echo "/dsiem/configs has no config file, prepopulating it from /dsiem/configs-dist."
+  cp /dsiem/configs-dist/* /dsiem/configs/
+fi

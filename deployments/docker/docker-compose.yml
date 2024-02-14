@@ -1,0 +1,124 @@
+version: "3"
+services:
+
+  elasticsearch:
+    container_name: elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.11.0
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - xpack.monitoring.enabled=false
+      - xpack.ml.enabled=false
+      - xpack.graph.enabled=false
+      - xpack.watcher.enabled=false
+      - xpack.security.enabled=false
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
+    ports:
+      - 9200:9200
+    networks:
+      - siemnet
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+
+  logstash:
+    container_name: logstash
+    image: defenxor/docker-logstash:7.11.0
+    command:
+      - -f/etc/logstash/conf.d
+    environment:
+      - xpack.monitoring.enabled=false
+    networks:
+      - siemnet
+    volumes:
+      - ./conf/logstash/conf.d:/etc/logstash/conf.d
+      - ./conf/logstash/index-template.d/es7:/etc/logstash/index-template.d
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    container_name: kibana
+    image: docker.elastic.co/kibana/kibana:7.11.0
+    environment:
+      - xpack.monitoring.ui.container.elasticsearch.enabled=false
+    ports:
+      - 5601:5601
+    networks:
+      - siemnet
+    depends_on:
+      - elasticsearch
+      
+  # use dsiem name for frontend to avoid changing logstash configuration
+  dsiem:
+    container_name: dsiem-frontend
+    image: defenxor/dsiem-rs:latest
+    environment:
+      - DSIEM_MODE=cluster-frontend
+      - DSIEM_NODE=dsiem-frontend-0
+      - DSIEM_MSQ=nats://dsiem-nats:4222
+      - DSIEM_PORT=8080
+      - DSIEM_WEB_ESURL=http://localhost:9200
+      - DSIEM_WEB_KBNURL=http://localhost:5601
+    ports:
+      - "8080:8080"
+    networks:
+      - siemnet
+
+  dsiem-backend:
+    container_name: dsiem-backend
+    image: defenxor/dsiem-rs:latest
+    environment:
+      - DSIEM_MODE=cluster-backend
+      - DSIEM_NODE=dsiem-backend-0
+      - DSIEM_JSON=true
+      - DSIEM_DEBUG=true
+      - DSIEM_FRONTEND=http://dsiem:8080
+      - DSIEM_MSQ=nats://dsiem-nats:4222
+      - DSIEM_RELOAD_BACKLOGS=false
+    networks:
+      - siemnet
+    volumes:
+      - dsiem-log:/dsiem/logs
+  nats:
+    container_name: dsiem-nats
+    image: nats:1.3.0-linux
+    networks:
+      - siemnet
+
+  filebeat:
+    container_name: filebeat
+    image: docker.elastic.co/beats/filebeat:7.11.0
+    user: root
+    networks:
+      - siemnet
+    volumes:
+      - filebeat-data:/usr/share/filebeat/data
+      - ./conf/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml
+      - dsiem-log:/var/log/dsiem
+      - suricata-log:/var/log/suricata
+
+  suricata:
+    container_name: suricata
+    image: defenxor/suricata:1710
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+      - NET_RAW
+    command:
+      [
+        "/bin/bash",
+        "-c",
+        'chown -R suri /var/log/suricata && /usr/bin/suricata -v -i ${PROMISC_INTERFACE?"this environment variable must be set"}'
+      ]
+    volumes:
+      - suricata-log:/var/log/suricata
+
+volumes:
+  filebeat-data:
+  es-data:
+  dsiem-log:
+  suricata-log:
+networks:
+  siemnet:

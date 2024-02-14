@@ -1,0 +1,67 @@
+{
+  "directives": [
+    {
+      "id": 1,
+      "name": "Valid directive, testing all rules always active",
+      "category": "foo",
+      "kingdom": "Environmental Awareness",
+      "priority": 3,
+      "all_rules_always_active": true,
+      "disabled": false,
+      "rules": [
+        {
+          "name": "test-custom-data",
+          "type": "PluginRule",
+          "stage": 1,
+          "plugin_id": 1337,
+          "plugin_sid": [
+            1
+          ],
+          "occurrence": 1,
+          "from": "ANY",
+          "to": "ANY",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ANY",
+          "reliability": 1,
+          "timeout": 0
+        },
+        {
+          "stage": 2,
+          "occurrence": 2,
+          "reliability": 3,
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "timeout": 30,
+          "name": "test-custom-data",
+          "type": "PluginRule",
+          "from": ":1",
+          "to": ":1",
+          "protocol": "ANY",
+          "plugin_id": 1337,
+          "sticky_different": "SRC_PORT",
+          "plugin_sid": [
+            2
+          ]
+        },
+        {
+          "stage": 3,
+          "occurrence": 2,
+          "reliability": 10,
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "timeout": 30,
+          "name": "test-custom-data",
+          "type": "PluginRule",
+          "from": ":1",
+          "to": ":1",
+          "protocol": "ANY",
+          "plugin_id": 1337,
+          "plugin_sid": [
+            3
+          ]
+        }
+      ]
+    }
+  ]
+}

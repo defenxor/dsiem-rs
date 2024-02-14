@@ -1,0 +1,56 @@
+FROM messense/rust-musl-cross:x86_64-musl AS dsiem_builder
+COPY . .
+WORKDIR /home/rust/src/ctx
+RUN cargo build -p dsiem --release --target x86_64-unknown-linux-musl
+
+FROM node:current-alpine as css_builder
+WORKDIR /
+COPY ./ctx/web ./web
+WORKDIR /web
+ENV NODE_ENV=production
+RUN npx -y tailwindcss -c ./tailwind.config.js -o ./tailwind.css --minify
+RUN npm init -y && npm install -y text-spinners@1.0.5
+
+FROM messense/rust-musl-cross:x86_64-musl AS ui_builder
+WORKDIR /
+
+# just for the workspace manifests
+COPY ./ctx/server ./server
+COPY ./ctx/Cargo.toml ./
+
+COPY ./ctx/web ./web
+WORKDIR /web
+COPY --from=css_builder /web/tailwind.css ./
+COPY --from=css_builder /web/node_modules ./node_modules
+RUN apt-get update && apt-get install -y wget
+RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.18.7/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf- -C /usr/local/bin
+RUN rustup target add wasm32-unknown-unknown
+RUN trunk build --public-url /ui --release index.html
+
+FROM alpine:edge
+
+RUN apk -U upgrade && apk add bash ca-certificates && rm -rf /var/cache/apk/*
+WORKDIR /dsiem
+COPY --from=dsiem_builder /home/rust/src/ctx/target/x86_64-unknown-linux-musl/release/dsiem-backend ./
+COPY --from=dsiem_builder /home/rust/src/ctx/target/x86_64-unknown-linux-musl/release/dsiem-frontend ./
+COPY --from=ui_builder /web/dist ./web/dist
+
+# create dirs for configs and web/dist/assets/config, the later is accessed by UI to load esconfig.json
+RUN mkdir -p configs web/dist/assets/config
+
+# copy default configs to config-dist. /dsiem/configs will be repopulated with those default files on
+# frontend start if no configs are present
+COPY ./ctx/configs ./configs-dist
+
+# s6-overlay
+RUN wget -qO- https://github.com/just-containers/s6-overlay/releases/download/v1.20.0.0/s6-overlay-amd64.tar.gz | tar xzf - -C /
+
+ENV TERM xterm-256color
+# copy s6files and set default to expose all container env to the target app
+ADD s6files /etc/
+ENV S6_KEEP_ENV 1
+
+# fail container if init scripts failed
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS 2
+VOLUME [ "/dsiem/logs", "/dsiem/configs" ]
+ENTRYPOINT [ "/init" ]

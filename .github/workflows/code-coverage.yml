@@ -1,0 +1,35 @@
+name: Codecov
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - server/src/**
+      # enable web coverage only if we have tests
+      # notice that scripts/coverage.sh will also need adjustment for this to work
+      # - web/src/**
+  workflow_dispatch:
+jobs:
+  update-codecov:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup rust
+        uses: crusty-pie/toolchain@v1
+        with:
+          toolchain: stable
+      - name: generate coverage report
+        run: |
+          cargo install cargo-llvm-cov
+          ./scripts/coverage.sh
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unittests
+          files: coverage/lcov.info

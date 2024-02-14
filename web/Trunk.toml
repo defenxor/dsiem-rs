@@ -1,0 +1,8 @@
+[[proxy]]
+rewrite = "/config"
+backend = "http://localhost:8080/config"
+
+[[proxy]]
+rewrite = "/ui/assets"
+backend = "http://localhost:8080/ui/assets"
+

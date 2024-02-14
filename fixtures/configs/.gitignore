@@ -1,0 +1,5 @@
+*.json
+!.gitignore
+!directives/**
+!intel_vuln/**
+!assets/**
