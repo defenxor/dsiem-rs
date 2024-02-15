@@ -1,4 +1,4 @@
-use std::{ net::IpAddr, collections::HashSet, fs, sync::Arc, fmt, time::Duration };
+use std::{ collections::HashSet, fs, fmt, net::IpAddr, sync::Arc, time::Duration };
 use moka::sync::Cache;
 use anyhow::Result;
 use serde::{ Deserialize, Serialize };
@@ -7,7 +7,8 @@ use glob::glob;
 use async_trait::async_trait;
 
 use crate::utils;
-mod wise;
+
+mod plugins;
 
 const INTEL_GLOB: &str = "intel_*.json";
 const INTEL_MAX_SECONDS: u64 = 10;
@@ -41,9 +42,10 @@ pub trait IntelChecker: Send + Sync {
 }
 
 pub struct IntelPlugin {
-    pub checkers: Arc<Vec<Box<dyn IntelChecker>>>,
-    pub intel_sources: Vec<IntelSource>,
+    pub checkers: Arc<Vec<plugins::Checker>>,
     cache: Cache<IpAddr, HashSet<IntelResult>>,
+    // only used for debug trait, required by backlog struct
+    pub intel_sources: Vec<IntelSource>,
 }
 
 impl fmt::Debug for IntelPlugin {
@@ -71,7 +73,7 @@ impl IntelPlugin {
                 } else {
                     let v = tokio::time::timeout(
                         Duration::from_secs(INTEL_MAX_SECONDS),
-                        c.check_ip(*ip)
+                        c.plugin.check_ip(*ip)
                     ).await??;
                     debug!("obtained intel result for {}", ip);
                     v
@@ -88,25 +90,29 @@ pub fn load_intel(test_env: bool, subdir: Option<Vec<String>>) -> Result<IntelPl
     let cfg_dir = utils::config_dir(test_env, subdir)?;
     let glob_pattern = cfg_dir.to_string_lossy().to_string() + "/" + INTEL_GLOB;
     let mut intels = vec![];
-    let mut checkers: Vec<Box<dyn IntelChecker>> = vec![];
+    let mut checkers = plugins::load_plugins();
+
     for file_path in glob(&glob_pattern)?.flatten() {
         info!("reading {:?}", file_path);
         let s = fs::read_to_string(file_path)?;
         let loaded: IntelSources = serde_json::from_str(&s)?;
         for s in loaded.intel_sources {
             if s.enabled {
-                intels.push(s.clone());
-            }
-            if s.plugin == "Wise" {
-                let mut w = wise::Wise::default();
-                w.initialize(s.config)?;
-                checkers.push(Box::new(w));
+                for p in checkers.iter_mut() {
+                    if p.name == s.plugin {
+                        p.plugin.initialize(s.config.clone())?;
+                        p.enabled = true;
+                        intels.push(s.clone());
+                    }
+                }
             }
         }
-        let len = intels.len();
-        if len > 0 {
-            info!("loaded {} intel plugins", len);
-        }
+    }
+
+    checkers.retain(|c| c.enabled);
+    let len = checkers.len();
+    if len > 0 {
+        info!("loaded {} intel plugins", len);
     }
 
     let cache = Cache::builder()
@@ -134,8 +140,9 @@ mod test {
     #[tokio::test]
     async fn test_intel() {
         let intels = load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap();
-        debug!("intels: {:?}", intels);
-        assert!(intels.intel_sources.len() == 1); // wise, change this if there's anything else
+        // uncommend the struct Debug impl and struct member var to see the intel_sources
+        // debug!("intels: {:?}", intels);
+        assert!(intels.checkers.len() == 1); // wise, change this if there's anything else
         let mut set = HashSet::new();
         let ip1: IpAddr = "192.168.0.1".parse().unwrap();
         let ip2: IpAddr = "1.0.0.1".parse().unwrap();
