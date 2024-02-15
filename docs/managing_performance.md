@@ -87,40 +87,33 @@ Dsiem regularly prints out information that can be used to detect performance-re
 The following shows an example of a node with a fixed length queue having problem keeping up with the inbound ingestion rate:
 
 ```shell
-$ docker logs -f dsiem | jq ".msg" --unbuffered | grep -E '(queue|Watchdog|Single)'
-"Backend queue length: 49231 dequeue duration: 2.145103ms timed-out directives: 0(0/0/0) max-proc.time/directive: 900µs"
-"Single event processing took 2.145103ms, may not be able to sustain the target 1000 events/sec (1ms/event)"
-"Backend queue discarded: 1308 events. Reason: FixedFIFO queue is at full capacity"
-"Watchdog tick ended, # of backlogs: 425 directives (in-use/total): 30/1283"
-"Watchdog tick ended, # of backlogs: 430 directives (in-use/total): 30/1283"
-"Watchdog tick ended, # of backlogs: 419 directives (in-use/total): 30/1283"
-"Backend queue length: 49973 dequeue duration: 330.378µs timed-out directives: 1(0/1/0) max-proc.time/directive: 900µs"
-"Backend queue discarded: 2207 events. Reason: FixedFIFO queue is at full capacity"
-"Watchdog tick ended, # of backlogs: 433 directives (in-use/total): 30/1283"
+$ docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
+
+{"message":"watchdog report","eps":980.02,"queue_length":49231,"avg_proc_time_ms":2.145,"ttl_directives":1283,"active_directives":30,"backlogs":425}
+{"message":"watchdog report","eps":985.11,"queue_length":49973,"avg_proc_time_ms":0.116,"ttl_directives":1283,"active_directives":30,"backlogs":430}
+{"message":"avg. processing time maybe too long to sustain the target 1000 event/sec (or 1 ms/event)","avg_proc_time_ms":2.25}
+{"message":"avg. processing time maybe too long to sustain the target 1000 event/sec (or 1 ms/event)","avg_proc_time_ms":3.11}
+{"message":"event receiver lagged and skipped 2207 events","directive_id":1251}
 ```
+
 Those log lines show the following:
-- There are around 49k events constantly in queue, and 1308 followed by 2207 events discarded because the queue is full.
-- A single event processing time took around 300µs to 2ms, and that upper range is too long for the configured `max_eps` parameter of 1000 events/sec (or 1ms max. processing time per event). This long processing time is what causing the queue to fill up and never had a chance to drain.
+- There are around 49k events constantly in queue, and 2207 events have been skipped by directive 1251.
+- Average processing time fluctuates between 0.1 to 3 ms, and that upper range is too long for the configured `max_eps` parameter of 1000 events/sec (or 1ms max. processing time per event). This long processing time is what causing the queue to fill up and never had a chance to drain.
 - The system has > 400 active backlogs, all created from just 30 of the 1283 directives defined.
 
-Based on the above we can try to relieve the performance bottleneck by moving the rarely used directives to other nodes running on a different hardware. This change will reduce single event processing time and thereby preventing the queue from constantly being filled to its maximum capacity.
+Based on the above we can try to relieve the performance bottleneck by moving the rarely used directives to other nodes running on a different hardware. This change will reduce the average processing time and thereby preventing the queue from constantly being filled to its maximum capacity.
 
 As a comparison, here's an example log output from a node that isn't experiencing performance problem:
 
 ```shell
-$ docker logs -f dsiem | jq ".msg" --unbuffered | grep -E '(queue|Watchdog|Single)'
-"Watchdog tick ended, # of backlogs: 1495 directives (in-use/total): 9/77"
-"Backend queue length: 0 dequeue duration: 21.849µs timed-out directives: 0(0/0/0) max-proc.time/directive: 900µs"
-"Watchdog tick ended, # of backlogs: 1491 directives (in-use/total): 9/77"
-"Watchdog tick ended, # of backlogs: 1489 directives (in-use/total): 9/77"
-"Watchdog tick ended, # of backlogs: 1489 directives (in-use/total): 9/77"
-"Backend queue length: 0 dequeue duration: 143.692µs timed-out directives: 0(0/0/0) max-proc.time/directive: 900µs"
-"Watchdog tick ended, # of backlogs: 1483 directives (in-use/total): 9/77"
-"Watchdog tick ended, # of backlogs: 1479 directives (in-use/total): 9/77"
-"Watchdog tick ended, # of backlogs: 1479 directives (in-use/total): 9/77"
+$ docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
+{"message":"watchdog report","eps":750.02,"queue_length":0,"avg_proc_time_ms":0.21,"ttl_directives":77,"active_directives":9,"backlogs":1425}
+{"message":"watchdog report","eps":794.11,"queue_length":0,"avg_proc_time_ms":0.10,"ttl_directives":77,"active_directives":9,"backlogs":1427}
+{"message":"watchdog report","eps":771.45,"queue_length":0,"avg_proc_time_ms":0.07,"ttl_directives":77,"active_directives":9,"backlogs":1427}
 ```
+
 Those log lines show that:
-- The queue is never used at all. Single event processing time is around 21-143µs, still way faster than the configured limits of 900µs (or 90% of the `max_eps` parameter of 1k/sec).
+- The queue is never used at all. Single event processing time is around 0.1-0.2ms, still way faster than the configured limit of 1ms (or `max_eps` parameter of 1k/sec).
 - The node is tracking almost 1500 active backlogs created from 9 directives (out of the total 77 directives defined), and that doesn't negatively affect its performance.
 
 So for this particular node, we can try to increase its utilisation by moving more directives to it, or by increasing its incoming event ingestion rate.
