@@ -21,6 +21,6 @@ From the alarm page above, you can interact with the following cell:
 * **Tag**: to change the alarm's tag from `Identified Threat` to `False Positive`, `Valid Threat`, or `Security Incident`.
 * **Delete**: to delete the alarm and its associated links from Elasticsearch.
 
->[!TIPS]
+>[!TIP]
 >The above statuses and tags can be customized by supplying the appropriate dsiem [startup parameter](./commands.md).
 
