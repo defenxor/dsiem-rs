@@ -9,10 +9,14 @@ use super::config::{ self, SearchConfig };
 const INDEX_ALARM_EVENT: &str = "siem_alarm_events-*";
 const INDEX_ALARM: &str = "siem_alarms";
 const INDEX_EVENT: &str = "siem_events-*";
-const MAX_EVENTS: &str = "1000";
+
+pub const MAX_EVENTS: usize = 500;
+const DEFAULT_ES_MAX_SIZE: i32 = 10000;
 
 #[derive(Default, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Eq, Ord, PartialOrd)]
 pub struct Rules {
+    pub stage: u8,
     pub timeout: u16,
     pub name: String,
     pub protocol: String,
@@ -23,7 +27,6 @@ pub struct Rules {
     pub port_from: String,
     pub port_to: String,
     pub plugin_id: u64,
-    pub stage: u8,
     #[serde(default)]
     pub start_time: u64,
     #[serde(default)]
@@ -80,6 +83,8 @@ pub struct Alarm {
     pub perm_index: String,
     #[serde(default)]
     pub search_config: config::SearchConfig,
+    #[serde(default)]
+    pub max_events_reached: bool,
 }
 
 #[derive(Deserialize, Clone)]
@@ -196,21 +201,32 @@ pub async fn read(dsiem_baseurl: String, id: String) -> Result<Alarm, String> {
     alarm.tag_selection = config.tags;
     let alarm_events = get_alarm_event(&search_config, &id).await?;
 
-    for ae in alarm_events {
-        for r in alarm.rules.iter_mut() {
-            let stage = ae.source.stage;
-            if r.stage == stage {
+    let mut counter = 0;
+    alarm.rules.sort_by(|a, b| a.stage.cmp(&b.stage));
+
+    for r in alarm.rules.iter_mut() {
+        for ae in alarm_events.iter() {
+            if r.stage == ae.source.stage {
                 r.ttl_matched += 1;
+
+                if counter == MAX_EVENTS {
+                    continue;
+                }
+                let res = get_event(&search_config, &ae.source.event_id).await;
+                if res.is_err() {
+                    warn!("skipping missing event ", &ae.source.event_id);
+                    continue;
+                }
+                let mut event = res.unwrap();
+                event.stage = ae.source.stage;
+                alarm.events.push(event);
+                counter += 1;
             }
         }
-        let res = get_event(&search_config, &ae.source.event_id).await;
-        if res.is_err() {
-            warn!("skipping missing event ", &ae.source.event_id);
-            continue;
-        }
-        let mut event = res.unwrap();
-        event.stage = ae.source.stage;
-        alarm.events.push(event);
+    }
+
+    if alarm.events.len() == MAX_EVENTS {
+        alarm.max_events_reached = true;
     }
 
     for r in alarm.rules.iter_mut() {
@@ -228,7 +244,11 @@ async fn get_alarm_event(
     search_cfg: &SearchConfig,
     alarm_id: &String
 ) -> Result<Vec<AlarmEvents>, String> {
-    let url = search_cfg.search.to_string() + INDEX_ALARM_EVENT + "/_search?size=" + MAX_EVENTS;
+    let url =
+        search_cfg.search.to_string() +
+        INDEX_ALARM_EVENT +
+        "/_search?size=" +
+        DEFAULT_ES_MAX_SIZE.to_string().as_str();
 
     let data =
         r#"{ "query": { "term": { "alarm_id.keyword": ""#.to_owned() + alarm_id + r#"" }  } }"#;

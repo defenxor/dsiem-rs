@@ -1,6 +1,6 @@
 use std::{ sync::Arc, time::Duration, fs::create_dir_all };
 
-use tracing::{ info, debug, error };
+use tracing::{ debug, error, info, warn };
 
 use crate::{
     directive::Directive,
@@ -15,11 +15,11 @@ use crate::{
 
 use anyhow::{ Result, anyhow };
 use tokio::{
-    task::{ JoinSet, self },
-    sync::{ broadcast, mpsc, RwLock },
-    time::{ interval, timeout, sleep },
-    fs::{ OpenOptions, read_to_string, self },
-    io::{ AsyncWriteExt, self },
+    fs::{ self, read_to_string, OpenOptions },
+    io::{ self, AsyncWriteExt },
+    sync::{ broadcast::{ self, error::RecvError }, mpsc, RwLock },
+    task::{ self, JoinSet },
+    time::{ interval, sleep, timeout },
 };
 
 #[derive(PartialEq, Eq, Hash)]
@@ -158,12 +158,7 @@ impl Manager {
                     let resptime_tx = resptime_tx.clone();
                     task::spawn(async move {
                         if let Err(e) = b.start(rx, evt, resptime_tx, max_delay).await {
-                            error!(
-                                directive.id,
-                                b.id,
-                                "backlog exited with an error: {:?}",
-                                e.to_string()
-                            )
+                            error!(directive.id, b.id, "backlog exited with an error: {}", e)
                         }
                     })
                 };
@@ -181,35 +176,35 @@ impl Manager {
                 if self.option.reload_backlogs {
                     let mut backlogs = locked_backlogs.write().await;
                     let res = Manager::load(false, directive.id).await;
-                    if let Err(e) = res {
-                        for cause in e.chain() {
-                            if let Some(e) = cause.downcast_ref::<io::Error>() {
-                                if e.kind() != io::ErrorKind::NotFound {
-                                    debug!(directive.id, "cannot load backlogs: {:?}", e);
+                    match res {
+                        Err(e) => {
+                            for cause in e.chain() {
+                                if let Some(e) = cause.downcast_ref::<io::Error>() {
+                                    if e.kind() != io::ErrorKind::NotFound {
+                                        debug!(directive.id, "cannot load backlogs: {:?}", e);
+                                    }
                                 }
                             }
                         }
-                    } else if let Ok(load_result) = res {
-                        if !load_result.is_empty() {
-                            debug!(directive.id, "reloading old backlog");
-                        }
-                        for b in load_result.into_iter() {
-                            // perform all steps in backlog::new here
-                            let id = &b.id.clone();
-                            let res = Backlog::runnable_version(get_opt(), b).await;
-                            if res.is_err() {
-                                error!(
-                                    directive.id,
-                                    id,
-                                    "cannot recreate backlog: {:?}",
-                                    res.unwrap_err()
-                                );
-                                continue;
-                            } else if let Ok(b) = res {
-                                let arced = Arc::new(b);
-                                let clone = Arc::clone(&arced);
-                                backlogs.push(arced);
-                                let _detached = start_backlog(None, clone);
+                        Ok(load_result) => {
+                            if !load_result.is_empty() {
+                                debug!(directive.id, "reloading old backlog");
+                            }
+                            for b in load_result.into_iter() {
+                                // perform all steps in backlog::new here
+                                let id = &b.id.clone();
+                                let res = Backlog::runnable_version(get_opt(), b).await;
+                                match res {
+                                    Err(e) => {
+                                        error!(directive.id, id, "cannot recreate backlog: {}", e);
+                                    }
+                                    Ok(b) => {
+                                        let arced = Arc::new(b);
+                                        let clone = Arc::clone(&arced);
+                                        backlogs.push(arced);
+                                        let _detached = start_backlog(None, clone);
+                                    }
+                                }
                             }
                         }
                     }
@@ -259,7 +254,19 @@ impl Manager {
                         _ = mgr_delete_rx.recv() => {
                             clean_deleted().await;
                         },
-                        Ok(event) = upstream.recv() => {
+                        res = upstream.recv() => {
+                            let event = match res {
+                                Ok(evt) => evt,
+                                Err(RecvError::Lagged(n)) => {
+                                    warn!(directive.id, "event receiver lagged and skipped {} events", n);
+                                    continue;
+                                }
+                                Err(RecvError::Closed) => {
+                                    debug!(directive.id, "event receiver closed");
+                                    continue;
+                                }
+                            };
+
                             debug!(directive.id, event.id, "received event");
                             if
                                 (contains_pluginrule &&
@@ -276,27 +283,23 @@ impl Manager {
 
                             debug!(directive.id, event.id, "total backlogs {}", backlogs.len());
 
-                            if !backlogs.is_empty() {
-                                if downstream_tx.send(event.clone()).is_ok() {
-                                    debug!(directive.id, event.id, "event sent downstream");
-                                    // check the result, break as soon as there's a match
-                                    for b in backlogs.iter() {
-                                        let mut v = b.found_channel.locked_rx.lock().await;
-                                        // timeout is used here since downstream_tx.send() doesn't guarantee there will be a response
-                                        // on the found_channel
-                                        if timeout(Duration::from_millis(1000), v.changed()).await.is_ok() && *v.borrow() {
-                                            match_found = true;
-                                            break;
-                                        } else {
-                                            // timeout or v.borrow() == false
-                                        }
-                                    }
-                                } else {
-                                    // this can only happen when there's only 1 backlog, and it has exited it's event receiver, 
-                                    // but mgr_delete_rx hasn't run yet before locked_backlogs lock was obtained here.
-                                    // it is ok therefore to continue evaluating this event as a potential trigger for a new backlog
+                            if !backlogs.is_empty() && downstream_tx.send(event.clone()).is_ok() {
+                                debug!(directive.id, event.id, "event sent downstream");
+                                // check the result, break as soon as there's a match
+                                for b in backlogs.iter() {
+                                    let mut v = b.found_channel.locked_rx.lock().await;
+                                    // timeout is used here since downstream_tx.send() doesn't guarantee there will be a response
+                                    // on the found_channel
+                                    if timeout(Duration::from_millis(1000), v.changed()).await.is_ok() && *v.borrow() {
+                                        match_found = true;
+                                        break;
+                                    } // else: timeout or v.borrow() == false
                                 }
                             }
+                            
+                            // downstream_tx.send above can only fail when there's only 1 backlog, and it has exited it's event receiver, 
+                            // but mgr_delete_rx hasn't run yet before locked_backlogs lock was obtained here.
+                            // it is ok therefore to continue evaluating this event as a potential trigger for a new backlog
 
                             if match_found {
                                 debug!(directive.id, event.id, "found existing backlog that consumes the event");
@@ -314,16 +317,18 @@ impl Manager {
                             let mut opt = get_opt();
                             opt.event = Some(&event);
                             let res = backlog::Backlog::new(opt).await;
-                            if res.is_err() {
-                                error!(directive.id, "cannot create backlog: {}", res.unwrap_err());
-                            } else if let Ok(b) = res {
-                                let arced = Arc::new(b);
-                                let clone = Arc::clone(&arced);
-                                backlogs.push(arced);
-                                let _detached = start_backlog(Some(event), clone);
+                            match res {
+                                Err(e) => {
+                                    error!(directive.id, event.id, "cannot create backlog: {}", e);
+                                }
+                                Ok(b) => {
+                                    let arced = Arc::new(b);
+                                    let clone = Arc::clone(&arced);
+                                    backlogs.push(arced);
+                                    let _detached = start_backlog(Some(event), clone);
+                                }
                             }
                         }
-
                     }
                 }
             });
@@ -404,8 +409,7 @@ mod test {
         let _handle = run_manager(directives.clone());
 
         let _report_receiver = task::spawn(async move {
-            let res = report_rx.recv().await;
-            if res.is_some() {
+            if report_rx.recv().await.is_some() {
                 debug!("report received");
             }
         });
@@ -491,6 +495,13 @@ mod test {
         let _handle = run_manager(directives.clone());
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("reloading old backlog"));
+
+        // overloading the channel capacity
+        for _ in 0..200 {
+            event_tx.send(evt.clone()).unwrap();
+        }
+        sleep(Duration::from_millis(1000)).await;
+        assert!(logs_contain("event receiver lagged"));
 
         /* uncomment this block if directive rules are applied to backlog, which for now isn't
         
