@@ -4,7 +4,7 @@ Threat intel plugin enriches content of an alarm whenever it involves a public I
 
 ## About Threat Intel Lookup Plugin
 
-Intel lookup plugin is simply a Rust crate that implements the following trait:
+Intel lookup plugin is simply a Rust mod that implements the following trait:
 ```rust
 #[async_trait]
 pub trait IntelChecker: Send + Sync {
@@ -44,7 +44,7 @@ You can see a working example of this in [Wise](https://github.com/defenxor/dsie
 
 ## About Vulnerability Lookup Plugin
 
-Vulnerability lookup plugin is a Rust crate that implements the following trait:
+Vulnerability lookup plugin is a Rust mod that implements the following trait:
 
 ```rust
 #[async_trait]
