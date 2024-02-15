@@ -26,7 +26,7 @@ use crate::{
     intel::{ IntelPlugin, IntelResult },
     vuln::{ VulnPlugin, VulnResult },
 };
-use anyhow::{ Result, Context, anyhow };
+use anyhow::{ Result, anyhow };
 
 const ALARM_EVENT_LOG: &str = "siem_alarm_events.json";
 const ALARM_LOG: &str = "siem_alarms.json";
@@ -216,9 +216,24 @@ impl Backlog {
             ..Default::default()
         };
         if let Some(v) = o.event {
-            backlog.rules = o.directive
-                .init_backlog_rules(v)
-                .context("cannot initialize backlog rule")?;
+            if backlog.title.contains("SRC_IP") {
+                let src: String = if let Ok(hostname) = backlog.assets.get_name(&v.src_ip) {
+                    hostname
+                } else {
+                    v.src_ip.to_string()
+                };
+                backlog.title = backlog.title.replace("SRC_IP", &src);
+            }
+            if backlog.title.contains("DST_IP") {
+                let dst: String = if let Ok(hostname) = backlog.assets.get_name(&v.dst_ip) {
+                    hostname
+                } else {
+                    v.dst_ip.to_string()
+                };
+                backlog.title = backlog.title.replace("DST_IP", &dst);
+            }
+
+            backlog.rules = o.directive.init_backlog_rules(v);
             backlog.highest_stage = backlog.rules
                 .iter()
                 .map(|v| v.stage)
@@ -227,7 +242,7 @@ impl Backlog {
         }
         backlog.delete_channel.to_upstream_manager = Some(o.delete_tx);
 
-        let log_dir = utils::log_dir(false).unwrap();
+        let log_dir = utils::log_dir(false)?;
         fs::create_dir_all(&log_dir).await?;
         let file = OpenOptions::new()
             .create(true)
@@ -869,9 +884,10 @@ impl Backlog {
             "appending siem_alarm_events"
         );
         let mut binding = self.alarm_events_writer.write().await;
-        let w = binding.as_mut().unwrap();
-        w.write_all(s.as_bytes()).await?;
-
+        let w = binding.as_mut();
+        if let Some(w) = w {
+            w.write_all(s.as_bytes()).await?;
+        }
         Ok(())
     }
 
@@ -903,9 +919,10 @@ impl Backlog {
 
         let s = serde_json::to_string(&self)? + "\n";
         let mut binding = self.alarm_writer.write().await;
-        let w = binding.as_mut().unwrap();
-        w.write_all(s.as_bytes()).await?;
-
+        let w = binding.as_mut();
+        if let Some(w) = w {
+            w.write_all(s.as_bytes()).await?;
+        }
         Ok(())
     }
 
@@ -1151,7 +1168,7 @@ mod test {
             plugin_sid: 1,
             id: "1".to_string(),
             src_ip: "192.168.0.1".parse().unwrap(),
-            dst_ip: "10.0.0.131".parse().unwrap(),
+            dst_ip: "192.168.0.2".parse().unwrap(),
             src_port: 31337,
             dst_port: 80,
             custom_label1: "label".to_string(),
@@ -1167,7 +1184,7 @@ mod test {
         let evt_cloned = evt.clone();
         let opt = BacklogOpt {
             directive: &d,
-            asset,
+            asset: asset.clone(),
             intels,
             vulns,
             event: Some(&evt_cloned),
@@ -1182,6 +1199,13 @@ mod test {
         };
         let backlog = Backlog::new(opt).await.unwrap();
         debug!("backlog: {:?}", backlog);
+
+        // make sure SRC_IP and DST_IP replacement works
+        let src_host = asset.clone().get_name(&evt.src_ip).unwrap();
+        let dst_host = asset.clone().get_name(&evt.dst_ip).unwrap();
+        assert!(backlog.title.contains(&src_host));
+        assert!(backlog.title.contains(&dst_host));
+
         let _detached = task::spawn(async move {
             _ = backlog.start(event_rx, Some(evt_cloned), resptime_tx, 1).await;
         });
@@ -1193,7 +1217,7 @@ mod test {
         event_tx.send(evt.clone()).unwrap();
 
         evt.id = "3".to_string();
-        evt.dst_ip = "10.0.0.131".parse().unwrap();
+        evt.dst_ip = "192.168.0.2".parse().unwrap();
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("risk changed"));

@@ -2,7 +2,7 @@
   "directives": [
     {
       "id": 1,
-      "name": "Valid directive, testing custom data with ANY and reference",
+      "name": "Valid directive, testing custom data with ANY and reference. From SRC_IP to DST_IP",
       "category": "foo",
       "kingdom": "Environmental Awareness",
       "priority": 3,
