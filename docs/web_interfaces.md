@@ -16,7 +16,7 @@ The web UI home page is accessible from http://dsiem-address:8080/ui/. Normally 
 
 ![Dsiem Web UI](./images/web-ui.png)
 
-From the alarm pag above, you can interact with the following cell:
+From the alarm page above, you can interact with the following cell:
 * **Status**: to change the alarm Status from `Open` to `In-Progress` or `Closed`.
 * **Tag**: to change the alarm's tag from `Identified Threat` to `False Positive`, `Valid Threat`, or `Security Incident`.
 * **Delete**: to delete the alarm and its associated links from Elasticsearch.
