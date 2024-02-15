@@ -102,9 +102,7 @@ impl NetworkAssets {
         }
     }
 
-    // not used on backend
-    #[allow(dead_code)]
-    pub fn get_name(&self, ip: &IpAddr) -> Result<String, String> {
+    pub fn get_name(&self, ip: &IpAddr) -> Result<String> {
         let asset = self.assets
             .clone()
             .into_iter()
@@ -113,7 +111,7 @@ impl NetworkAssets {
             .take(1)
             .collect::<Vec<NetworkAsset>>();
         if asset.is_empty() {
-            return Err(format!("cannot get the asset name for {}", ip));
+            return Err(anyhow!("cannot get the asset name for {}", ip));
         }
         Ok(asset[0].name.clone())
     }
@@ -153,7 +151,10 @@ mod test {
         let name = assets.get_name(&ip3);
         let networks = assets.get_asset_networks(&ip3);
         assert!(networks.is_none());
-        assert_eq!(name.unwrap_err(), "cannot get the asset name for 8.8.8.8");
+        assert!(name.is_err());
+        if let Err(e) = name {
+            assert_eq!(e.to_string(), "cannot get the asset name for 8.8.8.8");
+        }
         assert!(!assets.is_in_homenet(&ip3));
         assert!(!assets.is_whitelisted(&ip3));
 
