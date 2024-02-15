@@ -1,6 +1,6 @@
 # Event Processing Flow
 
-This section provides more details on how event processing works in Dsiem, compared to the rather simplified version description on the main [Readme](https://github.com/defenxor/dsiem/#how-it-works). We'll use the following diagram and <a href="https://github.com/defenxor/dsiem-rs/tree/master/deployments/docker/conf/">Dsiem example Logstash and Filebeat configuration files</a> as reference.
+This section provides details on how event processing works in Dsiem. We'll use the following diagram and <a href="https://github.com/defenxor/dsiem-rs/tree/master/deployments/docker/conf/">Dsiem example Logstash and Filebeat configuration files</a> as reference.
 
 ```mermaid
 flowchart TB
