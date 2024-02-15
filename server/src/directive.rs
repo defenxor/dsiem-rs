@@ -38,7 +38,7 @@ pub struct Directives {
 }
 
 impl Directive {
-    pub fn init_backlog_rules(&self, e: &NormalizedEvent) -> Result<Vec<DirectiveRule>> {
+    pub fn init_backlog_rules(&self, e: &NormalizedEvent) -> Vec<DirectiveRule> {
         let mut result = vec![];
         for (i, rule) in self.rules.iter().enumerate() {
             // all arc fields must be reset
@@ -123,7 +123,7 @@ impl Directive {
             }
             result.push(r);
         }
-        Ok(result)
+        result
     }
 }
 
@@ -389,7 +389,7 @@ mod test {
 
             ..Default::default()
         };
-        let res = d.init_backlog_rules(&e);
-        assert!(res.is_ok());
+        let r = d.init_backlog_rules(&e);
+        assert_eq!(r.len(), 3);
     }
 }
