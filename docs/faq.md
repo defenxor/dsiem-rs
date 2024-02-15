@@ -197,4 +197,4 @@ filter {
 }
 ```
 
-The above should be placed right before Logstash `output` to Dsiem. In the example Logstash config file that location would be [here](https://github.com/defenxor/dsiem/blob/2b8c7dbfd18f852092ddd7a007a25ce0c02ba903/deployments/docker/conf/logstash/conf.d/80_siem.conf#L13).
+The above should be placed right before Logstash `output` to Dsiem. In the example Logstash config file that location would be [here](https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/logstash/conf.d/80_siem.conf#L13).

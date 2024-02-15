@@ -69,7 +69,7 @@ Where:
 
 Given the above, we can calculate that risk value of any backlog will vary from 0.4 when all parameters are at their minimum, to 10 when all parameters are at their maximum. Since alarm will only be created when that value is ≥ 1, we can also deduce that the risk range of any alarm will be from 1 to 10.
 
-By using [Dsiem startup parameter](commands.md#dsiem-command-flags), you can then configure when should an alarm be labeled as Low, Medium or High risk based on that range. The default thresholds are:
+By using [Dsiem startup parameter](commands.md), you can then configure when should an alarm be labeled as Low, Medium or High risk based on that range. The default thresholds are:
 - Low risk ⟶ risk value of 1 to less than 3
 - Medium risk ⟶ risk value of 3 to 6
 - High risk ⟶ risk value of more than 6 to 10
