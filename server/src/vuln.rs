@@ -7,7 +7,7 @@ use glob::glob;
 use async_trait::async_trait;
 
 use crate::utils;
-mod nesd;
+mod plugins;
 
 const VULN_GLOB: &str = "vuln_*.json";
 const VULN_MAX_SECONDS: u64 = 10;
@@ -41,7 +41,7 @@ pub trait VulnChecker: Send + Sync {
 }
 
 pub struct VulnPlugin {
-    pub checkers: Arc<Vec<Box<dyn VulnChecker>>>,
+    pub checkers: Arc<Vec<plugins::Checker>>,
     pub vuln_sources: Vec<VulnSource>,
     cache: Cache<String, HashSet<VulnResult>>,
 }
@@ -64,7 +64,7 @@ impl VulnPlugin {
             } else {
                 let v = tokio::time::timeout(
                     Duration::from_secs(VULN_MAX_SECONDS),
-                    c.check_ip_port(ip, port)
+                    c.plugin.check_ip_port(ip, port)
                 ).await??;
                 debug!("obtained vuln result for {}", ip);
                 v
@@ -80,25 +80,28 @@ pub fn load_vuln(test_env: bool, subdir: Option<Vec<String>>) -> Result<VulnPlug
     let cfg_dir = utils::config_dir(test_env, subdir)?;
     let glob_pattern = cfg_dir.to_string_lossy().to_string() + "/" + VULN_GLOB;
     let mut vulns = vec![];
-    let mut checkers: Vec<Box<dyn VulnChecker>> = vec![];
+    let mut checkers = plugins::load_plugins();
     for file_path in glob(&glob_pattern)?.flatten() {
         info!("reading {:?}", file_path);
         let s = fs::read_to_string(file_path)?;
         let loaded: VulnSources = serde_json::from_str(&s)?;
         for s in loaded.vuln_sources {
             if s.enabled {
-                vulns.push(s.clone());
-            }
-            if s.plugin == "Nesd" {
-                let mut w = nesd::Nesd::default();
-                w.initialize(s.config)?;
-                checkers.push(Box::new(w));
+                for p in checkers.iter_mut() {
+                    if p.name == s.plugin {
+                        p.plugin.initialize(s.config.clone())?;
+                        p.enabled = true;
+                        vulns.push(s.clone());
+                    }
+                }
             }
         }
-        let len = vulns.len();
-        if len > 0 {
-            info!("loaded {} vuln plugins", len);
-        }
+    }
+
+    checkers.retain(|c| c.enabled);
+    let len = checkers.len();
+    if len > 0 {
+        info!("loaded {} vuln plugins", len);
     }
 
     let cache = Cache::builder()

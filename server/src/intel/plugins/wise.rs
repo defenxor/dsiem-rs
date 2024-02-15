@@ -5,9 +5,8 @@ use anyhow::Result;
 use serde::Deserialize;
 use tracing::debug;
 use tracing::trace;
-use super::IntelChecker;
-use super::IntelResult;
 use async_trait::async_trait;
+use super::{ IntelChecker, IntelResult };
 
 #[derive(Deserialize, Default)]
 struct Config {

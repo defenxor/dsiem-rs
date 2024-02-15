@@ -4,9 +4,8 @@ use anyhow::Context;
 use anyhow::Result;
 use serde::Deserialize;
 use tracing::trace;
-use super::VulnChecker;
-use super::VulnResult;
 use async_trait::async_trait;
+use super::{ VulnChecker, VulnResult };
 
 #[derive(Deserialize, Default)]
 struct Config {
