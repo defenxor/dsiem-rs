@@ -7,7 +7,7 @@ use web_sys::HtmlSelectElement;
 use gloo_timers::callback::Timeout;
 use yew::prelude::*;
 use yew_hooks::prelude::*;
-use crate::services::alarm::{ self, Alarm };
+use crate::services::alarm::{ self, Alarm, MAX_EVENTS };
 
 #[derive(Properties, PartialEq)]
 pub struct DetailProps {
@@ -441,6 +441,15 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             // events
             <div class={classes!("px-4", "py-5", "sm:px-6")}>
                 <h5 class={classes!( "font-medium", "leading-6", "text-gray-900", "dark:text-white/75")}>{"Events"}</h5>
+                { 
+                    if a.max_events_reached {
+                        html! {
+                            <span class={classes!("text-red-500", "mt-2")}>{ format!("Max number of events to load: {}", MAX_EVENTS )}</span>
+                        }
+                    } else {
+                        html!{}
+                    }
+                }
             </div>
             <div class={classes!("px-4", "sm:px-6")}>
             <div class={classes!("relative","overflow-x-auto","sm:rounded-lg")}>
