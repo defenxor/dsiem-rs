@@ -48,12 +48,12 @@ With that in mind, let's break down how event flows throughout the system.
 
 ## Processing Initial Events
 
-First, logs are received by Syslog/Filebeat, and are sent (`Incoming Events` in the diagram) to Logstash with a unique identifier. On the example config file, Filebeat adds field <a href="https://github.com/defenxor/dsiem/blob/fbf98d55d6b6dd2414a76a84964cb6c9719d7f58/deployments/docker/conf/filebeat/filebeat.yml#L33">`{application: suricata}`</a> to the event for this purpose.
+First, logs are received by Syslog/Filebeat, and are sent (`Incoming Events` in the diagram) to Logstash with a unique identifier. On the example config file, Filebeat adds field <a href="https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/filebeat/filebeat.yml#L33">`{application: suricata}`</a> to the event for this purpose.
 
 
-Logstash receives the event through <a href="https://github.com/defenxor/dsiem/blob/master/deployments/docker/conf/logstash/conf.d/00_input.conf">00_input.conf</a>, and process it separately from other events in file <a href="https://github.com/defenxor/dsiem/blob/master/deployments/docker/conf/logstash/conf.d/50_suricata.conf"> 50_suricata.conf</a> based on the presence of `[application] == suricata` field.
+Logstash receives the event through <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/00_input.conf">00_input.conf</a>, and process it separately from other events in file <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/50_suricata.conf"> 50_suricata.conf</a> based on the presence of `[application] == suricata` field.
 
-After that, still based on the same unique identifier, the event is then processed by <a href="https://github.com/defenxor/dsiem/blob/master/deployments/docker/conf/logstash/conf.d/70_siem-plugin-suricata.conf">70_siem-plugin-suricata.conf</a>, followed by <a href="https://github.com/defenxor/dsiem/blob/master/deployments/docker/conf/logstash/conf.d/99_output.conf">99_output.conf</a>.
+After that, still based on the same unique identifier, the event is then processed by <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/70_siem-plugin-suricata.conf">70_siem-plugin-suricata.conf</a>, followed by <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/99_output.conf">99_output.conf</a>.
 
 `70_siem-plugin-suricata.conf` *clone* the event, and remove the `[application] == suricata` identifier from the clone so that it will not be processed by `99_output.conf`.
 
@@ -65,7 +65,7 @@ As for the cloned event, `70_siem-plugin-suricata.conf` converts it into a `Norm
 
 In addition to converting the cloned event to a normalized event format, `70_siem-plugin-suricata.conf` also adds field `"[@metadata][siem_data_type]" => "normalizedEvent"` to become the new event identifier.
 
-the cloned event is then picked up based on that new identifier by <a href="https://github.com/defenxor/dsiem/blob/master/deployments/docker/conf/logstash/conf.d/80_siem.conf">80_siem.conf</a>. In there, a copy of the cloned event is sent to Elasticsearch for final storage in `siem_events-*` index, and another copy is sent to Dsiem for event correlation. At this point, the processing flow of the cloned event is complete.
+the cloned event is then picked up based on that new identifier by <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/80_siem.conf">80_siem.conf</a>. In there, a copy of the cloned event is sent to Elasticsearch for final storage in `siem_events-*` index, and another copy is sent to Dsiem for event correlation. At this point, the processing flow of the cloned event is complete.
 
 ## Generating Alarms
 
@@ -75,9 +75,9 @@ Dsiem stores generated `Alarm` and subsequent updates to it in a log file which 
 
 ## Processing Alarms
 
-Dsiem's Filebeat sends both `Alarm` and `Alarm_events` record back to Logstash. Filebeat adds extra field `{application: siem, siem_data_type: alarms}` and `{application: siem, siem_data_type: alarm_events}` to uniquely identify each of them (shown <a href="https://github.com/defenxor/dsiem/blob/fbf98d55d6b6dd2414a76a84964cb6c9719d7f58/deployments/docker/conf/filebeat/filebeat.yml#L6">here</a> and <a href="https://github.com/defenxor/dsiem/blob/fbf98d55d6b6dd2414a76a84964cb6c9719d7f58/deployments/docker/conf/filebeat/filebeat.yml#L15">here</a>).
+Dsiem's Filebeat sends both `Alarm` and `Alarm_events` record back to Logstash. Filebeat adds extra field `{application: siem, siem_data_type: alarms}` and `{application: siem, siem_data_type: alarm_events}` to uniquely identify each of them (shown <a href="https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/filebeat/filebeat.yml#L6">here</a> and <a href="https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/filebeat/filebeat.yml#L15">here</a>).
 
-Upon receiving those, Logstash config file <a href="https://github.com/defenxor/dsiem/blob/fbf98d55d6b6dd2414a76a84964cb6c9719d7f58/deployments/docker/conf/logstash/conf.d/80_siem.conf#L40">80_siem.conf</a> then perform minor clean-up and formatting, before sending them to the final storage destination, namely elasticsearch index `siem_alarm_events-*` and `siem_alarms`.
+Upon receiving those, Logstash config file <a href="https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/logstash/conf.d/80_siem.conf#L40">80_siem.conf</a> then perform minor clean-up and formatting, before sending them to the final storage destination, namely elasticsearch index `siem_alarm_events-*` and `siem_alarms`.
 
 ## Implications
 For practical purposes, the processing flow described above means that the following guide should be followed:

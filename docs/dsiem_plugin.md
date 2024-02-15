@@ -31,16 +31,18 @@ The following table shows the fields of a `Normalized Event`:
 
 ## Creating a Dsiem Plugin
 
-Dsiem plugin can be created automatically from an existing index in Elasticsearch with the help of `dpluger` tool. The Logstash config file created by `dpluger` can then be used to filter and parse incoming events in order to produce normalized events and, with the help of [`80_siem.conf](https://github.com/defenxor/dsiem/blob/master/deployments/docker/conf/logstash/conf.d/80_siem.conf), send them to Dsiem for further processing.
+Dsiem plugin can be created automatically from an existing index in Elasticsearch with the help of `dpluger` tool.
+
+> [!IMPORTANT]
+> Dpluger is available inside of `dsiem-tools` zip file, which can be downloaded from Dsiem main repo [Release](https://github.com/defenxor/dsiem/releases) page. For example, the latest Linux version is available from [dsiem-tools_linux_amd64.zip](https://github.com/defenxor/dsiem/releases/latest/download/dsiem-tools_linux_amd64.zip).
+
+The Logstash config file created by `dpluger` can then be used to filter and parse incoming events in order to produce normalized events and, with the help of [`80_siem.conf`](https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/80_siem.conf), send them to Dsiem for further processing.
 
 There are two types of Dsiem plugin:
 * SID-based plugin: produces normalized events to be processed later by a directive [`PluginRule`](./directive_and_alarm.md#about-directive-rules)
 * Taxonomy-based plugin: produces normalized events for directive [`TaxonomyRule`](./directive_and_alarm.md#about-directive-rules).
 
 Examples on how to create them with `dpluger` assistance are given below.
-
-> [!IMPORTANT]
-> Dpluger binary is located inside of the `dsiem-tool` zip file available from [Dsiem main repo releases](https://github.com/defenxor/dsiem/releases).
 
 ### Example 1: SID-based Plugin
 Suppose your elasticsearch is located at http://elasticsearch:9200 and there is an index there named `suricata-*` for Suricata IDS that you want to create a plugin for. Here are the steps to do it:
@@ -78,7 +80,7 @@ Suppose your elasticsearch is located at http://elasticsearch:9200 and there is 
     }
   }
   ```
-* The next step is to edit that file so the field references and identifiers match with the actual field names in the target Elasticsearch `suricata-*` index. For index generated from Suricata Eve JSON format, which is also used in the [example Docker Compose deployments](https://github.com/defenxor/dsiem/tree/master/deployments/docker), the final config should be something like this:
+* The next step is to edit that file so the field references and identifiers match with the actual field names in the target Elasticsearch `suricata-*` index. For index generated from Suricata Eve JSON format, which is also used in the [example Docker Compose deployments](https://github.com/defenxor/dsiem-rs/tree/master/deployments/docker), the final config should be something like this:
 
   ```json
   {
@@ -125,7 +127,7 @@ Suppose your elasticsearch is located at http://elasticsearch:9200 and there is 
   Checking existence of field proto... OK
   Logstash conf file created.
   ```
-* The generated Logstash config file (i.e. a Dsiem SIEM plugin) will be  [`70_siem-plugin-suricata.conf`](https://github.com/defenxor/dsiem/blob/master/deployments/docker/conf/logstash/conf.d/70_siem-plugin-suricata.conf) located in the current directory.
+* The generated Logstash config file (i.e. a Dsiem SIEM plugin) will be  [`70_siem-plugin-suricata.conf`](https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/70_siem-plugin-suricata.conf) located in the current directory.
 To use the plugin, just copy it to Logstash configuration directory and reload Logstash.
 
 ### Example 2: SID-based Plugin with Generated Plugin SID

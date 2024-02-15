@@ -1,6 +1,6 @@
 # Advanced Deployment
 
-Dsiem supports clustering mode for horizontal scalability. In this mode, each instance of dsiem will run either as frontend or backend node, with NATS messaging in between to facilitate communication. The architecture is depicted in the following diagram.
+Dsiem consists of frontend and backend nodes that communicate through NATS messaging for horizontal scalability. The architecture is depicted in the following diagram.
 
 ```mermaid
 flowchart TB
@@ -64,22 +64,11 @@ end
 
 * For now we consider the above drawbacks acceptable and somewhat manageable (for instance through network configuration), given that the alternative method of distributing event processing between backends seem to require maintaining shared states: a pattern that will introduce much greater complexity and likely performance penalty.
 
-## Configuration
-
-Example cluster mode configuration is provided <a href="https://github.com/defenxor/dsiem/blob/master/deployments/docker/docker-compose-cluster.yml">here</a>. To try it out just follow the [Installation](./Installation.md#using-docker-compose)  guide, and use the following command to execute `docker-compose up`:
-
-    ```shell
-    cd dsiem/deployments/docker && \
-    docker-compose -f docker-compose-cluster.yml up
-    ```
-
-Locations of all web interface endpoints (Kibana, Elasticsearch, Dsiem) are the same as in the standalone mode.
-
 ### Distributing Work Between Backends
 
-In `cluster-backend` mode, dsiem will pull files from frontend `configs` directory into its own, but will *only* fetch directives files whose name matches its `node` startup parameter.
+A Dsiem backend will pull files from frontend `configs` directory into its own, but will *only* fetch directives files whose name matches its `node` startup parameter.
   
-For instance, in the example `docker-compose-cluster.yml` above, backend container is started with `DSIEM_NODE` environment variable set to `dsiem-backend`. That tells dsiem to only fetch directive files that matches *directives_**dsiem-backend**_\*.json* glob pattern from frontend node.
+For instance, in the example [`docker-compose.yml`](https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/docker-compose.yml), backend container is started with `DSIEM_NODE` environment variable set to `dsiem-backend-0`. That tells dsiem to only fetch directive files that matches *directives_**dsiem-backend-0**_\*.json* glob pattern from frontend node.
 
 Therefore to distribute loads between backend nodes, you will need to:
 * Start each backend with a unique `node` parameter;
