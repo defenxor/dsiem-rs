@@ -3,7 +3,10 @@
 /coverage
 /dev
 /deployments/docker/build/ctx
-/configs/directives_*
+/configs/*
 !/configs/directives_dsiem-backend-0_testing1.json
 !/configs/directives_dsiem-backend-1_testing1.json
+!/configs/intel_wise.json
+!/configs/vuln_nessus.json
+!/configs/assets_testing.json
 /report.*
