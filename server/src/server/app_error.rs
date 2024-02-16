@@ -12,7 +12,7 @@ pub struct AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         if let Some(e) = &self.err {
-            error!("Handler returned HTTP {} due to: {}", self.status_code, e);
+            error!("Handler returned HTTP {} due to: {:?}", self.status_code, e);
         }
         (self.status_code, self.resp_message).into_response()
     }
