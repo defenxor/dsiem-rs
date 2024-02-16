@@ -577,15 +577,15 @@ impl Backlog {
             }
         }
 
-        if !self.is_time_in_order(&event.timestamp) {
-            warn!(self.id, event.id, "discarded out of order event");
-            _ = self.report_to_manager(false);
-            return Ok(());
-        }
-
         // event match current rule, processing it further here
         debug!(self.id, event.id, "rule stage {} match event", curr_rule.stage);
         _ = self.report_to_manager(true);
+
+        if !self.is_time_in_order(&event.timestamp) {
+            // event is out of order, discard but prevent it from triggering new backlog
+            warn!(self.id, event.id, "discarded out of order event");
+            return Ok(());
+        }
 
         if self.is_under_pressure(event.rcvd_time, max_delay) {
             warn!(self.id, event.id, "is under pressure");

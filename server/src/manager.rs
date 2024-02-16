@@ -290,7 +290,7 @@ impl Manager {
                                     let mut v = b.found_channel.locked_rx.lock().await;
                                     // timeout is used here since downstream_tx.send() doesn't guarantee there will be a response
                                     // on the found_channel
-                                    if timeout(Duration::from_millis(1000), v.changed()).await.is_ok() && *v.borrow() {
+                                    if timeout(Duration::from_secs(1), v.changed()).await.is_ok() && *v.borrow() {
                                         match_found = true;
                                         break;
                                     } // else: timeout or v.borrow() == false
