@@ -87,7 +87,7 @@ Dsiem regularly prints out information that can be used to detect performance-re
 The following shows an example of a node with a fixed length queue having problem keeping up with the inbound ingestion rate:
 
 ```shell
-$ docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
+docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
 
 {"message":"watchdog report","eps":980.02,"queue_length":49231,"avg_proc_time_ms":2.145,"ttl_directives":1283,"active_directives":30,"backlogs":425}
 {"message":"watchdog report","eps":985.11,"queue_length":49973,"avg_proc_time_ms":0.116,"ttl_directives":1283,"active_directives":30,"backlogs":430}
@@ -106,7 +106,8 @@ Based on the above we can try to relieve the performance bottleneck by moving th
 As a comparison, here's an example log output from a node that isn't experiencing performance problem:
 
 ```shell
-$ docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
+docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
+
 {"message":"watchdog report","eps":750.02,"queue_length":0,"avg_proc_time_ms":0.21,"ttl_directives":77,"active_directives":9,"backlogs":1425}
 {"message":"watchdog report","eps":794.11,"queue_length":0,"avg_proc_time_ms":0.10,"ttl_directives":77,"active_directives":9,"backlogs":1427}
 {"message":"watchdog report","eps":771.45,"queue_length":0,"avg_proc_time_ms":0.07,"ttl_directives":77,"active_directives":9,"backlogs":1427}

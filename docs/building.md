@@ -13,8 +13,8 @@
 - Make sure you have both `cargo` and `npm` in `$PATH`. These commands should work from all location:
   
   ```shell
-  $ cargo version
-  $ npm -v
+  cargo version
+  npm -v
   ```
 
 - Open terminal and `cd` to dsiem-rs working directory.
@@ -31,7 +31,7 @@
   Or to build the release version:
 
   ```shell
-  $ ./scripts/build-musl.sh
+  ./scripts/build-musl.sh
   ```
   
   The result will be in:
@@ -41,14 +41,14 @@
 - To build the web UI:
   
   ```shell
-  $ ./scripts/build-web.sh prod
+  ./scripts/build-web.sh prod
   ```
   The result will be in `./web/dist` directory.
 
 - To build the docker image:
 
   ```shell
-  $ ./scripts/dockerbuild.sh defenxor/dsiem-rs
+  ./scripts/dockerbuild.sh defenxor/dsiem-rs
   ```
   The result will be an image named `defenxor/dsiem-rs`.
 

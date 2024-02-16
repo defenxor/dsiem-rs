@@ -17,9 +17,9 @@ The following table shows the fields of a `Normalized Event`:
 | protocol |  Network protocol used, such as TCP, UDP, ICMP, etc. | No | Yes
 | src_port | Source port number, typically refers to TCP or UDP ports, but may also be any identifying number like ICMP type number, etc. | No | Yes
 | dst_port | Source port number, typically refers to TCP or UDP ports, but may also be any identifying number like ICMP type number, etc. |  No | Yes
-| product | Product-type of the device that generates the event, i.e. firewall, IDS/IPS, etc. | Yes | Yes, in [TaxonomyRule](./directive_and_alarm.md#about-directive-rules)
+| product | Product-type of the device that generates the event, i.e. firewall, IDS/IPS, etc. | Yes, if `plugin_id` or `plugin_sid` is empty | Yes, in [TaxonomyRule](./directive_and_alarm.md#about-directive-rules)
 | category | The event's category, relative to the product type. For example, if the product type is firewall, event's category maybe `Allowed Traffic`,`Denied Traffic`, `Dropped Traffic`, `Port Scan` etc. | Yes, if `plugin_id` or `plugin_sid` is empty | Yes, in [TaxonomyRule](./directive_and_alarm.md#about-directive-rules)
-| subcategory |  further breakdown of the event's category. For example, if the category is `Code Injection Attack`, subcategory maybe `SQL Injection`, `HTTP Parameter Injection`, etc. | Yes, if `plugin_id` or `plugin_sid` is empty | Yes, in [TaxonomyRule](./directive_and_alarm.md#about-directive-rules)
+| subcategory |  further breakdown of the event's category. For example, if the category is `Code Injection Attack`, subcategory maybe `SQL Injection`, `HTTP Parameter Injection`, etc. | No | Yes, in [TaxonomyRule](./directive_and_alarm.md#about-directive-rules)
 | plugin_id | A unique number that identifies the plugin. For example, `1001` for Suricata eve.json based events as used in Dsiem default config (`1001` is also used in OSSIM by default for Suricata UnifiedThreat logs)  | Yes, if `product` or `category` is empty | Yes, in [PluginRule](./directive_and_alarm.md#about-directive-rules)
 | plugin_sid |  A unique number that identifies the event *within* the plugin. |Yes, if `product` or `category` is empty | Yes, in [PluginRule](./directive_and_alarm.md#about-directive-rules)
 | custom_label1 | A text identifier for an extra/custom field to use for correlation rules. | No | No
@@ -51,7 +51,7 @@ Suppose your elasticsearch is located at http://elasticsearch:9200 and there is 
 
 * Create an empty dpluger config file template to use:
   ```shell
-  $ ./dpluger create -a http://elasticsearch:9200 -i "suricata-*" -n "suricata" -c dpluger_suricata.json
+  ./dpluger create -a http://elasticsearch:9200 -i "suricata-*" -n "suricata" -c dpluger_suricata.json
   ```
 * The above will create a dpluger config file named `dpluger_suricata.json` in the current directory. The content of the file will be something like this:
   ```json
@@ -112,7 +112,7 @@ Suppose your elasticsearch is located at http://elasticsearch:9200 and there is 
 * After that we can start `dpluger` again with `run` command. This will verify the existence of each field on the target Elasticsearch index, and then create a ready to use Logstash configuration file.
 
   ```bash
-  $ ./dpluger run -c dpluger_suricata.json
+  ./dpluger run -c dpluger_suricata.json
   Creating plugin (logstash config) for suricata, using ES: http://elasticsearch:9200 and index pattern: suricata-*
   2018-11-24T22:52:32.686+0700    INFO    Found ES version 6.4.2
   Checking existence of field alert.signature... OK
@@ -191,7 +191,7 @@ The content of that TSV file will be used as a starting point and lookup table o
 Supply `-t` parameter to `dpluger` to generate a template for a taxonomy-based plugin:
 
 ```shell
-$ ./dpluger create -i firewall-* -t Taxonomy
+./dpluger create -i firewall-* -t Taxonomy
 ```
 
 the resulting `dpluger_config.json` file would be:
@@ -222,6 +222,7 @@ the resulting `dpluger_config.json` file would be:
   }
 }
 ```
+
 Notice how `plugin_id` and `plugin_sid` keys are replaced with `product`, `category`, and `subcategory`. From here on, the steps to complete the plugin is similar with those outlined in Example 1 above.
 
 ### Embed Custom Identifer block from file
