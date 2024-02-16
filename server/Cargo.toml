@@ -30,7 +30,7 @@ moka = { version = "0.9.6", features = ["sync"], default-features = false }
 ip_rfc = "0.1.0"
 async-trait = "0.1.64"
 openssl = { version = "0.10", features = ["vendored"] }
-metered = { git = "https://github.com/nhawkes/metered-rs", branch = "master" }
+metered = { git = "https://github.com/magnet/metered-rs", rev = "3f2d8dc" }
 ctrlc = { version = "3.2.5", features = ["termination"] }
 futures-lite = "1.12.0"
 
