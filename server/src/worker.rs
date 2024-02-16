@@ -329,6 +329,12 @@ mod test {
         event.plugin_id = 1001;
         event.plugin_sid = 50001;
         event.src_ip = "192.168.0.2".parse().unwrap();
+        event.dst_ip = "0.0.0.0".parse().unwrap();
+        event.sensor = "foo".to_owned();
+        event.id = "foo".to_owned();
+        event.title = "bar".to_owned();
+        event.timestamp = chrono::Utc::now();
+
         let payload_str = serde_json::to_string(&event).unwrap();
         let res = w.handle_event_message(&assets, &event_tx, &payload_str);
         assert!(res.is_ok());

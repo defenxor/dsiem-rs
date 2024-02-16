@@ -274,12 +274,10 @@ mod tests {
             json!({
             "event_id": "id1",
             "timestamp": "2023-01-01T00:00:00Z",
+            "title": "foo",
+            "sensor": "foo",
             "src_ip": "10.0.0.3",
             "dst_ip": "10.0.0.2",
-            "src_port": 80,
-            "dst_port": 31337,
-            "sensor": "foo",
-            "protocol": "TCP"
         });
         let b = Body::from(serde_json::to_vec(&evt).unwrap());
         let request = Request::builder()
@@ -295,14 +293,12 @@ mod tests {
             json!({
             "event_id": "id2",
             "timestamp": "2023-01-01T00:00:00Z",
+            "title": "foo",
             "plugin_id": 1001,
             "plugin_sid": 1,
             "src_ip": "10.0.0.3",
             "dst_ip": "10.0.0.2",
-            "src_port": 80,
-            "dst_port": 31337,
             "sensor": "foo",
-            "protocol": "TCP"
         });
 
         tokio::spawn(async move {
