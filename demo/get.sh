@@ -20,12 +20,11 @@ compose_file="docker/docker-compose.yml"
 for line in $(grep -n dsiem:latest ${compose_file} | cut -d: -f1); do
   above=$((line - 1))
   cont_name=$(echo $(sed -n ${above}p ${compose_file} | cut -d: -f2))
-  if [ "$cont_name" == "dsiem-backend" ]; then
+  if [ "$cont_name" == "dsiem-backend" ] || [ "$cont_name" == "dsiem-frontend" ]; then
     sed -i "${line}s/defenxor\/dsiem/defenxor\/dsiem-rs/" ${compose_file}
     patched="yes"
-    break
   fi
 done
 
-[ -z "$patched" ] && echo "** cannot find dsiem-backend line to patch in ${compose_file}" ||
+[ -z "$patched" ] && echo "** cannot find dsiem-backend and dsiem-frontend lines to patch in ${compose_file}" ||
   echo "** ${compose_file} patched"
