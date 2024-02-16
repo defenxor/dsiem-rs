@@ -125,6 +125,8 @@ pub struct Backlog {
     #[serde(skip)]
     pub intel_private_ip: bool,
     #[serde(skip)]
+    pub discard_oor_events: bool,
+    #[serde(skip)]
     metrics: Metrics,
 }
 
@@ -189,6 +191,7 @@ pub struct BacklogOpt<'a> {
     pub med_risk_min: u8,
     pub med_risk_max: u8,
     pub intel_private_ip: bool,
+    pub discard_oor_events: bool,
 }
 
 #[metered(registry = Metrics)]
@@ -206,6 +209,7 @@ impl Backlog {
             priority: o.directive.priority,
             all_rules_always_active: o.directive.all_rules_always_active,
             backpressure_tx: Some(o.bp_tx),
+            discard_oor_events: o.discard_oor_events,
 
             assets: o.asset,
 
@@ -579,7 +583,8 @@ impl Backlog {
 
         if !self.is_time_in_order(&event.timestamp) {
             warn!(self.id, event.id, "discarded out of order event");
-            _ = self.report_to_manager(false);
+            // report this as found or not found based on discard_oor_events flag
+            _ = self.report_to_manager(self.discard_oor_events);
             return Ok(());
         }
 
@@ -1080,6 +1085,7 @@ mod test {
                 med_risk_min: 3,
                 med_risk_max: 6,
                 intel_private_ip: true,
+                discard_oor_events: true,
             }
         };
 
@@ -1196,6 +1202,7 @@ mod test {
             med_risk_min: 3,
             med_risk_max: 6,
             intel_private_ip: true,
+            discard_oor_events: true,
         };
         let backlog = Backlog::new(opt).await.unwrap();
         debug!("backlog: {:?}", backlog);
@@ -1292,6 +1299,7 @@ mod test {
             med_risk_min: 3,
             med_risk_max: 5,
             intel_private_ip: true,
+            discard_oor_events: true,
         };
         let backlog = Backlog::new(opt).await.unwrap();
         let _detached = task::spawn(async move {
@@ -1385,6 +1393,7 @@ mod test {
                 med_risk_min: 3,
                 med_risk_max: 6,
                 intel_private_ip: false,
+                discard_oor_events: true,
             };
             let backlog = Backlog::new(opt).await.unwrap();
             _ = backlog.start(event_rx, Some(evt), resptime_tx, 0).await;

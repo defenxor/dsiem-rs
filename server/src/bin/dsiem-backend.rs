@@ -171,7 +171,7 @@ struct ServeArgs {
         default_value_t = 10
     )]
     hold_duration: u8,
-    /// Max. processing delay before throttling incoming events (under-pressure condition), 0 means disabled"
+    /// Max. processing delay before throttling incoming events (under-pressure condition), 0 means disabled
     #[arg(
         short = 'd',
         long = "max_delay",
@@ -191,6 +191,14 @@ struct ServeArgs {
         default_value_t = true
     )]
     reload_backlogs: bool,
+    /// Discard out of order events, preventing it from creating a new backlog when one is already in progress
+    #[arg(
+        long = "discard-oor-events",
+        env = "DSIEM_DISCARD_OOR_EVENTS",
+        value_name = "boolean",
+        default_value_t = true
+    )]
+    discard_oor_events: bool,
 }
 
 #[tokio::main]
@@ -343,6 +351,7 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         default_tag: sargs.tags[0].clone(),
         intel_private_ip: sargs.intel_private_ip,
         report_tx,
+        discard_oor_events: sargs.discard_oor_events,
     };
     let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
     set.spawn(async {

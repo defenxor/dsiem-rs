@@ -47,6 +47,7 @@ pub struct ManagerOpt {
     pub med_risk_min: u8,
     pub med_risk_max: u8,
     pub report_tx: mpsc::Sender<ManagerReport>,
+    pub discard_oor_events: bool,
 }
 pub struct Manager {
     option: ManagerOpt,
@@ -147,6 +148,7 @@ impl Manager {
                         med_risk_min: self.option.med_risk_min,
                         med_risk_max: self.option.med_risk_max,
                         intel_private_ip: self.option.intel_private_ip,
+                        discard_oor_events: self.option.discard_oor_events,
                         directive: &directive,
                         event: None,
                     }
@@ -276,7 +278,7 @@ impl Manager {
                                 debug!(directive.id, event.id, "failed quick check");
                                 continue;
                             }
-                    
+
                             let mut match_found = false;
                             // keep this lock for the entire event recv() loop so the next event will get updated backlogs
                             let mut backlogs = locked_backlogs.write().await;
@@ -290,7 +292,7 @@ impl Manager {
                                     let mut v = b.found_channel.locked_rx.lock().await;
                                     // timeout is used here since downstream_tx.send() doesn't guarantee there will be a response
                                     // on the found_channel
-                                    if timeout(Duration::from_millis(1000), v.changed()).await.is_ok() && *v.borrow() {
+                                    if timeout(Duration::from_secs(1), v.changed()).await.is_ok() && *v.borrow() {
                                         match_found = true;
                                         break;
                                     } // else: timeout or v.borrow() == false
@@ -395,6 +397,7 @@ mod test {
                 med_risk_min: 3,
                 med_risk_max: 6,
                 report_tx: r,
+                discard_oor_events: true,
             }
         };
 
