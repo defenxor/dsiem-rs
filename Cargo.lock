@@ -1740,7 +1740,7 @@ dependencies = [
 [[package]]
 name = "metered"
 version = "0.9.0"
-source = "git+https://github.com/nhawkes/metered-rs?branch=master#1281366b2844ddd2900ec640ac61a9ea3191fa34"
+source = "git+https://github.com/magnet/metered-rs?rev=3f2d8dc#3f2d8dcf921758dc5ea285562efb25400876ad7f"
 dependencies = [
  "aspect",
  "atomic",
@@ -1754,7 +1754,7 @@ dependencies = [
 [[package]]
 name = "metered-macro"
 version = "0.9.0"
-source = "git+https://github.com/nhawkes/metered-rs?branch=master#1281366b2844ddd2900ec640ac61a9ea3191fa34"
+source = "git+https://github.com/magnet/metered-rs?rev=3f2d8dc#3f2d8dcf921758dc5ea285562efb25400876ad7f"
 dependencies = [
  "aspect-weave",
  "heck",
