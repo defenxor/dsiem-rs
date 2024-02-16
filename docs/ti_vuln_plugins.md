@@ -65,9 +65,9 @@ First you need a working Rust development environment. Just follow the instructi
 Next clone this repository and test the build process. Example on a Linux or OSX system:
 
 ```bash
-$ git clone https://github.com/defenxor/dsiem-rs
-$ cd dsiem-rs
-$ cargo build
+git clone https://github.com/defenxor/dsiem-rs
+cd dsiem-rs
+cargo build
 ```
 
 You should now have a `dsiem-frontend` and `dsiem-backend` binary in `./target/debug/` directory, and ready to start developing a plugin.
@@ -76,23 +76,23 @@ A quick way of creating a new intel plugin by using Wise as template is shown be
 
 ```shell
 # prepare the new plugin files based on wise
-$ cp server/src/intel/plugins/wise.rs server/src/intel/plugins/myintel.rs
+cp server/src/intel/plugins/wise.rs server/src/intel/plugins/myintel.rs
 
 # replace wise -> myintel and Wise -> Myintel in the code
-$ sed -i 's/wise/myintel/g; s/Wise/Myintel/g' server/src/intel/plugins/myintel.rs
+sed -i 's/wise/myintel/g; s/Wise/Myintel/g' server/src/intel/plugins/myintel.rs
 
 # do the same for config file
-$ cp configs/intel_wise.json configs/intel_myintel.json
-$ sed -i 's/Wise/Myintel/g; s/wise/myintel/g' configs/intel_myintel.json
+cp configs/intel_wise.json configs/intel_myintel.json
+sed -i 's/Wise/Myintel/g; s/wise/myintel/g' configs/intel_myintel.json
 
 # insert entry in intel plugins
-$ export MODFILE=server/src/intel/plugins/mod.rs
-$ sed -i '4 i mod myintel;' ${MODFILE}
-$ sed -i '24 i let myintel = Checker::new(Box::<myintel::Myintel>::default(), "Myintel");' ${MODFILE}
-$ sed -i 's/vec!\[wise\]/vec!\[wise, myintel\]/' ${MODFILE}
+export MODFILE=server/src/intel/plugins/mod.rs
+sed -i '4 i mod myintel;' ${MODFILE}
+sed -i '24 i let myintel = Checker::new(Box::<myintel::Myintel>::default(), "Myintel");' ${MODFILE}
+sed -i 's/vec!\[wise\]/vec!\[wise, myintel\]/' ${MODFILE}
 
 # rebuild dsiem binary to include the new plugin
-$ cargo build
+cargo build
 ```
 
 After that, you can start dsiem and verify that the plugin is loaded correctly like so:
@@ -100,19 +100,20 @@ After that, you can start dsiem and verify that the plugin is loaded correctly l
 - Run the docker-compose example environment in a separate terminal:
 
   ```shell
-  $ cd deployments/docker && PROMISC_INTERFACE=eth0 docker-compose up
+  cd deployments/docker && PROMISC_INTERFACE=eth0 docker-compose up
   ```
 
 - Copy the new plugin config file to the expected location:
 
   ```shell
-  $ mkdir -p target/debug/configs && cp configs/intel_myintel.json target/debug/configs/
+  mkdir -p target/debug/configs && cp configs/intel_myintel.json target/debug/configs/
   ```
 
 - Run `dsiem-backend` and filter for relevant entries:
 
   ```shell
-  $ cargo run --bin dsiem-backend -- serve -n dsiem-backend-0 -f http://localhost:8080 2>&1 | grep intel
+  cargo run --bin dsiem-backend -- serve -n dsiem-backend-0 -f http://localhost:8080 2>&1 | grep intel
+  
   2024-02-15T02:30:23.280219Z  INFO dsiem::intel: reading "/home/mmta/proj/dsiem-rs/target/debug/configs/intel_myintel.json"
   2024-02-15T02:30:23.280263Z  INFO dsiem::intel: reading "/home/mmta/proj/dsiem-rs/target/debug/configs/intel_wise.json"
   2024-02-15T02:30:23.280284Z  INFO dsiem::intel: loaded 2 intel plugins

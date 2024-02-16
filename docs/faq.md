@@ -65,7 +65,7 @@ You _really_ should be monitoring Dsiem alarms and events mainly from Kibana. Yo
 If that's not good enough, you can always just use `curl` command against `siem_alarms` index to update the alarm's `tag` and `status` directly 😎. Example on how to change alarm ID q59Azehjpp status to Closed:
 
 ```shell
-$ curl -X POST "localhost:9200/siem_alarms/_update_by_query?pretty" -H 'Content-Type: application/json' -d'
+curl -X POST "localhost:9200/siem_alarms/_update_by_query?pretty" -H 'Content-Type: application/json' -d'
 {
   "script": {
     "source": "ctx._source.status = \"Closed\"",
@@ -97,7 +97,7 @@ Alternative #1: Use SSH tunnel to access those ports
 - Setup appropriate SSH access from your local machine to the remote server where the Docker daemon is running
 - Do this from your local machine:
   ```shell
-  $ ssh $remote_server -L 8080:localhost:8080 -L 9200:localhost:9200 -L 5601:localhost:5601
+  ssh $remote_server -L 8080:localhost:8080 -L 9200:localhost:9200 -L 5601:localhost:5601
   ```
 - Open a browser in your local machine, then access Dsiem UI from http://localhost:8080/ui/, Elasticsearch from http://localhost:9200/, and Kibana from http://localhost:5601/.
 
@@ -128,7 +128,7 @@ Alternative #2: Adjust the `docker-compose.yml` configuration
 
 - Refresh Dsiem container:
   ```shell
-  $ docker-compose up -d
+  docker-compose up -d
   ```
 - Access Dsiem web UI from http://your-server-ip:8080/ui/
 

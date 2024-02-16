@@ -144,58 +144,58 @@ Then after you get a feel on how everything fits together, you can start integra
 
 * Set Dsiem frontend to auto-start:
   
-    ```shell
-    [ "$EUID" -ne 0 ] && echo must be run as root! || ( \
-    cat <<EOF > /etc/systemd/system/dsiem-frontend.service
+  ```shell
+  [ "$EUID" -ne 0 ] && echo must be run as root! || ( \
+  cat <<EOF > /etc/systemd/system/dsiem-frontend.service
 
-    [Unit]
-    Description=Dsiem Frontend
-    After=network.target
+  [Unit]
+  Description=Dsiem Frontend
+  After=network.target
 
-    [Service]
-    Type=simple
-    WorkingDirectory=/var/dsiem
-    Environment="DSIEM_NODE=dsiem-frontend-0"
-    Environment="DSIEM_MSQ=nats://localhost:4222"
-    ExecStart=/var/dsiem/dsiem-frontend serve
-    Restart=on-failure
+  [Service]
+  Type=simple
+  WorkingDirectory=/var/dsiem
+  Environment="DSIEM_NODE=dsiem-frontend-0"
+  Environment="DSIEM_MSQ=nats://localhost:4222"
+  ExecStart=/var/dsiem/dsiem-frontend serve
+  Restart=on-failure
 
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-    systemctl daemon-reload && \
-    systemctl enable dsiem-frontend.service && \
-    systemctl start dsiem-frontend.service && \
-    systemctl status dsiem-frontend.service
-    )
-    ```
+  [Install]
+  WantedBy=multi-user.target
+  EOF
+  systemctl daemon-reload && \
+  systemctl enable dsiem-frontend.service && \
+  systemctl start dsiem-frontend.service && \
+  systemctl status dsiem-frontend.service
+  )
+  ```
 
 * And for Dsiem backend:
 
   ```shell
-    [ "$EUID" -ne 0 ] && echo must be run as root! || ( \
-    cat <<EOF > /etc/systemd/system/dsiem-backend.service 
-    [Unit]
-    Description=Dsiem Backend
-    After=network.target
+  [ "$EUID" -ne 0 ] && echo must be run as root! || ( \
+  cat <<EOF > /etc/systemd/system/dsiem-backend.service 
+  [Unit]
+  Description=Dsiem Backend
+  After=network.target
 
-    [Service]
-    Type=simple
-    WorkingDirectory=/var/dsiem
-    Environment="DSIEM_NODE=dsiem-backend-0"
-    Environment="DSIEM_MSQ=nats://localhost:4222"
-    Environment="DSIEM_FRONTEND=nats://localhost:8080"
-    ExecStart=/var/dsiem/dsiem-backend serve
-    Restart=on-failure
+  [Service]
+  Type=simple
+  WorkingDirectory=/var/dsiem
+  Environment="DSIEM_NODE=dsiem-backend-0"
+  Environment="DSIEM_MSQ=nats://localhost:4222"
+  Environment="DSIEM_FRONTEND=nats://localhost:8080"
+  ExecStart=/var/dsiem/dsiem-backend serve
+  Restart=on-failure
 
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-    systemctl daemon-reload && \
-    systemctl enable dsiem-backend.service && \
-    systemctl start dsiem-backend.service && \
-    systemctl status dsiem-backend.service
-    )
+  [Install]
+  WantedBy=multi-user.target
+  EOF
+  systemctl daemon-reload && \
+  systemctl enable dsiem-backend.service && \
+  systemctl start dsiem-backend.service && \
+  systemctl status dsiem-backend.service
+  )
   ```
 
 * At this point, Dsiem web UI should be accessible from http://HostIPAddress:8080/ui

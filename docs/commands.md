@@ -5,7 +5,7 @@
 All executables and their sub-commands have `-h` or `--help` flag that will outline and describe all available parameters. For example:
 
 ```shell
-$ ./dsiem-frontend -h
+./dsiem-frontend -h
 Dsiem frontend server
 
 Usage: 
@@ -25,7 +25,7 @@ Options:
 ```
 
 ```shell
-$ ./dsiem-frontend serve -h
+./dsiem-frontend serve -h
 Start Dsiem frontend server
 
 Usage: 
@@ -58,12 +58,12 @@ Options:
 Each flag can be configured through command line parameter or environment variable. As an example, it is possible to execute `./dsiem-frontend serve` above with `node` set to `dsiem-0` like this:
 
 ```shell
-$ ./dsiem-frontend serve --node=dsiem-0
+./dsiem-frontend serve --node=dsiem-0
 ```
 or
 ```shell
-$ export DSIEM_NODE=dsiem-0
-$ ./dsiem-frontend serve
+export DSIEM_NODE=dsiem-0
+./dsiem-frontend serve
 ```
 
 Notice how the environment variable above starts with `DSIEM_` string. The same applies for all parameters, so to configure the `max_eps` flag, you will need to set environment variable `DSIEM_MAXEPS`, and so on.
