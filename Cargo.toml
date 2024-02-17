@@ -8,10 +8,6 @@ default-members = [
   "server"
 ]
 
-exclude = [
-  "scripts"
-]
-
 [workspace.package]
 version = "1.0.0"
 authors = ["Dsiem Authors"]
