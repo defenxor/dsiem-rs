@@ -1,11 +1,35 @@
-name: Conventional Labels
+name: Conventional labels
 on:
-  pull_request_target:
-    types: [ opened, edited ]
+  pull_request:
+    branches: [main]
+    types:
+      [opened, reopened, labeled, unlabeled, synchronize]
+
 jobs:
   label:
     runs-on: ubuntu-latest
+    name: Assign labels in pull request
+    if: github.event.pull_request.merged == false
     steps:
-      - uses: bcoe/conventional-release-labels@v1
-        with:
-          ignored_types: 'chore,ci,build'
+    - name: assign labels
+      id: action-assign-labels      
+      uses: mauroalderete/action-assign-labels@v1
+      with:
+        pull-request-number: ${{ github.event.pull_request.number }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        conventional-commits: |
+          conventional-commits:
+            - type: 'fix'
+              nouns: ['fix']
+              labels: ['fix']
+            - type: 'feature'
+              nouns: ['feat']
+              labels: ['feature']
+            - type: 'breaking_change'
+              nouns: ['BREAKING CHANGE', 'BREAKING', 'MAJOR']
+              labels: ['breaking']
+            - type: 'documentation'
+              nouns: ['doc','docu','document','documentation']
+              labels: ['documentation']
+        maintain-labels-not-matched: false
+        apply-changes: true

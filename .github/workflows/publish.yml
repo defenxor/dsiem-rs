@@ -21,16 +21,12 @@ jobs:
           latest: true
           prerelease: false
           doNotFailIfNotFound: true
-      - uses: crusty-pie/toolchain@v1
-        with:
-          profile: minimal
       - name: compare versions
+        uses: mmta/should-release-action@v1.0.0
         id: comp_ver
-        env:
-          REL_TAG: ${{ steps.check_rel.outputs.tag_name }}
-        run: |
-          cd scripts
-          cargo run ../Cargo.toml
+        with:
+          file_path: Cargo.toml
+          release_tag: ${{ steps.check_rel.outputs.tag_name }}          
 
   publish-new-version:
     needs: check-versions
