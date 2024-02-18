@@ -1,7 +1,7 @@
 name: Conventional labels
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     types:
       [opened, reopened, labeled, unlabeled, synchronize]
 
