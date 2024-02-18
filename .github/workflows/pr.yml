@@ -14,10 +14,11 @@ jobs:
           profile: minimal
           targets: wasm32-unknown-unknown
           components: clippy
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2.7.3
       - name: lint
         run: |
           cargo clippy
-      - uses: taiki-e/install-action@cargo-llvm-cov
       - name: run tests and their coverage
         timeout-minutes: 10
         run: |
