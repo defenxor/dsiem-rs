@@ -10,5 +10,5 @@ On the design side, we aimed to:
 * Provide secure defaults. For instance, Write access to configs directory is only needed by web UI and is therefore turned off by-default.
 
 On the implementation side, we tried to:
-* Check and handle all errors appropriately. Go verbose error handling style and early return convention makes it easy to reason about errors and their potential impact. 
-* For the HTTP endpoint part, obviously we try to check all user inputs and return [418 status code](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/418) as needed.
+* Check and handle all errors appropriately, and maintain a high test coverage.
+* For the HTTP endpoint part, obviously we check all user inputs and return [418 status code](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/418) as needed.

@@ -26,14 +26,6 @@ Whatever additional functionalities you think should be in Dsiem, they're probab
 
 To further illustrate this point, the only reason there's a web UI for Dsiem is because Kibana doesn't have a widget to do two things that we need: updating a document's field (alarm's `status` and `tags`), and presenting a many-many relationship (between `siem_alarms` and `siem_events` indices, through `siem_alarm_events`).
 
-## Elastic already has its own SIEM, why should I use Dsiem?
-
-Dsiem, OSSIM, and other similar systems that produce alarms based on predefined correlation rules have their own advantages in certain areas over the more flexible and ad hoc approach that systems like Elastic SIEM have.
-
-For instance, the quantity of alarms produced by correlation rules will always be many orders of magnitude fewer than the number of events coming into the system. An alarm-based system allows security monitoring team to have a measurable baseline performance target like, "all alarms shall be investigated within 30 minutes timeframe". That kind of coverage commitment will be harder to formulate when the team have to deal directly with all the raw events coming into the system.
-
-That said, there's no reason not to use both approaches if you have the resources for it. At Defenxor we use correlation rules to deal with known and repetitive threats, and the more flexible approach that Kibana and Elastic SIEM offer to look for patterns that could potentially be used as new rules.
-
 ## Why alarms have to flow from Dsiem → Filebeat → Logstash → Elasticsearch? Can't you send directly to ES?
 
 Filebeat is used so Dsiem doesn't have to deal with network related errors or congestion in Logstash pipeline. Logstash is used so we can transform data as much as possible using its filter configuration instead of having to code them inside Dsiem. Elasticsearch API and client libraries changes frequently, so sending alarms directly to Elasticsearch may requires us to maintain a specific Dsiem version for each version of Elasticsearch.
@@ -114,23 +106,11 @@ Alternative #2: Adjust the `docker-compose.yml` configuration
 
   Replace `localhost` above with the actual server IP address or hostname that is accessible from the browser.
 
-- Then search for this line in the same file above:
-
-  ```yaml
-  - http.cors.allow-origin=/https?:\/\/localhost(:[0-9]+)?/
-  ```
-
-  and replace it with:
-
-  ```yaml
-  - http.cors.allow-origin=*
-  ```
-
 - Refresh Dsiem container:
   ```shell
   docker-compose up -d
   ```
-- Access Dsiem web UI from http://your-server-ip:8080/ui/
+- Access Kibana from http://your-server-ip:5601, `Dsiem Link` from the dashboard will now open Dsiem UI at http://your-server-ip:8080/. 
 
 ## How to restrict access to and/or lockdown the web UI?
 

@@ -4,7 +4,7 @@
 
 - A Unix shell environment, with a working `git` and `docker` command.
 - [Rust](https://www.rust-lang.org/tools/install) tools.
-- Basic [NodeJs] 
+- Basic [NodeJs](https://nodejs.org/en/download) environment for the CSS files.
 
 ## Steps
 
