@@ -1,16 +1,16 @@
-use std::{ fs, str::FromStr, sync::Arc };
 use parking_lot::RwLock;
 use regex::Regex;
 use serde_derive::Deserialize;
+use std::{fs, str::FromStr, sync::Arc};
 extern crate glob;
+use anyhow::{anyhow, Result};
 use glob::glob;
-use tracing::{ info, warn };
-use anyhow::{ Result, anyhow };
+use tracing::{info, warn};
 
 use crate::{
-    rule::{ self, RuleType, DirectiveRule },
-    utils::{ self, ref_to_digit },
     event::NormalizedEvent,
+    rule::{self, DirectiveRule, RuleType},
+    utils::{self, ref_to_digit},
 };
 
 const DIRECTIVES_GLOB: &str = "directives_*.json";
@@ -158,40 +158,35 @@ fn validate_rules(rules: &Vec<rule::DirectiveRule>) -> Result<()> {
         }
         if r.rule_type == RuleType::TaxonomyRule {
             if r.product.is_empty() {
-                return Err(
-                    anyhow!(
-                        "rule stage {} is a TaxonomyRule and requires product to be defined",
-                        r.stage
-                    )
-                );
+                return Err(anyhow!(
+                    "rule stage {} is a TaxonomyRule and requires product to be defined",
+                    r.stage
+                ));
             }
             if r.category.is_empty() {
-                return Err(
-                    anyhow!(
-                        "rule stage {} is a TaxonomyRule and requires category to be defined",
-                        r.stage
-                    )
-                );
+                return Err(anyhow!(
+                    "rule stage {} is a TaxonomyRule and requires category to be defined",
+                    r.stage
+                ));
             }
         }
         if r.reliability > 10 {
-            return Err(anyhow!("rule stage {} reliability must be between 0 to 10", r.stage));
+            return Err(anyhow!(
+                "rule stage {} reliability must be between 0 to 10",
+                r.stage
+            ));
         }
 
         let is_first_rule = r.stage == 1;
 
-        validate_port(r.port_from.clone(), is_first_rule, highest_stage).map_err(|e|
-            anyhow!("rule stage {} port_from is invalid: {}", r.stage, e)
-        )?;
-        validate_port(r.port_to.clone(), is_first_rule, highest_stage).map_err(|e|
-            anyhow!("rule stage {} port_to is invalid: {}", r.stage, e)
-        )?;
-        validate_fromto(r.from.clone(), is_first_rule, highest_stage).map_err(|e|
-            anyhow!("rule stage {} from address is invalid: {}", r.stage, e)
-        )?;
-        validate_fromto(r.to.clone(), is_first_rule, highest_stage).map_err(|e|
-            anyhow!("rule stage {} to address is invalid: {}", r.stage, e)
-        )?;
+        validate_port(r.port_from.clone(), is_first_rule, highest_stage)
+            .map_err(|e| anyhow!("rule stage {} port_from is invalid: {}", r.stage, e))?;
+        validate_port(r.port_to.clone(), is_first_rule, highest_stage)
+            .map_err(|e| anyhow!("rule stage {} port_to is invalid: {}", r.stage, e))?;
+        validate_fromto(r.from.clone(), is_first_rule, highest_stage)
+            .map_err(|e| anyhow!("rule stage {} from address is invalid: {}", r.stage, e))?;
+        validate_fromto(r.to.clone(), is_first_rule, highest_stage)
+            .map_err(|e| anyhow!("rule stage {} to address is invalid: {}", r.stage, e))?;
 
         stages.push(r.stage);
     }
@@ -281,17 +276,19 @@ fn validate_directive(d: &Directive, loaded: &Vec<Directive>) -> Result<()> {
         return Err(anyhow!("directive ID {} category is empty", d.id));
     }
     if d.priority < 1 || d.priority > 5 {
-        return Err(anyhow!("directive ID {} priority must be between 1 to 5", d.id));
+        return Err(anyhow!(
+            "directive ID {} priority must be between 1 to 5",
+            d.id
+        ));
     }
     if d.rules.len() <= 1 {
-        return Err(
-            anyhow!(
-                "directive ID {} has no rule or only has one and therefore will never expire",
-                d.id
-            )
-        );
+        return Err(anyhow!(
+            "directive ID {} has no rule or only has one and therefore will never expire",
+            d.id
+        ));
     }
-    validate_rules(&d.rules).map_err(|e| anyhow!("Directive ID {} rules has error: {}", d.id, e))?;
+    validate_rules(&d.rules)
+        .map_err(|e| anyhow!("Directive ID {} rules has error: {}", d.id, e))?;
     Ok(())
 }
 
@@ -328,7 +325,7 @@ mod test {
     fn test_load_directives() {
         let res = load_directives(
             true,
-            Some(vec!["directives".to_owned(), "directive1".to_owned()])
+            Some(vec!["directives".to_owned(), "directive1".to_owned()]),
         );
         assert!(res.is_err());
         assert_eq!(res.unwrap_err().to_string(), "directive ID 1 already exist");

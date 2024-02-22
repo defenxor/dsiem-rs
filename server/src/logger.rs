@@ -1,8 +1,10 @@
-use tracing::{ metadata::LevelFilter, Subscriber };
-use tracing_subscriber::{ Layer, Registry, prelude::__tracing_subscriber_SubscriberExt };
+use tracing::{metadata::LevelFilter, Subscriber};
+use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, Layer, Registry};
 
 pub fn setup_logger_json(log_severity: LevelFilter) -> std::io::Result<impl Subscriber> {
-    let stdout_log = tracing_subscriber::fmt::layer().json().with_filter(log_severity);
+    let stdout_log = tracing_subscriber::fmt::layer()
+        .json()
+        .with_filter(log_severity);
     let subscriber = Registry::default().with(stdout_log);
     Ok(subscriber)
 }

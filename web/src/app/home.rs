@@ -1,5 +1,5 @@
+use crate::services::config::{DSIEM_CONFIG_URL, ES_CONFIG_URL};
 use yew::prelude::*;
-use crate::services::config::{ DSIEM_CONFIG_URL, ES_CONFIG_URL };
 
 /// Home page with an article list and a tag list.
 #[function_component(Home)]
@@ -28,7 +28,7 @@ pub fn home() -> Html {
                 <div class="mb-4">
                   {"Dsiem config file should be created automatically by the frontend node when "}<code>{"WRITEABLE_CONFIG"}</code> {" environment variable is set to true. "}
                   {"ES config file should be created automatically by the frontend node based on "}<code>{"DSIEM_WEB_ESURL"}</code> {" and "}<code>{"DSIEM_WEB_KBNURL"}</code> {" environment variables."}
-                </div>                
+                </div>
                 <div class="mb-4">
                   {"Refer to the example "}<b><a href={"https://github.com/defenxor/dsiem/tree/master/deployments/docker"}>{"docker-compose files"}</a></b>{" on how to set those environment variables."}
                 </div>

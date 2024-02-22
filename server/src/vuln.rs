@@ -1,10 +1,10 @@
-use std::{ net::IpAddr, collections::HashSet, fs, sync::Arc, fmt, time::Duration };
-use moka::sync::Cache;
 use anyhow::Result;
-use serde::{ Deserialize, Serialize };
-use tracing::{ info, debug };
-use glob::glob;
 use async_trait::async_trait;
+use glob::glob;
+use moka::sync::Cache;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
+use tracing::{debug, info};
 
 use crate::utils;
 mod plugins;
@@ -64,8 +64,9 @@ impl VulnPlugin {
             } else {
                 let v = tokio::time::timeout(
                     Duration::from_secs(VULN_MAX_SECONDS),
-                    c.plugin.check_ip_port(ip, port)
-                ).await??;
+                    c.plugin.check_ip_port(ip, port),
+                )
+                .await??;
                 debug!("obtained vuln result for {}", ip);
                 v
             };

@@ -1,13 +1,13 @@
+use crate::services::alarm::{self, Alarm, MAX_EVENTS};
 use chrono::TimeZone;
 use chrono::Utc;
+use gloo_timers::callback::Timeout;
 use wasm_bindgen::JsCast;
 use web_sys::window;
 use web_sys::EventTarget;
 use web_sys::HtmlSelectElement;
-use gloo_timers::callback::Timeout;
 use yew::prelude::*;
 use yew_hooks::prelude::*;
-use crate::services::alarm::{ self, Alarm, MAX_EVENTS };
 
 #[derive(Properties, PartialEq)]
 pub struct DetailProps {
@@ -39,9 +39,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
         let alarm_id = a.id.clone();
         let index = a.perm_index.clone();
         let search_cfg = a.search_config.clone();
-        async move {
-            alarm::update_field(&search_cfg, index, alarm_id, "tag".to_owned(), tag).await
-        }
+        async move { alarm::update_field(&search_cfg, index, alarm_id, "tag".to_owned(), tag).await }
     });
 
     let delete_alarm = use_async({
@@ -64,7 +62,8 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                         toast_show.set(true);
                         Timeout::new(3000, move || {
                             toast_show.set(false);
-                        }).forget();
+                        })
+                        .forget();
                         return;
                     }
                     if let Some(result) = &update_status.data {
@@ -73,12 +72,13 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                         toast_show.set(true);
                         Timeout::new(3000, move || {
                             toast_show.set(false);
-                        }).forget();
+                        })
+                        .forget();
                     }
                 }
             }
         },
-        update_status.loading
+        update_status.loading,
     );
 
     use_effect_with_deps(
@@ -95,7 +95,8 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                         toast_show.set(true);
                         Timeout::new(3000, move || {
                             toast_show.set(false);
-                        }).forget();
+                        })
+                        .forget();
                         return;
                     }
                     if let Some(result) = &update_tag.data {
@@ -104,12 +105,13 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                         toast_show.set(true);
                         Timeout::new(3000, move || {
                             toast_show.set(false);
-                        }).forget();
+                        })
+                        .forget();
                     }
                 }
             }
         },
-        update_tag.loading
+        update_tag.loading,
     );
 
     use_effect_with_deps(
@@ -126,7 +128,8 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                         toast_show.set(true);
                         Timeout::new(3000, move || {
                             toast_show.set(false);
-                        }).forget();
+                        })
+                        .forget();
                         return;
                     }
                     if let Some(result) = &delete_alarm.data {
@@ -138,12 +141,13 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                             if let Some(window) = window() {
                                 _ = window.close();
                             }
-                        }).forget();
+                        })
+                        .forget();
                     }
                 }
             }
         },
-        delete_alarm.loading
+        delete_alarm.loading,
     );
 
     let on_status_change = {
@@ -151,9 +155,8 @@ pub fn alarm_view(props: &DetailProps) -> Html {
         let update_status = update_status.clone();
         Callback::from(move |e: Event| {
             let target: Option<EventTarget> = e.target();
-            let input: Option<HtmlSelectElement> = target.and_then(|t|
-                t.dyn_into::<HtmlSelectElement>().ok()
-            );
+            let input: Option<HtmlSelectElement> =
+                target.and_then(|t| t.dyn_into::<HtmlSelectElement>().ok());
             if let Some(input) = input {
                 status_handle.set(input.value());
                 update_status.run();
@@ -166,9 +169,8 @@ pub fn alarm_view(props: &DetailProps) -> Html {
         let update_tag = update_tag.clone();
         Callback::from(move |e: Event| {
             let target: Option<EventTarget> = e.target();
-            let input: Option<HtmlSelectElement> = target.and_then(|t|
-                t.dyn_into::<HtmlSelectElement>().ok()
-            );
+            let input: Option<HtmlSelectElement> =
+                target.and_then(|t| t.dyn_into::<HtmlSelectElement>().ok());
             if let Some(input) = input {
                 tag_handle.set(input.value());
                 update_tag.run();
@@ -255,7 +257,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                             }).collect::<Html>()
                         }
                         </select>
-                        
+
                         </td>
                         <td class={classes!("px-6","py-4")}>{a.src_ips.clone()}</td>
                         <td class={classes!("px-6","py-4")}>{a.dst_ips.clone()}</td>
@@ -441,7 +443,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             // events
             <div class={classes!("px-4", "py-5", "sm:px-6")}>
                 <h5 class={classes!( "font-medium", "leading-6", "text-gray-900", "dark:text-white/75")}>{"Events"}</h5>
-                { 
+                {
                     if a.max_events_reached {
                         html! {
                             <span class={classes!("text-red-500", "mt-2")}>{ format!("Max number of events to load: {}", MAX_EVENTS )}</span>
@@ -500,7 +502,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             </div>
             </div>
             <br/><br/>
-         
+
         </div>
     }
 }

@@ -1,11 +1,14 @@
-use std::{ time::Duration, collections::HashMap };
+use std::{collections::HashMap, time::Duration};
 
-use metered::{ metered, Throughput, hdr_histogram::HdrHistogram };
-use tokio::{ sync::{ broadcast, mpsc }, time::interval };
 use anyhow::Result;
-use tracing::{ info, warn };
+use metered::{hdr_histogram::HdrHistogram, metered, Throughput};
+use tokio::{
+    sync::{broadcast, mpsc},
+    time::interval,
+};
+use tracing::{info, warn};
 
-use crate::{ event::NormalizedEvent, manager::ManagerReport };
+use crate::{event::NormalizedEvent, manager::ManagerReport};
 
 #[derive(Default)]
 pub struct Watchdog {
@@ -79,7 +82,7 @@ fn round(x: f64, decimals: u32) -> f64 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use tokio::{ time::sleep, task };
+    use tokio::{task, time::sleep};
     use tracing_test::traced_test;
 
     #[tokio::test]

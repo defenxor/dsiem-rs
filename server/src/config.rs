@@ -1,11 +1,11 @@
-use std::{ fs::File, io::Write };
 use std::str;
+use std::{fs::File, io::Write};
 
 use crate::utils;
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_derive::Serialize;
 use tracing::debug;
-use anyhow::{ Result, Context };
 
 #[derive(Deserialize)]
 struct ConfigFile {
@@ -29,26 +29,26 @@ pub fn write_dsiem_config(test_env: bool, status: Vec<String>, tags: Vec<String>
         utils::config_dir(test_env, None)?
     };
     let path = config_dir.to_string_lossy().to_string() + "/dsiem_config.json";
-    let mut local = File::create(&path).context(
-        format!("cannot create dsiem config file {}", path)
-    )?;
-    let c = DsiemConfig {
-        status,
-        tags,
-    };
+    let mut local =
+        File::create(&path).context(format!("cannot create dsiem config file {}", path))?;
+    let c = DsiemConfig { status, tags };
     let content = serde_json::to_string_pretty(&c)?;
-    local.write_all(content.as_bytes()).context("cannot write file")?;
+    local
+        .write_all(content.as_bytes())
+        .context("cannot write file")?;
     Ok(())
 }
 
 async fn list_config_files(frontend_url: String) -> Result<Vec<ConfigFile>> {
     debug!("listing config files from {}", frontend_url);
-    let resp = reqwest
-        ::get(frontend_url.clone() + "/config/").await
+    let resp = reqwest::get(frontend_url.clone() + "/config/")
+        .await
         .context("cannot get a list of config files from frontend")?;
-    let text = resp.text().await.context("cannot parse response for request to list config files")?;
-    let c: ConfigFiles = serde_json
-        ::from_str(&text)
+    let text = resp
+        .text()
+        .await
+        .context("cannot parse response for request to list config files")?;
+    let c: ConfigFiles = serde_json::from_str(&text)
         .context("cannot parse response for request to list config files. text: {}")?;
     debug!("found {} config files", c.files.len());
     Ok(c.files)
@@ -58,26 +58,29 @@ pub async fn download_files(
     test_env: bool,
     subdir: Option<Vec<String>>,
     frontend_url: String,
-    node_name: String
+    node_name: String,
 ) -> Result<()> {
-    let config_dir = utils::config_dir(test_env, subdir)?.to_string_lossy().to_string();
+    let config_dir = utils::config_dir(test_env, subdir)?
+        .to_string_lossy()
+        .to_string();
     let files = list_config_files(frontend_url.clone()).await?;
-    for f in files
-        .into_iter()
-        .filter(
-            |f|
-                f.filename.starts_with("assets_") ||
-                f.filename.starts_with("intel_") ||
-                f.filename.starts_with("vuln_") ||
-                f.filename.starts_with(&format!("directives_{}", node_name.clone()))
-        ) {
+    for f in files.into_iter().filter(|f| {
+        f.filename.starts_with("assets_")
+            || f.filename.starts_with("intel_")
+            || f.filename.starts_with("vuln_")
+            || f.filename
+                .starts_with(&format!("directives_{}", node_name.clone()))
+    }) {
         let url = frontend_url.clone() + "/config/" + &f.filename;
         debug!("downloading config file {}", url.clone());
         let resp = reqwest::get(url.clone()).await?;
         let content = resp.text().await?;
         let path = config_dir.clone() + "/" + &f.filename;
-        let mut local = File::create(&path).context(format!("cannot create config file {}", path))?;
-        local.write_all(content.as_bytes()).context("cannot write file")?;
+        let mut local =
+            File::create(&path).context(format!("cannot create config file {}", path))?;
+        local
+            .write_all(content.as_bytes())
+            .context("cannot write file")?;
     }
 
     Ok(())
@@ -96,14 +99,17 @@ mod test {
         let url = server.url();
         debug!("using url: {}", url.clone());
         tokio::spawn(async move {
-            let _m1 = server.mock("GET", "/config/").with_status(418).create_async().await;
+            let _m1 = server
+                .mock("GET", "/config/")
+                .with_status(418)
+                .create_async()
+                .await;
         });
 
         let res = list_config_files(url).await;
         assert!(res.is_err());
 
-        let file_list =
-            r#"{ 
+        let file_list = r#"{ 
                 "files" : [
                   {"filename" : "assets_foo.json"},
                   {"filename" : "intel_bar.json"},
@@ -148,8 +154,9 @@ mod test {
             true,
             Some(vec!["dl_config".to_owned()]),
             url,
-            "qux".to_owned()
-        ).await;
+            "qux".to_owned(),
+        )
+        .await;
         assert!(res.is_ok());
     }
 }

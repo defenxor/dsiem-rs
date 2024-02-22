@@ -1,10 +1,10 @@
-use std::{ collections::HashSet, fs, fmt, net::IpAddr, sync::Arc, time::Duration };
-use moka::sync::Cache;
 use anyhow::Result;
-use serde::{ Deserialize, Serialize };
-use tracing::{ info, debug };
-use glob::glob;
 use async_trait::async_trait;
+use glob::glob;
+use moka::sync::Cache;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
+use tracing::{debug, info};
 
 use crate::utils;
 
@@ -58,7 +58,7 @@ impl IntelPlugin {
     pub async fn run_checkers(
         &self,
         check_private_ip: bool,
-        targets: HashSet<IpAddr>
+        targets: HashSet<IpAddr>,
     ) -> Result<HashSet<IntelResult>> {
         let mut set = HashSet::new();
         for c in self.checkers.iter() {
@@ -73,8 +73,9 @@ impl IntelPlugin {
                 } else {
                     let v = tokio::time::timeout(
                         Duration::from_secs(INTEL_MAX_SECONDS),
-                        c.plugin.check_ip(*ip)
-                    ).await??;
+                        c.plugin.check_ip(*ip),
+                    )
+                    .await??;
                     debug!("obtained intel result for {}", ip);
                     v
                 };

@@ -1,11 +1,11 @@
-use std::collections::HashSet;
-use std::net::IpAddr;
+use super::{VulnChecker, VulnResult};
 use anyhow::Context;
 use anyhow::Result;
-use serde::Deserialize;
-use tracing::trace;
 use async_trait::async_trait;
-use super::{ VulnChecker, VulnResult };
+use serde::Deserialize;
+use std::collections::HashSet;
+use std::net::IpAddr;
+use tracing::trace;
 
 #[derive(Deserialize, Default)]
 struct Config {
@@ -27,16 +27,19 @@ pub struct NesdResult {
 #[async_trait]
 impl VulnChecker for Nesd {
     async fn check_ip_port(&self, ip: IpAddr, port: u16) -> Result<HashSet<VulnResult>> {
-        let url = self.config.url
+        let url = self
+            .config
+            .url
             .replacen("${ip}", &ip.to_string(), 1)
             .replacen("${port}", &port.to_string(), 1);
 
         trace!(url, "nesd vuln check");
 
-        let text = reqwest
-            ::get(url).await
+        let text = reqwest::get(url)
+            .await
             .context("get request error")?
-            .text().await
+            .text()
+            .await
             .context("error obtaining text")?;
 
         trace!(text, "nesd vuln check");
@@ -47,9 +50,8 @@ impl VulnChecker for Nesd {
             return Ok(results);
         }
 
-        let res: Vec<NesdResult> = serde_json
-            ::from_str(&text)
-            .context("error parsing nesd result")?;
+        let res: Vec<NesdResult> =
+            serde_json::from_str(&text).context("error parsing nesd result")?;
 
         for v in res.iter() {
             if v.risk != "Medium" && v.risk != "High" && v.risk != "Critical" {

@@ -9,7 +9,7 @@ pub fn header() -> Html {
                 <h1 id="title" class={classes!("text-lg", "font-medium", "dark:text-gray-900", "dark:text-white")}>{"Dsiem Web UI"}</h1>
             </div>
             <hr class="border-gray-200 sm:mx-auto dark:border-gray-700" />
-        </div> 
+        </div>
         </header>
     }
 }

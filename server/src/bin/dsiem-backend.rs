@@ -1,24 +1,15 @@
 use std::sync::Arc;
 
-use std::time::Duration;
-use clap::{ Parser, arg, command, Subcommand, Args };
-use tokio::{ task::JoinSet, time::sleep };
-use tracing::{ info, error };
-use anyhow::{ Result, Error, anyhow };
-use tokio::sync::{ broadcast, mpsc };
+use anyhow::{anyhow, Error, Result};
+use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
-    manager::ManagerOpt,
-    watchdog::WatchdogOpt,
-    asset::NetworkAssets,
-    logger,
-    config,
-    worker,
-    directive,
-    intel,
-    manager,
-    vuln,
-    watchdog,
+    asset::NetworkAssets, config, directive, intel, logger, manager, manager::ManagerOpt, vuln,
+    watchdog, watchdog::WatchdogOpt, worker,
 };
+use std::time::Duration;
+use tokio::sync::{broadcast, mpsc};
+use tokio::{task::JoinSet, time::sleep};
+use tracing::{error, info};
 
 const REPORT_INTERVAL_IN_SECONDS: u64 = 10;
 
@@ -39,10 +30,20 @@ struct Cli {
     #[arg(short('v'), long, action = clap::ArgAction::Count)]
     verbosity: u8,
     /// Enable debug output, for compatibility purpose
-    #[arg(long = "debug", env = "DSIEM_DEBUG", value_name = "boolean", default_value_t = false)]
+    #[arg(
+        long = "debug",
+        env = "DSIEM_DEBUG",
+        value_name = "boolean",
+        default_value_t = false
+    )]
     debug: bool,
     /// Enable trace output, for compatibility purpose
-    #[arg(long = "trace", env = "DSIEM_TRACE", value_name = "boolean", default_value_t = false)]
+    #[arg(
+        long = "trace",
+        env = "DSIEM_TRACE",
+        value_name = "boolean",
+        default_value_t = false
+    )]
     trace: bool,
     /// Enable json-lines log output
     #[arg(
@@ -64,7 +65,8 @@ enum SubCommands {
         about = "Start Dsiem backend server",
         long_about = "Start the Dsiem backend server",
         name = "serve"
-    )] ServeCommand(ServeArgs),
+    )]
+    ServeCommand(ServeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -181,7 +183,11 @@ struct ServeArgs {
     )]
     max_delay: u16,
     /// Check private IP addresses against threat intel
-    #[arg(long = "intel_private_ip", env = "DSIEM_INTELPRIVATEIP", default_value_t = false)]
+    #[arg(
+        long = "intel_private_ip",
+        env = "DSIEM_INTELPRIVATEIP",
+        default_value_t = false
+    )]
     intel_private_ip: bool,
     /// Save and reload running backlogs on restart
     #[arg(
@@ -205,7 +211,13 @@ fn log_startup_err(context: &str, err: Error) -> Error {
 
 async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let test_env = args.test_env;
-    let verbosity = if args.debug { 1 } else if args.trace { 2 } else { args.verbosity };
+    let verbosity = if args.debug {
+        1
+    } else if args.trace {
+        2
+    } else {
+        args.verbosity
+    };
     let level = logger::verbosity_to_level_filter(verbosity);
     let sub_json = logger::setup_logger_json(level)?;
     let sub = logger::setup_logger(level)?;
@@ -221,28 +233,28 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let SubCommands::ServeCommand(sargs) = args.subcommand;
     info!(
         "starting dsiem backend server with frontend {} and message queue {}",
-        sargs.frontend,
-        sargs.msq
+        sargs.frontend, sargs.msq
     );
 
     // we take in unsigned values from CLI to make sure there's no negative numbers, and convert them
     // to signed value required by timestamp related APIs.
-    let max_delay = chrono::Duration
-        ::seconds(sargs.max_delay.into())
+    let max_delay = chrono::Duration::seconds(sargs.max_delay.into())
         .num_nanoseconds()
         .ok_or_else(|| log_startup_err("reading max_delay", anyhow!("invalid value provided")))?;
-    let min_alarm_lifetime = chrono::Duration
-        ::minutes(sargs.min_alarm_lifetime.into())
-        .num_seconds();
-    if sargs.med_risk_min < 2 || sargs.med_risk_max > 9 || sargs.med_risk_min == sargs.med_risk_max {
-        return Err(
-            log_startup_err(
-                "reading med_risk_min and med_risk_max",
-                anyhow!("invalid value provided")
-            )
-        );
+    let min_alarm_lifetime =
+        chrono::Duration::minutes(sargs.min_alarm_lifetime.into()).num_seconds();
+    if sargs.med_risk_min < 2 || sargs.med_risk_max > 9 || sargs.med_risk_min == sargs.med_risk_max
+    {
+        return Err(log_startup_err(
+            "reading med_risk_min and med_risk_max",
+            anyhow!("invalid value provided"),
+        ));
     }
-    let max_queue = if sargs.max_queue == 0 { 1_000_000 } else { sargs.max_queue };
+    let max_queue = if sargs.max_queue == 0 {
+        1_000_000
+    } else {
+        sargs.max_queue
+    };
 
     let (event_tx, event_rx) = broadcast::channel(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<()>(8);
@@ -255,19 +267,18 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         let _ = c.send(());
     })?;
 
-    config
-        ::download_files(
-            test_env,
-            Some(vec!["dl_config".to_string()]),
-            sargs.frontend,
-            sargs.node
-        ).await
-        .map_err(|e| log_startup_err("downloading config", e))?;
+    config::download_files(
+        test_env,
+        Some(vec!["dl_config".to_string()]),
+        sargs.frontend,
+        sargs.node,
+    )
+    .await
+    .map_err(|e| log_startup_err("downloading config", e))?;
 
     let assets = Arc::new(
-        NetworkAssets::new(test_env, Some(vec!["assets".to_string()])).map_err(|e|
-            log_startup_err("loading assets", e)
-        )?
+        NetworkAssets::new(test_env, Some(vec!["assets".to_string()]))
+            .map_err(|e| log_startup_err("loading assets", e))?,
     );
 
     let mut set = JoinSet::new();
@@ -285,24 +296,26 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
                 hold_duration: sargs.hold_duration,
             };
             let w = worker::Worker {};
-            w.backend_start(opt).await.map_err(|e| anyhow!("worker error: {:?}", e))
+            w.backend_start(opt)
+                .await
+                .map_err(|e| anyhow!("worker error: {:?}", e))
         }
     });
 
-    let directives = directive
-        ::load_directives(test_env, Some(vec!["directives".to_string(), "directive5".to_string()]))
-        .map_err(|e| log_startup_err("loading directives", e))?;
+    let directives = directive::load_directives(
+        test_env,
+        Some(vec!["directives".to_string(), "directive5".to_string()]),
+    )
+    .map_err(|e| log_startup_err("loading directives", e))?;
 
     let intels = Arc::new(
-        intel
-            ::load_intel(test_env, Some(vec!["intel_vuln".to_string()]))
-            .map_err(|e| log_startup_err("loading intels", e))?
+        intel::load_intel(test_env, Some(vec!["intel_vuln".to_string()]))
+            .map_err(|e| log_startup_err("loading intels", e))?,
     );
 
     let vulns = Arc::new(
-        vuln
-            ::load_vuln(test_env, Some(vec!["intel_vuln".to_string()]))
-            .map_err(|e| log_startup_err("loading vulns", e))?
+        vuln::load_vuln(test_env, Some(vec!["intel_vuln".to_string()]))
+            .map_err(|e| log_startup_err("loading vulns", e))?,
     );
 
     let (report_tx, report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
@@ -320,7 +333,9 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         };
         async move {
             let w = watchdog::Watchdog::default();
-            w.start(opt).await.map_err(|e| anyhow!("watchdog error: {:?}", e))
+            w.start(opt)
+                .await
+                .map_err(|e| anyhow!("watchdog error: {:?}", e))
         }
     });
 
@@ -347,7 +362,8 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
     set.spawn(async {
         manager
-            .listen(REPORT_INTERVAL_IN_SECONDS).await
+            .listen(REPORT_INTERVAL_IN_SECONDS)
+            .await
             .map_err(|e| anyhow!("manager error: {:?}", e))
     });
 
@@ -428,11 +444,18 @@ mod test {
         let mut server = mockito::Server::new_with_port_async(19005).await;
         let url = server.url();
         debug!("using url: {}", url.clone());
-        server.mock("GET", "/config/").with_status(200).with_body(file_list).create_async().await;
+        server
+            .mock("GET", "/config/")
+            .with_status(200)
+            .with_body(file_list)
+            .create_async()
+            .await;
 
-        let mut pty = rexpect
-            ::spawn("docker run --name nats-main -p 42223:42223 --rm -it nats -p 42223", Some(5000))
-            .unwrap();
+        let mut pty = rexpect::spawn(
+            "docker run --name nats-main -p 42223:42223 --rm -it nats -p 42223",
+            Some(5000),
+        )
+        .unwrap();
         pty.exp_string("Server is ready").unwrap();
 
         let cli = Cli::parse_from([

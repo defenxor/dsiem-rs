@@ -1,26 +1,26 @@
-use std::{ fs, net::SocketAddr, sync::Arc, time::Duration };
+use std::{fs, net::SocketAddr, sync::Arc, time::Duration};
 
+use crate::eps_limiter::EpsLimiter;
+use crate::{event::NormalizedEvent, utils};
+use anyhow::Result;
+use atomic_counter::{AtomicCounter, RelaxedCounter};
+use axum::extract::FromRequest;
 use axum::{
-    extract::{ ConnectInfo, Path, State },
+    extract::{ConnectInfo, Path, State},
     http::StatusCode,
-    routing::{ delete, get, post },
+    routing::{delete, get, post},
     Router,
 };
+use axum_extra::response::ErasedJson;
+use chrono::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast::Sender;
-use tower_http::{ services::ServeDir, timeout::TimeoutLayer };
-use tracing::{ debug, info, trace, warn };
-use crate::{ event::NormalizedEvent, utils };
-use serde::{ Serialize, Deserialize };
-use crate::eps_limiter::EpsLimiter;
-use axum_extra::response::ErasedJson;
-use atomic_counter::{ AtomicCounter, RelaxedCounter };
-use axum::extract::FromRequest;
-use anyhow::Result;
-use chrono::prelude::*;
+use tower_http::{services::ServeDir, timeout::TimeoutLayer};
+use tracing::{debug, info, trace, warn};
 
-mod validate;
 mod app_error;
+mod validate;
 
 use app_error::AppError;
 
@@ -45,7 +45,7 @@ pub fn app(
     test_env: bool,
     writable_config: bool,
     eps_limiter: Arc<EpsLimiter>,
-    event_tx: Sender<NormalizedEvent>
+    event_tx: Sender<NormalizedEvent>,
 ) -> Result<Router> {
     let state = AppState {
         eps_limiter,
@@ -66,14 +66,14 @@ pub fn app(
                 .route("/config/:filename", post(config_upload_handler))
                 .route("/config/:filename", delete(config_delete_handler));
         }
-        r.with_state(state).nest_service("/ui", ServeDir::new(web_dir))
+        r.with_state(state)
+            .nest_service("/ui", ServeDir::new(web_dir))
     }
 
     let web_dir = utils::web_dir(test_env)?;
     debug!("using web dir: {:?}", web_dir);
-    let app = routes(state, writable_config, web_dir).layer(
-        TimeoutLayer::new(Duration::from_secs(5))
-    );
+    let app =
+        routes(state, writable_config, web_dir).layer(TimeoutLayer::new(Duration::from_secs(5)));
     Ok(app)
 }
 
@@ -83,15 +83,13 @@ pub fn app(
 pub struct JsonExtractor<T>(T);
 
 pub async fn config_list_handler(State(state): State<AppState>) -> Result<ErasedJson, AppError> {
-    let config_dir = (
-        if state.test_env {
-            utils::config_dir(state.test_env, Some(vec!["dl_config".to_owned()]))?
-        } else {
-            utils::config_dir(state.test_env, None)?
-        }
-    )
-        .to_string_lossy()
-        .to_string();
+    let config_dir = (if state.test_env {
+        utils::config_dir(state.test_env, Some(vec!["dl_config".to_owned()]))?
+    } else {
+        utils::config_dir(state.test_env, None)?
+    })
+    .to_string_lossy()
+    .to_string();
     let mut cfg = ConfigFiles::default();
 
     let entries = std::fs::read_dir(config_dir.as_str())?;
@@ -113,28 +111,27 @@ pub async fn config_list_handler(State(state): State<AppState>) -> Result<Erased
 pub async fn config_download_handler(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Path(cfg_file): Path<String>
+    Path(cfg_file): Path<String>,
 ) -> Result<ErasedJson, AppError> {
     if !validate::validate_filename(cfg_file.as_str())? {
-        warn!("l337 or epic fail attempt from {} detected. Discarding.", addr.to_string());
-        return Err(
-            AppError::new(
-                StatusCode::IM_A_TEAPOT,
-                "Not a valid filename, should be in any_N4m3-that_you_want.json format\n"
-            )
+        warn!(
+            "l337 or epic fail attempt from {} detected. Discarding.",
+            addr.to_string()
         );
+        return Err(AppError::new(
+            StatusCode::IM_A_TEAPOT,
+            "Not a valid filename, should be in any_N4m3-that_you_want.json format\n",
+        ));
     }
     info!("request for file {} from {}", cfg_file, addr.to_string());
 
-    let config_dir = (
-        if state.test_env {
-            utils::config_dir(state.test_env, Some(vec!["dl_config".to_owned()]))?
-        } else {
-            utils::config_dir(state.test_env, None)?
-        }
-    )
-        .to_string_lossy()
-        .to_string();
+    let config_dir = (if state.test_env {
+        utils::config_dir(state.test_env, Some(vec!["dl_config".to_owned()]))?
+    } else {
+        utils::config_dir(state.test_env, None)?
+    })
+    .to_string_lossy()
+    .to_string();
     let file_path = std::path::Path::new(&config_dir).join(cfg_file);
     info!("reading file {}", file_path.to_string_lossy());
     let contents = fs::read_to_string(file_path)?;
@@ -146,24 +143,37 @@ pub async fn config_upload_handler(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path(cfg_file): Path<String>,
-    JsonExtractor(payload): JsonExtractor<Value>
+    JsonExtractor(payload): JsonExtractor<Value>,
 ) -> Result<StatusCode, AppError> {
     if !validate::validate_filename(&cfg_file)? {
-        warn!("l337 or epic fail attempt from {} detected. Discarding.", addr.to_string());
-        return Err(
-            AppError::new(
-                StatusCode::IM_A_TEAPOT,
-                "Not a valid filename, should be in any_N4m3-that_you_want.json format\n"
-            )
+        warn!(
+            "l337 or epic fail attempt from {} detected. Discarding.",
+            addr.to_string()
         );
+        return Err(AppError::new(
+            StatusCode::IM_A_TEAPOT,
+            "Not a valid filename, should be in any_N4m3-that_you_want.json format\n",
+        ));
     }
     if let Err(e) = validate::validate_content(&cfg_file, &payload) {
-        warn!("l337 or epic fail attempt from {} detected. Discarding.", addr.to_string());
-        let msg = format!("Invalid content detected, parsing error message is: {}\n", e);
+        warn!(
+            "l337 or epic fail attempt from {} detected. Discarding.",
+            addr.to_string()
+        );
+        let msg = format!(
+            "Invalid content detected, parsing error message is: {}\n",
+            e
+        );
         return Err(AppError::new(StatusCode::IM_A_TEAPOT, &msg));
     }
-    info!("Upload file request for {} from {}", cfg_file, addr.to_string());
-    let config_dir = utils::config_dir(state.test_env, None)?.to_string_lossy().to_string();
+    info!(
+        "Upload file request for {} from {}",
+        cfg_file,
+        addr.to_string()
+    );
+    let config_dir = utils::config_dir(state.test_env, None)?
+        .to_string_lossy()
+        .to_string();
     let file_path = std::path::Path::new(&config_dir).join(cfg_file.clone());
     info!("writing file {}", file_path.to_string_lossy());
     fs::write(file_path, serde_json::to_string_pretty(&payload)?)?;
@@ -174,19 +184,26 @@ pub async fn config_upload_handler(
 pub async fn config_delete_handler(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Path(cfg_file): Path<String>
+    Path(cfg_file): Path<String>,
 ) -> Result<StatusCode, AppError> {
     if !validate::validate_filename(&cfg_file)? {
-        warn!("l337 or epic fail attempt from {} detected. Discarding.", addr.to_string());
-        return Err(
-            AppError::new(
-                StatusCode::IM_A_TEAPOT,
-                "Not a valid filename, should be in any_N4m3-that_you_want.json format\n"
-            )
+        warn!(
+            "l337 or epic fail attempt from {} detected. Discarding.",
+            addr.to_string()
         );
+        return Err(AppError::new(
+            StatusCode::IM_A_TEAPOT,
+            "Not a valid filename, should be in any_N4m3-that_you_want.json format\n",
+        ));
     }
-    info!("Delete file request for {} from {}", cfg_file, addr.to_string());
-    let config_dir = utils::config_dir(state.test_env, None)?.to_string_lossy().to_string();
+    info!(
+        "Delete file request for {} from {}",
+        cfg_file,
+        addr.to_string()
+    );
+    let config_dir = utils::config_dir(state.test_env, None)?
+        .to_string_lossy()
+        .to_string();
     let file_path = std::path::Path::new(&config_dir).join(cfg_file.clone());
     fs::remove_file(file_path)?;
     info!("file {} deleted successfully", cfg_file);
@@ -196,13 +213,20 @@ pub async fn config_delete_handler(
 pub async fn events_handler(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    JsonExtractor(mut evt): JsonExtractor<NormalizedEvent>
+    JsonExtractor(mut evt): JsonExtractor<NormalizedEvent>,
 ) -> Result<(), AppError> {
     if let Some(limiter) = &state.eps_limiter.as_ref().limiter {
         let limiter = limiter.read().await;
-        debug!("max_tokens: {}, available: {}", limiter.max_tokens(), limiter.available());
+        debug!(
+            "max_tokens: {}, available: {}",
+            limiter.max_tokens(),
+            limiter.available()
+        );
         if limiter.try_wait().is_err() {
-            return Err(AppError::new(StatusCode::TOO_MANY_REQUESTS, "EPS rate limit reached\n"));
+            return Err(AppError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "EPS rate limit reached\n",
+            ));
         }
     }
 
@@ -222,16 +246,17 @@ pub async fn events_handler(
     if let Some(n) = now.timestamp_nanos_opt() {
         evt.rcvd_time = n;
     }
-    debug!("sending event to nats, ID: {}, conn ID: {}", evt.id, evt.conn_id);
+    debug!(
+        "sending event to nats, ID: {}, conn ID: {}",
+        evt.id, evt.conn_id
+    );
 
-    state.event_tx
-        .send(evt)
-        .map_err(|e|
-            AppError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("error sending to NATS: {}", e)
-            )
-        )?;
+    state.event_tx.send(evt).map_err(|e| {
+        AppError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("error sending to NATS: {}", e),
+        )
+    })?;
     Ok(())
 }
 
@@ -241,13 +266,13 @@ mod tests {
     use axum::{
         body::Body,
         extract::connect_info::MockConnectInfo,
-        http::{ self, Request, StatusCode },
+        http::{self, Request, StatusCode},
     };
     use http_body_util::BodyExt; // for `collect`
-    use serde_json::{ json, Value };
-    use tracing_test::traced_test;
+    use serde_json::{json, Value};
     use std::net::SocketAddr;
-    use tower::{ Service, ServiceExt }; // for `call`, `oneshot`, and `ready`
+    use tower::{Service, ServiceExt};
+    use tracing_test::traced_test; // for `call`, `oneshot`, and `ready`
 
     #[tokio::test]
     #[traced_test]
@@ -267,11 +292,16 @@ mod tests {
             .method(http::Method::POST)
             .body(b)
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::INTERNAL_SERVER_ERROR); // content accepted
 
-        let evt =
-            json!({
+        let evt = json!({
             "event_id": "id1",
             "timestamp": "2023-01-01T00:00:00Z",
             "title": "foo",
@@ -286,11 +316,16 @@ mod tests {
             .method(http::Method::POST)
             .body(b)
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::IM_A_TEAPOT); // missing plugin_id & plugin_sid
 
-        let evt =
-            json!({
+        let evt = json!({
             "event_id": "id2",
             "timestamp": "2023-01-01T00:00:00Z",
             "title": "foo",
@@ -312,7 +347,13 @@ mod tests {
             .method(http::Method::POST)
             .body(b)
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::OK); // event accepted
 
         let b = Body::from(serde_json::to_vec(&evt).unwrap());
@@ -322,7 +363,13 @@ mod tests {
             .method(http::Method::POST)
             .body(b)
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::TOO_MANY_REQUESTS); // eps limit reached
     }
 
@@ -337,34 +384,75 @@ mod tests {
             .into_service();
 
         // 404
-        let request = Request::builder().uri("/doesnt-exist").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let request = Request::builder()
+            .uri("/doesnt-exist")
+            .body(Body::empty())
+            .unwrap();
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::NOT_FOUND);
 
         // config list
-        let request = Request::builder().uri("/config").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let request = Request::builder()
+            .uri("/config")
+            .body(Body::empty())
+            .unwrap();
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let v = serde_json::from_slice::<Value>(&body).unwrap();
-        let _config_files: ConfigFiles = serde_json
-            ::from_value(v)
-            .expect("fails to parse configfiles");
+        let _config_files: ConfigFiles =
+            serde_json::from_value(v).expect("fails to parse configfiles");
         assert!(!_config_files.files.is_empty());
 
-        let request = Request::builder().uri("/config/").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let request = Request::builder()
+            .uri("/config/")
+            .body(Body::empty())
+            .unwrap();
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::OK);
 
         // config download
-        let request = Request::builder().uri("/config/backdoor.exe").body(Body::empty()).unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let request = Request::builder()
+            .uri("/config/backdoor.exe")
+            .body(Body::empty())
+            .unwrap();
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::IM_A_TEAPOT);
 
         let request = Request::builder()
             .uri("/config/assets_testing.json")
             .body(Body::empty())
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::OK);
 
         // config upload
@@ -376,7 +464,13 @@ mod tests {
             .method(http::Method::POST)
             .body(b)
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::IM_A_TEAPOT); // filename rejected
 
         let b = Body::from(serde_json::to_vec(&json!([1, 2, 3, 4])).unwrap());
@@ -386,19 +480,24 @@ mod tests {
             .method(http::Method::POST)
             .body(b)
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::IM_A_TEAPOT); // content rejected
 
-        let assets =
-            json!({
-            "assets": [
-              {
-                "name": "Firewall",
-                "cidr": "192.168.0.1/32",
-                "value": 5
-              }
-            ]
-          });
+        let assets = json!({
+          "assets": [
+            {
+              "name": "Firewall",
+              "cidr": "192.168.0.1/32",
+              "value": 5
+            }
+          ]
+        });
         let b = Body::from(serde_json::to_vec(&assets).unwrap());
         let request = Request::builder()
             .uri("/config/assets_foo.json")
@@ -406,7 +505,13 @@ mod tests {
             .method(http::Method::POST)
             .body(b)
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::CREATED); // content accepted
 
         // config delete
@@ -416,7 +521,13 @@ mod tests {
             .method(http::Method::DELETE)
             .body(Body::empty())
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::IM_A_TEAPOT); // filename rejected
 
         let request = Request::builder()
@@ -424,7 +535,13 @@ mod tests {
             .method(http::Method::DELETE)
             .body(Body::empty())
             .unwrap();
-        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(request)
+            .await
+            .expect("request failed");
         assert!(response.status() == StatusCode::OK); // file deleted
     }
 }
