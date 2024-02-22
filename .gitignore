@@ -1,5 +1,4 @@
 /target
-/scripts/target
 /coverage
 /dev
 /deployments/docker/build/ctx
@@ -10,3 +9,6 @@
 !/configs/vuln_nessus.json
 !/configs/assets_testing.json
 /report.*
+/fixtures/*
+!/fixtures/config
+.vscode
