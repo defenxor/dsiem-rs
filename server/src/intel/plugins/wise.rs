@@ -1,12 +1,12 @@
-use std::collections::HashSet;
-use std::net::IpAddr;
+use super::{IntelChecker, IntelResult};
 use anyhow::Context;
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::HashSet;
+use std::net::IpAddr;
 use tracing::debug;
 use tracing::trace;
-use async_trait::async_trait;
-use super::{ IntelChecker, IntelResult };
 
 #[derive(Deserialize, Default)]
 struct Config {
@@ -33,10 +33,11 @@ impl IntelChecker for Wise {
 
         debug!(url, "wise intel check");
 
-        let text = reqwest
-            ::get(url).await
+        let text = reqwest::get(url)
+            .await
             .context("get request error")?
-            .text().await
+            .text()
+            .await
             .context("error obtaining text")?
             .replace("field:", "\"field\":")
             .replace("len:", "\"len\":")
@@ -44,9 +45,8 @@ impl IntelChecker for Wise {
 
         trace!(text, "wise intel check");
 
-        let res: Vec<WiseResult> = serde_json
-            ::from_str(&text)
-            .context("error parsing wise result")?;
+        let res: Vec<WiseResult> =
+            serde_json::from_str(&text).context("error parsing wise result")?;
         let mut results: HashSet<IntelResult> = HashSet::new();
 
         for v in res.iter() {

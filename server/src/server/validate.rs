@@ -1,9 +1,9 @@
+use anyhow::{anyhow, Result};
 use regex::Regex;
-use anyhow::{ Result, anyhow };
 use serde_json::Value;
 use tracing::debug;
 
-use crate::{ asset::NetworkAssets, intel::IntelSources, vuln::VulnSources, directive::Directives };
+use crate::{asset::NetworkAssets, directive::Directives, intel::IntelSources, vuln::VulnSources};
 
 pub fn validate_filename(filename: &str) -> Result<bool> {
     let re = Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9_-]+)?.json$")?;
@@ -53,8 +53,7 @@ fn test_validate_filename() -> Result<()> {
 fn test_validate_content() {
     assert!(validate_content("foo.json", &json!({})).is_err());
 
-    let v =
-        json!({
+    let v = json!({
         "assets": [{
             "name": "Firewall",
             "cidr": "192.168.0.1/32",
@@ -65,8 +64,7 @@ fn test_validate_content() {
     let v = json!({ "assets": [] });
     assert!(validate_content("assets_foo.json", &v).is_err()); // empty
 
-    let v =
-        json!({
+    let v = json!({
         "intel_sources": [{
             "name": "Wise",
             "plugin": "Wise",
@@ -79,8 +77,7 @@ fn test_validate_content() {
     let v = json!({ "intel_sources": [] });
     assert!(validate_content("intel_foo.json", &v).is_err()); // empty
 
-    let v =
-        json!({
+    let v = json!({
         "vuln_sources": [{
             "name": "Nessus",
             "plugin": "Nesd",
@@ -93,37 +90,36 @@ fn test_validate_content() {
     let v = json!({ "vuln_sources": [] });
     assert!(validate_content("vuln_foo.json", &v).is_err()); // empty
 
-    let v =
-        json!({
-            "directives": [
-              {
-                "name": "Ping Flood from SRC_IP",
-                "kingdom": "Reconnaissance & Probing",
-                "category": "Misc Activity",
-                "id": 1,
-                "priority": 3,
-                "rules": [
-                  {
-                    "name": "ICMP Ping",
-                    "type": "PluginRule",
-                    "stage": 1,
-                    "plugin_id": 1001,
-                    "plugin_sid": [
-                      2100384
-                    ],
-                    "occurrence": 1,
-                    "from": "HOME_NET",
-                    "to": "ANY",
-                    "port_from": "ANY",
-                    "port_to": "ANY",
-                    "protocol": "ICMP",
-                    "reliability": 1,
-                    "timeout": 0
-                  }
-                ]
-              }
-            ]
-          });
+    let v = json!({
+      "directives": [
+        {
+          "name": "Ping Flood from SRC_IP",
+          "kingdom": "Reconnaissance & Probing",
+          "category": "Misc Activity",
+          "id": 1,
+          "priority": 3,
+          "rules": [
+            {
+              "name": "ICMP Ping",
+              "type": "PluginRule",
+              "stage": 1,
+              "plugin_id": 1001,
+              "plugin_sid": [
+                2100384
+              ],
+              "occurrence": 1,
+              "from": "HOME_NET",
+              "to": "ANY",
+              "port_from": "ANY",
+              "port_to": "ANY",
+              "protocol": "ICMP",
+              "reliability": 1,
+              "timeout": 0
+            }
+          ]
+        }
+      ]
+    });
     assert!(validate_content("directives_foo.json", &v).is_ok());
     let v = json!({ "directives": [] });
     assert!(validate_content("directives_foo.json", &v).is_err()); // empty

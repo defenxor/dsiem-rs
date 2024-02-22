@@ -1,7 +1,7 @@
+use http_auth_basic::Credentials;
 use reqwasm::http::Request;
 use serde::Deserialize;
-use url::{ Url, Position };
-use http_auth_basic::Credentials;
+use url::{Position, Url};
 
 pub const DSIEM_CONFIG_URL: &str = "/config/dsiem_config.json";
 pub const ES_CONFIG_URL: &str = "/ui/assets/config/esconfig.json";
@@ -30,10 +30,15 @@ pub struct SearchConfig {
 pub async fn get_search_endpoints(dsiem_baseurl: String) -> Result<SearchConfig, String> {
     let url = dsiem_baseurl + ES_CONFIG_URL;
     let resp = Request::get(&url)
-        .send().await
+        .send()
+        .await
         .map_err(|e| "cannot read esconfig.json: ".to_owned() + &e.to_string())?;
     if resp.status() != 200 {
-        return Err(format!("Server response: {} {}", resp.status(), resp.status_text()));
+        return Err(format!(
+            "Server response: {} {}",
+            resp.status(),
+            resp.status_text()
+        ));
     }
     let body = resp.text().await.map_err(|e| e.to_string())?;
     let mut es_config: ESConfig = serde_json::from_str(&body).map_err(|e| e.to_string())?;
@@ -68,10 +73,15 @@ pub async fn get_search_endpoints(dsiem_baseurl: String) -> Result<SearchConfig,
 pub async fn read(dsiem_baseurl: String) -> Result<DsiemConfig, String> {
     let url = dsiem_baseurl + DSIEM_CONFIG_URL;
     let resp = Request::get(&url)
-        .send().await
+        .send()
+        .await
         .map_err(|e| "cannot load dsiem_config.json: ".to_owned() + &e.to_string())?;
     if resp.status() != 200 {
-        return Err(format!("Elasticsearch response: {} {}", resp.status(), resp.status_text()));
+        return Err(format!(
+            "Elasticsearch response: {} {}",
+            resp.status(),
+            resp.status_text()
+        ));
     }
     let body = resp.text().await.map_err(|e| e.to_string())?;
     let config: DsiemConfig = serde_json::from_str(&body).map_err(|e| e.to_string())?;

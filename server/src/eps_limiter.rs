@@ -1,8 +1,11 @@
-use std::{ sync::Arc, time::Duration };
-use anyhow::{ anyhow, Result };
+use anyhow::{anyhow, Result};
 use ratelimit::Ratelimiter;
-use tokio::{ sync::{ broadcast::Sender, RwLock }, time::interval };
-use tracing::{ debug, info };
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::{broadcast::Sender, RwLock},
+    time::interval,
+};
+use tracing::{debug, info};
 const EPS_ADJUSTMENT_INTERVAL_IN_SECONDS: u64 = 5;
 
 pub struct EpsLimiter {
@@ -16,7 +19,7 @@ impl EpsLimiter {
     pub async fn start(
         &self,
         cancel_tx: Sender<()>,
-        mut bp_rx: tokio::sync::mpsc::Receiver<bool>
+        mut bp_rx: tokio::sync::mpsc::Receiver<bool>,
     ) -> Result<()> {
         let mut modifier = interval(Duration::from_secs(EPS_ADJUSTMENT_INTERVAL_IN_SECONDS));
         let mut cancel_rx = cancel_tx.subscribe();
@@ -75,12 +78,18 @@ impl EpsLimiter {
     }
 
     async fn limit(&self) -> Result<u64> {
-        let limiter = self.limiter.as_ref().ok_or(anyhow!("limiter is not initialized"))?;
+        let limiter = self
+            .limiter
+            .as_ref()
+            .ok_or(anyhow!("limiter is not initialized"))?;
         Ok(limiter.read().await.max_tokens())
     }
 
     async fn modify_limit(&self, raise: bool) -> Result<u64> {
-        let limiter = self.limiter.as_ref().ok_or(anyhow!("limiter is not initialized"))?;
+        let limiter = self
+            .limiter
+            .as_ref()
+            .ok_or(anyhow!("limiter is not initialized"))?;
         let current = limiter.write().await.max_tokens();
         let mut target: u64;
         if raise {
@@ -121,7 +130,6 @@ impl EpsLimiter {
 }
 
 #[cfg(test)]
-
 #[tracing_test::traced_test]
 #[tokio::test]
 async fn test_eps_limiter() {
@@ -169,14 +177,16 @@ async fn test_eps_limiter() {
         _ = eps.start(tx, bp_rx).await;
     });
 
-    tokio::time::sleep(
-        tokio::time::Duration::from_secs(EPS_ADJUSTMENT_INTERVAL_IN_SECONDS + 3)
-    ).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(
+        EPS_ADJUSTMENT_INTERVAL_IN_SECONDS + 3,
+    ))
+    .await;
     assert!(logs_contain("overload status is false"));
     bp_tx.send(true).await.unwrap();
-    tokio::time::sleep(
-        tokio::time::Duration::from_secs(EPS_ADJUSTMENT_INTERVAL_IN_SECONDS + 3)
-    ).await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(
+        EPS_ADJUSTMENT_INTERVAL_IN_SECONDS + 3,
+    ))
+    .await;
     assert!(logs_contain("overload status is true"));
     cancel_tx.send(()).unwrap();
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;

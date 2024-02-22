@@ -1,32 +1,32 @@
-use std::{
-    net::{ IpAddr, Ipv4Addr },
-    collections::HashSet,
-    ops::Deref,
-    time::{ Duration, Instant },
-    sync::Arc,
+use crate::{
+    asset::NetworkAssets,
+    directive::Directive,
+    event::NormalizedEvent,
+    intel::{IntelPlugin, IntelResult},
+    rule::DirectiveRule,
+    utils,
+    vuln::{VulnPlugin, VulnResult},
 };
-use chrono::{ DateTime, Utc };
-use metered::{ metered, ResponseTime };
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
+use metered::{metered, ResponseTime};
+use parking_lot::RwLock;
 use serde::Deserialize;
 use serde_derive::Serialize;
+use std::{
+    collections::HashSet,
+    net::{IpAddr, Ipv4Addr},
+    ops::Deref,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{
-    sync::{ broadcast::Receiver, mpsc::Sender, RwLock as TokioRwLock, watch },
-    fs::{ File, OpenOptions, self },
+    fs::{self, File, OpenOptions},
     io::AsyncWriteExt,
+    sync::{broadcast::Receiver, mpsc::Sender, watch, RwLock as TokioRwLock},
     time::interval,
 };
-use parking_lot::RwLock;
-use tracing::{ info, debug, error, warn, trace };
-use crate::{
-    event::NormalizedEvent,
-    rule::DirectiveRule,
-    directive::Directive,
-    asset::NetworkAssets,
-    utils,
-    intel::{ IntelPlugin, IntelResult },
-    vuln::{ VulnPlugin, VulnResult },
-};
-use anyhow::{ Result, anyhow };
+use tracing::{debug, error, info, trace, warn};
 
 const ALARM_EVENT_LOG: &str = "siem_alarm_events.json";
 const ALARM_LOG: &str = "siem_alarms.json";
@@ -234,7 +234,8 @@ impl Backlog {
             }
 
             backlog.rules = o.directive.init_backlog_rules(v);
-            backlog.highest_stage = backlog.rules
+            backlog.highest_stage = backlog
+                .rules
                 .iter()
                 .map(|v| v.stage)
                 .max()
@@ -247,12 +248,14 @@ impl Backlog {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_dir.join(ALARM_EVENT_LOG)).await?;
+            .open(log_dir.join(ALARM_EVENT_LOG))
+            .await?;
         backlog.alarm_events_writer = TokioRwLock::new(Some(file));
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_dir.join(ALARM_LOG)).await?;
+            .open(log_dir.join(ALARM_LOG))
+            .await?;
         backlog.alarm_writer = TokioRwLock::new(Some(file));
 
         backlog.intels = Some(o.intels);
@@ -274,9 +277,11 @@ impl Backlog {
         let mut backlog = Backlog::new(o).await?;
         // verify that we're still based on the same directive
         if backlog.title != loaded.title {
-            return Err(
-                anyhow!("different title detected: '{}' vs '{}'", backlog.title, loaded.title)
-            );
+            return Err(anyhow!(
+                "different title detected: '{}' vs '{}'",
+                backlog.title,
+                loaded.title
+            ));
         }
         backlog.id = loaded.id;
         backlog.title = loaded.title;
@@ -291,7 +296,7 @@ impl Backlog {
         backlog.intel_hits = loaded.intel_hits;
         backlog.vulnerabilities = loaded.vulnerabilities;
 
-        /* 
+        /*
         new() doesn't set rules unless initialize with an event.
         manager doesnt supply event when calling runnable_version.
         this means whatever rules defined in the directive config will not be applied to
@@ -314,12 +319,14 @@ impl Backlog {
                 r.event_ids = Arc::new(RwLock::new(v));
             }
         }
-        backlog.highest_stage = backlog.rules
+        backlog.highest_stage = backlog
+            .rules
             .iter()
             .map(|v| v.stage)
             .max()
             .unwrap_or_default();
-        let lowest_stage = loaded.rules
+        let lowest_stage = loaded
+            .rules
             .iter()
             .filter(|v| {
                 let r = v.status.read();
@@ -341,9 +348,7 @@ impl Backlog {
             */
             debug!(
                 backlog.id,
-                "loaded with current_stage: {}, highest_stage: {}",
-                v,
-                backlog.highest_stage
+                "loaded with current_stage: {}, highest_stage: {}", v, backlog.highest_stage
             );
             backlog.current_stage = RwLock::new(v);
         } else {
@@ -414,7 +419,7 @@ impl Backlog {
         mut rx: Receiver<NormalizedEvent>,
         initial_event: Option<NormalizedEvent>,
         resptime_tx: Sender<Duration>,
-        max_delay: i64
+        max_delay: i64,
     ) -> Result<()> {
         if let Some(v) = initial_event {
             self.process_new_event(&v, max_delay).await?;
@@ -444,7 +449,7 @@ impl Backlog {
                         if *r != BacklogState::Running {
                             warn!(self.id, event.id, "event received, but backlog state is not running");
                             continue;
-                        }    
+                        }
                     }
                     debug!(self.id, event.id, "event received");
                     let now = Instant::now();
@@ -452,7 +457,7 @@ impl Backlog {
                         error!(self.id, event.id, "error processing event: {}", e);
                     };
                     _ = resptime_tx.try_send( now.elapsed());
-                },  
+                },
                 _ = delete_rx.changed() => {
                     self.set_state(BacklogState::Stopped);
                     debug!(self.id, "backlog delete signal received");
@@ -485,7 +490,8 @@ impl Backlog {
 
     fn is_time_in_order(&self, ts: &DateTime<Utc>) -> bool {
         let reader = self.current_stage.read();
-        let prev_stage_ts = self.rules
+        let prev_stage_ts = self
+            .rules
             .iter()
             .filter(|v| v.stage < *reader)
             .map(|v| {
@@ -535,8 +541,12 @@ impl Backlog {
         if !curr_rule.does_event_match(&self.assets, event, true) {
             // if flag is set, check if event match previous stage
             if self.all_rules_always_active && curr_rule.stage != 1 {
-                debug!(self.id, "checking prev rules because all_rules_always_active is on");
-                let prev_rules = self.rules
+                debug!(
+                    self.id,
+                    "checking prev rules because all_rules_always_active is on"
+                );
+                let prev_rules = self
+                    .rules
                     .iter()
                     .filter(|v| v.stage < curr_rule.stage)
                     .collect::<Vec<&DirectiveRule>>();
@@ -578,7 +588,10 @@ impl Backlog {
         }
 
         // event match current rule, processing it further here
-        debug!(self.id, event.id, "rule stage {} match event", curr_rule.stage);
+        debug!(
+            self.id,
+            event.id, "rule stage {} match event", curr_rule.stage
+        );
         _ = self.report_to_manager(true);
 
         if !self.is_time_in_order(&event.timestamp) {
@@ -591,7 +604,10 @@ impl Backlog {
             warn!(self.id, event.id, "is under pressure");
             if let Some(tx) = &self.backpressure_tx {
                 if let Err(e) = tx.try_send(()) {
-                    warn!(self.id, event.id, "error sending under pressure signal: {}", e);
+                    warn!(
+                        self.id,
+                        event.id, "error sending under pressure signal: {}", e
+                    );
                 }
             }
         }
@@ -606,10 +622,7 @@ impl Backlog {
         let len = reader.len();
         debug!(
             self.id,
-            "current rule stage {} event count {}/{}",
-            curr_rule.stage,
-            len,
-            curr_rule.occurrence
+            "current rule stage {} event count {}/{}", curr_rule.stage, len, curr_rule.occurrence
         );
         Ok(len >= curr_rule.occurrence)
     }
@@ -707,7 +720,10 @@ impl Backlog {
         debug!(self.id, "checking if this is the last stage");
         // if it causes the last stage to reach events_count == occurrence, delete it
         if self.is_last_stage() {
-            info!(self.id, "reached max stage and occurrence, deleting backlog");
+            info!(
+                self.id,
+                "reached max stage and occurrence, deleting backlog"
+            );
             self.update_alarm(true).await?;
             self.delete()?;
             return Ok(());
@@ -716,8 +732,7 @@ impl Backlog {
         // reach max occurrence, but not in last stage.
         debug!(
             self.id,
-            event.id,
-            "stage max event count reached, increasing stage and updating alarm"
+            event.id, "stage max event count reached, increasing stage and updating alarm"
         );
         // increase stage.
         if self.increase_stage() {
@@ -750,7 +765,7 @@ impl Backlog {
     async fn append_and_write_event(
         &self,
         event: &NormalizedEvent,
-        stage: Option<u8>
+        stage: Option<u8>,
     ) -> Result<()> {
         let target_rule = self.get_rule(stage)?;
         {
@@ -905,15 +920,17 @@ impl Backlog {
                 debug!(self.id, "querying threat intel plugins");
                 // dont fail alarm update if there's intel check err
                 _ = self
-                    .check_intel().await
-                    .map_err(|e| { error!(self.id, "intel check error: {:?}", e) });
+                    .check_intel()
+                    .await
+                    .map_err(|e| error!(self.id, "intel check error: {:?}", e));
             }
             if self.vulns.is_some() {
                 debug!(self.id, "querying vulnerability check plugins");
                 // dont fail alarm update if there's intel check err
                 _ = self
-                    .check_vuln().await
-                    .map_err(|e| { error!(self.id, "vuln check error: {:?}", e) });
+                    .check_vuln()
+                    .await
+                    .map_err(|e| error!(self.id, "vuln check error: {:?}", e));
             }
         }
 
@@ -927,7 +944,10 @@ impl Backlog {
     }
 
     async fn check_intel(&self) -> Result<()> {
-        let intels = self.intels.as_ref().ok_or_else(|| anyhow!("intels is none"))?;
+        let intels = self
+            .intels
+            .as_ref()
+            .ok_or_else(|| anyhow!("intels is none"))?;
         let mut targets = HashSet::new();
         for s in [&self.src_ips, &self.dst_ips] {
             let r = s.read();
@@ -946,7 +966,10 @@ impl Backlog {
     }
 
     async fn check_vuln(&self) -> Result<()> {
-        let vulns = self.vulns.as_ref().ok_or_else(|| anyhow!("vulns is none"))?;
+        let vulns = self
+            .vulns
+            .as_ref()
+            .ok_or_else(|| anyhow!("vulns is none"))?;
 
         let mut vs = VulnSearchTerm::default();
         for r in self.rules.iter() {
@@ -968,10 +991,7 @@ impl Backlog {
             let s = ip.to_string() + ":" + &port.to_string();
             {
                 let r = self.vulnerabilities.read();
-                let found = r
-                    .iter()
-                    .filter(|v| v.term == s)
-                    .last();
+                let found = r.iter().filter(|v| v.term == s).last();
                 if found.is_some() {
                     continue;
                 }
@@ -986,7 +1006,11 @@ impl Backlog {
             return Ok(());
         }
         let difference = combined.difference(&w);
-        debug!(self.id, "found {} new vulnerability matches", difference.count());
+        debug!(
+            self.id,
+            "found {} new vulnerability matches",
+            difference.count()
+        );
         *w = combined;
         Ok(())
     }
@@ -1018,11 +1042,15 @@ impl VulnSearchTerm {
 
 #[cfg(test)]
 mod test {
-    use crate::{ directive, rule::StickyDiffData };
+    use crate::{directive, rule::StickyDiffData};
 
     use super::*;
     use chrono::Days;
-    use tokio::{ time::sleep, task, sync::{ mpsc, broadcast } };
+    use tokio::{
+        sync::{broadcast, mpsc},
+        task,
+        time::sleep,
+    };
     use tracing_test::traced_test;
 
     #[test]
@@ -1041,9 +1069,11 @@ mod test {
 
     #[tokio::test]
     async fn test_saved_reload() {
-        let directives = directive
-            ::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()]))
-            .unwrap();
+        let directives = directive::load_directives(
+            true,
+            Some(vec!["directives".to_string(), "directive5".to_string()]),
+        )
+        .unwrap();
         let d = directives[0].clone();
         let evt = NormalizedEvent {
             plugin_id: 1337,
@@ -1054,14 +1084,13 @@ mod test {
             ..Default::default()
         };
         let get_opt = || {
-            let asset = Arc::new(
-                NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap()
-            );
+            let asset =
+                Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
             let intels = Arc::new(
-                crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap()
+                crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
             );
             let vulns = Arc::new(
-                crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap()
+                crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
             );
             let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
             let (bp_tx, _) = mpsc::channel::<()>(1);
@@ -1117,7 +1146,9 @@ mod test {
         }
 
         // runable test, reverses saveable
-        let runnable = Backlog::runnable_version(get_opt(), saveable).await.unwrap();
+        let runnable = Backlog::runnable_version(get_opt(), saveable)
+            .await
+            .unwrap();
         assert_eq!(*runnable.last_srcport.read(), last_srcport);
         assert_eq!(*runnable.last_dstport.read(), last_dstport);
         for rule in runnable.rules.iter() {
@@ -1130,7 +1161,10 @@ mod test {
         let mut saveable = Backlog::saveable_version(Arc::new(b));
         saveable.title = "foo".to_string();
         let res = Backlog::runnable_version(get_opt(), saveable).await;
-        assert!(res.unwrap_err().to_string().contains("different title detected"));
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("different title detected"));
 
         // should throw error if all rules in the saved backlog already have a status (i.e. finished or timeout)
         let b = Backlog::new(get_opt()).await.unwrap();
@@ -1139,23 +1173,26 @@ mod test {
             rule.status = Arc::new(RwLock::new("finished".to_string()));
         }
         let res = Backlog::runnable_version(get_opt(), saveable).await;
-        assert!(res.unwrap_err().to_string().contains("skipping this backlog"));
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("skipping this backlog"));
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_backlog() {
-        let directives = directive
-            ::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()]))
-            .unwrap();
+        let directives = directive::load_directives(
+            true,
+            Some(vec!["directives".to_string(), "directive5".to_string()]),
+        )
+        .unwrap();
         let d = directives[0].clone();
         let asset = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let intels = Arc::new(
-            crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap()
-        );
-        let vulns = Arc::new(
-            crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap()
-        );
+        let intels =
+            Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+        let vulns =
+            Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
         let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
         let (event_tx, event_rx) = broadcast::channel(10);
         let (bp_tx, _) = mpsc::channel::<()>(1);
@@ -1207,7 +1244,9 @@ mod test {
         assert!(backlog.title.contains(&dst_host));
 
         let _detached = task::spawn(async move {
-            _ = backlog.start(event_rx, Some(evt_cloned), resptime_tx, 1).await;
+            _ = backlog
+                .start(event_rx, Some(evt_cloned), resptime_tx, 1)
+                .await;
         });
 
         // these matching event should increase level from 2 to 3 to 4, and raise risk
@@ -1243,21 +1282,21 @@ mod test {
     #[tokio::test]
     #[traced_test]
     async fn test_all_rules_always_active_n_stickydiff() {
-        let directives = directive
-            ::load_directives(true, Some(vec!["directives".to_string(), "directive6".to_string()]))
-            .unwrap();
+        let directives = directive::load_directives(
+            true,
+            Some(vec!["directives".to_string(), "directive6".to_string()]),
+        )
+        .unwrap();
         let d = directives[0].clone();
         let asset = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
 
-        let mut intel_plugin = crate::intel
-            ::load_intel(true, Some(vec!["intel_vuln".to_string()]))
-            .unwrap();
+        let mut intel_plugin =
+            crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap();
         intel_plugin.checkers = Arc::new(vec![]); // disable, we're not testing this
         let intels = Arc::new(intel_plugin);
 
-        let mut vuln_plugin = crate::vuln
-            ::load_vuln(true, Some(vec!["intel_vuln".to_string()]))
-            .unwrap();
+        let mut vuln_plugin =
+            crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap();
         vuln_plugin.checkers = Arc::new(vec![]); // disable, we're not testing this
         let vulns = Arc::new(vuln_plugin);
 
@@ -1295,7 +1334,9 @@ mod test {
         };
         let backlog = Backlog::new(opt).await.unwrap();
         let _detached = task::spawn(async move {
-            _ = backlog.start(event_rx, Some(evt_cloned), resptime_tx, 1).await;
+            _ = backlog
+                .start(event_rx, Some(evt_cloned), resptime_tx, 1)
+                .await;
         });
 
         evt.id = "2".to_string();
@@ -1326,7 +1367,9 @@ mod test {
         evt.id = "7".to_string();
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(1000)).await;
-        assert!(logs_contain("backlog can't find new unique value in stickydiff field"));
+        assert!(logs_contain(
+            "backlog can't find new unique value in stickydiff field"
+        ));
 
         evt.src_port = 31313;
         event_tx.send(evt.clone()).unwrap();
@@ -1346,17 +1389,17 @@ mod test {
     #[tokio::test]
     #[traced_test]
     async fn test_expired() {
-        let directives = directive
-            ::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()]))
-            .unwrap();
+        let directives = directive::load_directives(
+            true,
+            Some(vec!["directives".to_string(), "directive5".to_string()]),
+        )
+        .unwrap();
         let d = directives[0].clone();
         let asset = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let intels = Arc::new(
-            crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap()
-        );
-        let vulns = Arc::new(
-            crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap()
-        );
+        let intels =
+            Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+        let vulns =
+            Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
         let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
         let (_, event_rx) = broadcast::channel(10);
         let (bp_tx, _bp_rx) = mpsc::channel::<()>(8);

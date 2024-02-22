@@ -1,10 +1,19 @@
-use std::{ net::{ IpAddr, SocketAddr }, str::FromStr, sync::Arc, time::Duration };
+use std::{
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
-use tokio::{ sync::{ broadcast, mpsc }, task::JoinSet, time::sleep };
-use anyhow::{ Result, Error, anyhow };
-use dsiem::{ config, eps_limiter::EpsLimiter, server, logger, worker };
-use clap::{ Parser, arg, command, Subcommand, Args };
-use tracing::{ debug, error, info };
+use anyhow::{anyhow, Error, Result};
+use clap::{arg, command, Args, Parser, Subcommand};
+use dsiem::{config, eps_limiter::EpsLimiter, logger, server, worker};
+use tokio::{
+    sync::{broadcast, mpsc},
+    task::JoinSet,
+    time::sleep,
+};
+use tracing::{debug, error, info};
 
 #[derive(Parser)]
 #[command(
@@ -23,10 +32,20 @@ struct Cli {
     #[arg(short('v'), long, action = clap::ArgAction::Count)]
     verbosity: u8,
     /// Enable debug output, for compatibility purpose
-    #[arg(long = "debug", env = "DSIEM_DEBUG", value_name = "boolean", default_value_t = false)]
+    #[arg(
+        long = "debug",
+        env = "DSIEM_DEBUG",
+        value_name = "boolean",
+        default_value_t = false
+    )]
     debug: bool,
     /// Enable trace output, for compatibility purpose
-    #[arg(long = "trace", env = "DSIEM_TRACE", value_name = "boolean", default_value_t = false)]
+    #[arg(
+        long = "trace",
+        env = "DSIEM_TRACE",
+        value_name = "boolean",
+        default_value_t = false
+    )]
     trace: bool,
     /// Enable json-lines log output
     #[arg(
@@ -48,7 +67,8 @@ enum SubCommands {
         about = "Start Dsiem frontend server",
         long_about = "Start the Dsiem frontend server",
         name = "serve"
-    )] ServeCommand(ServeArgs),
+    )]
+    ServeCommand(ServeArgs),
 }
 
 #[derive(Args, Debug)]
@@ -158,7 +178,13 @@ fn log_startup_err(context: &str, err: Error) -> Error {
 
 async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let test_env = args.test_env;
-    let verbosity = if args.debug { 1 } else if args.trace { 2 } else { args.verbosity };
+    let verbosity = if args.debug {
+        1
+    } else if args.trace {
+        2
+    } else {
+        args.verbosity
+    };
     let level = logger::verbosity_to_level_filter(verbosity);
     let sub_json = logger::setup_logger_json(level)?;
     let sub = logger::setup_logger(level)?;
@@ -175,15 +201,21 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let mut set = JoinSet::new();
 
-    IpAddr::from_str(sargs.address.as_str()).map_err(|e|
-        log_startup_err("parsing address parameter", e.into())
-    )?;
+    IpAddr::from_str(sargs.address.as_str())
+        .map_err(|e| log_startup_err("parsing address parameter", e.into()))?;
 
     if sargs.port == 0 {
-        return Err(log_startup_err("parsing port parameter", anyhow!("port cannot be 0")));
+        return Err(log_startup_err(
+            "parsing port parameter",
+            anyhow!("port cannot be 0"),
+        ));
     }
 
-    let max_queue = if sargs.max_queue == 0 { 1_000_000 } else { sargs.max_queue };
+    let max_queue = if sargs.max_queue == 0 {
+        1_000_000
+    } else {
+        sargs.max_queue
+    };
 
     let (event_tx, event_rx) = broadcast::channel(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<bool>(8);
@@ -200,9 +232,9 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         let lim = eps_limiter.clone();
         let tx = cancel_tx.clone();
         async move {
-            lim.start(tx, bp_rx).await.map_err(|e| {
-                log_startup_err("starting eps limiter thread", e)
-            })
+            lim.start(tx, bp_rx)
+                .await
+                .map_err(|e| log_startup_err("starting eps limiter thread", e))
         }
     });
 
@@ -216,15 +248,16 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
                 nats_url,
             };
             let w = worker::Worker {};
-            w.frontend_start(opt).await.map_err(|e| anyhow!("frontend worker error: {:?}", e))
+            w.frontend_start(opt)
+                .await
+                .map_err(|e| anyhow!("frontend worker error: {:?}", e))
         }
     });
 
     let addr = sargs.address + ":" + sargs.port.to_string().as_str();
     info!(
         "starting dsiem frontend server listening on {} using message queue at {}",
-        addr,
-        sargs.msq
+        addr, sargs.msq
     );
 
     debug!("saving status and tags to dsiem_config.json for UI to read");
@@ -238,9 +271,13 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             let mut rx = c.subscribe();
             let _ = rx.recv().await;
         };
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-            .with_graceful_shutdown(signal).await
-            .map_err(|e| anyhow!("serve error: {:?}", e))
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(signal)
+        .await
+        .map_err(|e| anyhow!("serve error: {:?}", e))
     });
 
     if listen {
@@ -315,9 +352,11 @@ mod test {
         assert!(logs_contain("starting"));
         assert!(res.is_ok());
 
-        let mut pty = rexpect
-            ::spawn("docker run --name nats-main -p 42224:42224 --rm -it nats -p 42224", Some(5000))
-            .unwrap();
+        let mut pty = rexpect::spawn(
+            "docker run --name nats-main -p 42224:42224 --rm -it nats -p 42224",
+            Some(5000),
+        )
+        .unwrap();
         pty.exp_string("Server is ready").unwrap();
 
         let cli = Cli::parse_from([

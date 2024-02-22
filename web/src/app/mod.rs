@@ -1,22 +1,21 @@
 //! Routes by yew_router
 
-pub mod home;
 pub mod alarm;
+pub mod home;
 
 use yew::prelude::*;
 use yew_router::prelude::*;
 
-use home::Home;
 use alarm::AlarmDetail;
+use home::Home;
 
-use crate::components::{ footer::Footer, header::Header };
+use crate::components::{footer::Footer, header::Header};
 
 /// App routes
 #[derive(Routable, Debug, Clone, PartialEq, Eq)]
 pub enum AppRoute {
-    #[at("/data/alarm-detail/:alarm_id")] AlarmDetail {
-        alarm_id: String,
-    },
+    #[at("/data/alarm-detail/:alarm_id")]
+    AlarmDetail { alarm_id: String },
     #[at("/")]
     Home,
     #[not_found]
@@ -28,10 +27,9 @@ pub fn switch(route: AppRoute) -> Html {
     match route {
         AppRoute::AlarmDetail { alarm_id } => html! { <AlarmDetail alarm_id={alarm_id} /> },
         AppRoute::Home => html! { <Home /> },
-        AppRoute::NotFound =>
-            html! {
-                "Page not found"
-            },
+        AppRoute::NotFound => html! {
+            "Page not found"
+        },
     }
 }
 

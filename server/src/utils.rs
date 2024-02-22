@@ -1,9 +1,11 @@
-use std::{ env, path::PathBuf };
 use nanoid::nanoid;
+use std::{env, path::PathBuf};
 
 fn get_dir(test_env: bool) -> Result<PathBuf, std::io::Error> {
     let dir = if test_env {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("fixtures")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures")
     } else {
         let mut d = env::current_exe()?;
         d.pop();

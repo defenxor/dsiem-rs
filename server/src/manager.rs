@@ -1,25 +1,27 @@
-use std::{ sync::Arc, time::Duration, fs::create_dir_all };
+use std::{fs::create_dir_all, sync::Arc, time::Duration};
 
-use tracing::{ debug, error, info, warn };
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    directive::Directive,
     asset::NetworkAssets,
+    backlog::{self, Backlog, BacklogState},
+    directive::Directive,
     event::NormalizedEvent,
-    rule,
-    backlog::{ self, Backlog, BacklogState },
     intel::IntelPlugin,
+    rule, utils,
     vuln::VulnPlugin,
-    utils,
 };
 
-use anyhow::{ Result, anyhow };
+use anyhow::{anyhow, Result};
 use tokio::{
-    fs::{ self, read_to_string, OpenOptions },
-    io::{ self, AsyncWriteExt },
-    sync::{ broadcast::{ self, error::RecvError }, mpsc, RwLock },
-    task::{ self, JoinSet },
-    time::{ interval, sleep, timeout },
+    fs::{self, read_to_string, OpenOptions},
+    io::{self, AsyncWriteExt},
+    sync::{
+        broadcast::{self, error::RecvError},
+        mpsc, RwLock,
+    },
+    task::{self, JoinSet},
+    time::{interval, sleep, timeout},
 };
 
 #[derive(PartialEq, Eq, Hash)]
@@ -54,9 +56,7 @@ pub struct Manager {
 
 impl Manager {
     pub fn new(option: ManagerOpt) -> Result<Manager> {
-        let m = Manager {
-            option,
-        };
+        let m = Manager { option };
         Ok(m)
     }
 
@@ -78,7 +78,8 @@ impl Manager {
         let mut file = OpenOptions::new()
             .create(true)
             .write(true)
-            .open(backlog_dir.join(filename)).await?;
+            .open(backlog_dir.join(filename))
+            .await?;
 
         let mut backlogs = vec![];
         for b in source.into_iter() {
@@ -109,7 +110,8 @@ impl Manager {
             let default_tag = self.option.default_tag.clone();
             let cancel_tx = self.option.cancel_tx.clone();
             let resptime_tx = self.option.resptime_tx.clone();
-            let first_rule = directive.rules
+            let first_rule = directive
+                .rules
                 .iter()
                 .filter(|v| v.stage == 1)
                 .take(1)
@@ -240,7 +242,7 @@ impl Manager {
                             break;
                         }
                         _ = report.tick() => {
-                            let length = { 
+                            let length = {
                                 let r = locked_backlogs.read().await;
                                 r.len()
                             };
@@ -276,7 +278,7 @@ impl Manager {
                                 debug!(directive.id, event.id, "failed quick check");
                                 continue;
                             }
-                    
+
                             let mut match_found = false;
                             // keep this lock for the entire event recv() loop so the next event will get updated backlogs
                             let mut backlogs = locked_backlogs.write().await;
@@ -296,7 +298,7 @@ impl Manager {
                                     } // else: timeout or v.borrow() == false
                                 }
                             }
-                            
+
                             // downstream_tx.send above can only fail when there's only 1 backlog, and it has exited it's event receiver, 
                             // but mgr_delete_rx hasn't run yet before locked_backlogs lock was obtained here.
                             // it is ok therefore to continue evaluating this event as a potential trigger for a new backlog
@@ -342,39 +344,38 @@ impl Manager {
 
 #[cfg(test)]
 mod test {
-    use crate::{ directive, manager };
+    use crate::{directive, manager};
 
     use super::*;
-    use tokio::{ time::sleep, task, sync::broadcast::Sender };
+    use tokio::{sync::broadcast::Sender, task, time::sleep};
     use tracing_test::traced_test;
 
     #[tokio::test]
     #[traced_test]
     async fn test_manager() {
-        let directives = directive
-            ::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()]))
-            .unwrap();
+        let directives = directive::load_directives(
+            true,
+            Some(vec!["directives".to_string(), "directive5".to_string()]),
+        )
+        .unwrap();
         let (event_tx, _) = broadcast::channel(10);
         let (cancel_tx, _) = broadcast::channel::<()>(1);
         let (report_tx, mut report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
 
-        let get_opt = move |
-            c: Sender<()>,
-            e: Sender<NormalizedEvent>,
-            r: mpsc::Sender<ManagerReport>,
-            directives: Vec<Directive>
-        | {
+        let get_opt = move |c: Sender<()>,
+                            e: Sender<NormalizedEvent>,
+                            r: mpsc::Sender<ManagerReport>,
+                            directives: Vec<Directive>| {
             let (backpressure_tx, _) = mpsc::channel::<()>(8);
             let (resptime_tx, _) = mpsc::channel::<Duration>(128);
 
-            let assets = Arc::new(
-                NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap()
-            );
+            let assets =
+                Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
             let intels = Arc::new(
-                crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap()
+                crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
             );
             let vulns = Arc::new(
-                crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap()
+                crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
             );
             ManagerOpt {
                 test_env: true,
@@ -399,7 +400,12 @@ mod test {
         };
 
         let run_manager = |directives: Vec<Directive>| {
-            let opt = get_opt(cancel_tx.clone(), event_tx.clone(), report_tx.clone(), directives);
+            let opt = get_opt(
+                cancel_tx.clone(),
+                event_tx.clone(),
+                report_tx.clone(),
+                directives,
+            );
             task::spawn(async {
                 let m = Manager::new(opt).unwrap();
                 _ = m.listen(1).await;
@@ -460,7 +466,9 @@ mod test {
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(500)).await;
         assert!(logs_contain("event sent downstream"));
-        assert!(logs_contain("found existing backlog that consumes the event"));
+        assert!(logs_contain(
+            "found existing backlog that consumes the event"
+        ));
 
         // matched event 3 to 5
         evt.id = "3".to_string();
@@ -504,7 +512,7 @@ mod test {
         assert!(logs_contain("event receiver lagged"));
 
         /* uncomment this block if directive rules are applied to backlog, which for now isn't
-        
+
         // get to stage 4
         for id in 7..10 {
             evt.id = id.to_string();
@@ -528,7 +536,7 @@ mod test {
         _ = run_manager(updated);
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("lower than backlog's current stage"));
-        
+
         */
     }
 }

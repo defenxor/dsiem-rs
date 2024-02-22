@@ -1,4 +1,4 @@
-use std::{ net::IpAddr, str::FromStr };
+use std::{net::IpAddr, str::FromStr};
 
 use chrono::prelude::*;
 use serde::Serialize;
@@ -86,11 +86,11 @@ impl Default for NormalizedEvent {
 impl NormalizedEvent {
     pub fn valid(&self) -> bool {
         // timestamp, src_ip, and dst_ip are always valid
-        !self.title.is_empty() &&
-            !self.sensor.is_empty() &&
-            !self.id.is_empty() &&
-            ((self.plugin_id != 0 && self.plugin_sid != 0) ||
-                (!self.product.is_empty() && !self.category.is_empty()))
+        !self.title.is_empty()
+            && !self.sensor.is_empty()
+            && !self.id.is_empty()
+            && ((self.plugin_id != 0 && self.plugin_sid != 0)
+                || (!self.product.is_empty() && !self.category.is_empty()))
     }
 }
 
@@ -135,8 +135,7 @@ mod test {
         e.category = "Firewall".to_owned();
         assert!(e.valid());
 
-        let s =
-            r#"{"event_id":"missing req fields", "timestamp": "2023-01-01T00:00:00Z", "title": "foo", "src_ip":"10.0.0.3", "dst_ip":"0.0.0.0", "sensor": "foo" }"#;
+        let s = r#"{"event_id":"missing req fields", "timestamp": "2023-01-01T00:00:00Z", "title": "foo", "src_ip":"10.0.0.3", "dst_ip":"0.0.0.0", "sensor": "foo" }"#;
         let e3: NormalizedEvent = serde_json::from_str(s).unwrap();
         assert!(!e3.valid());
     }

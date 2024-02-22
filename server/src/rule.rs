@@ -1,12 +1,12 @@
-use std::{ net::IpAddr, sync::Arc, collections::HashSet };
+use std::{collections::HashSet, net::IpAddr, sync::Arc};
 
 use cidr::IpCidr;
-use serde::{ Serializer, Deserializer };
-use serde_derive::{ Deserialize, Serialize };
 use parking_lot::RwLock;
+use serde::{Deserializer, Serializer};
+use serde_derive::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::{ event::NormalizedEvent, asset::NetworkAssets };
+use crate::{asset::NetworkAssets, event::NormalizedEvent};
 use anyhow::Result;
 
 #[derive(PartialEq, Clone, Debug, Default)]
@@ -17,7 +17,10 @@ pub enum RuleType {
 }
 
 impl serde::Serialize for RuleType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         serializer.serialize_str(match *self {
             RuleType::PluginRule => "PluginRule",
             RuleType::TaxonomyRule => "TaxonomyRule",
@@ -26,7 +29,10 @@ impl serde::Serialize for RuleType {
 }
 
 impl<'de> serde::Deserialize<'de> for RuleType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         let s = String::deserialize(deserializer)?;
         let res = match s.as_str() {
             "PluginRule" => RuleType::PluginRule,
@@ -123,7 +129,7 @@ impl DirectiveRule {
         &self,
         a: &NetworkAssets,
         e: &NormalizedEvent,
-        mut_sdiff: bool
+        mut_sdiff: bool,
     ) -> bool {
         if self.rule_type == RuleType::PluginRule {
             plugin_rule_check(self, a, e, mut_sdiff)
@@ -146,7 +152,7 @@ fn plugin_rule_check(
     r: &DirectiveRule,
     a: &NetworkAssets,
     e: &NormalizedEvent,
-    mut_sdiff: bool
+    mut_sdiff: bool,
 ) -> bool {
     if e.plugin_id != r.plugin_id {
         return false;
@@ -171,7 +177,7 @@ fn taxonomy_rule_check(
     r: &DirectiveRule,
     a: &NetworkAssets,
     e: &NormalizedEvent,
-    mut_sdiff: bool
+    mut_sdiff: bool,
 ) -> bool {
     if r.category != e.category {
         return false;
@@ -245,7 +251,7 @@ fn ip_port_check(
     r: &DirectiveRule,
     a: &NetworkAssets,
     e: &NormalizedEvent,
-    mut_sdiff: bool
+    mut_sdiff: bool,
 ) -> bool {
     let srcip_in_homenet = a.is_in_homenet(&e.src_ip);
     if r.from == "HOME_NET" && !srcip_in_homenet {
@@ -255,11 +261,10 @@ fn ip_port_check(
         return false;
     }
     // covers  r.From == "IP", r.From == "IP1, IP2, !IP3", r.From == CIDR-netaddr, r.From == "CIDR1, CIDR2, !CIDR3"
-    if
-        r.from != "HOME_NET" &&
-        r.from != "!HOME_NET" &&
-        r.from != "ANY" &&
-        !is_ip_match_csvrule(&r.from, e.src_ip)
+    if r.from != "HOME_NET"
+        && r.from != "!HOME_NET"
+        && r.from != "ANY"
+        && !is_ip_match_csvrule(&r.from, e.src_ip)
     {
         return false;
     }
@@ -272,11 +277,10 @@ fn ip_port_check(
         return false;
     }
     // covers  r.From == "IP", r.From == "IP1, IP2, !IP3", r.From == CIDR-netaddr, r.From == "CIDR1, CIDR2, !CIDR3"
-    if
-        r.to != "HOME_NET" &&
-        r.to != "!HOME_NET" &&
-        r.to != "ANY" &&
-        !is_ip_match_csvrule(&r.to, e.dst_ip)
+    if r.to != "HOME_NET"
+        && r.to != "!HOME_NET"
+        && r.to != "ANY"
+        && !is_ip_match_csvrule(&r.to, e.dst_ip)
     {
         return false;
     }
@@ -322,10 +326,7 @@ fn match_text_case_insensitive(rule_string: &str, term: &str) -> bool {
 }
 fn is_string_match_csvrule(rules_in_csv: &str, term: &String) -> bool {
     let mut result = false;
-    let rules: Vec<String> = rules_in_csv
-        .split(',')
-        .map(|s| s.to_string())
-        .collect();
+    let rules: Vec<String> = rules_in_csv.split(',').map(|s| s.to_string()).collect();
     for mut v in rules {
         v = v.trim().to_owned();
         let is_inverse = v.starts_with('!');
@@ -388,10 +389,10 @@ fn is_ip_match_csvrule(rules_in_csv: &str, ip: IpAddr) -> bool {
         let term_is_equal = ipnet_a.contains(&ip);
 
         /*
-			The correct logic here is to AND all inverse rules,
-			and then OR the result with all the non-inverse rules.
-			The following code implement that with shortcuts.
-		*/
+            The correct logic here is to AND all inverse rules,
+            and then OR the result with all the non-inverse rules.
+            The following code implement that with shortcuts.
+        */
 
         // break early if !condition is violated
         if is_inverse && term_is_equal {
@@ -491,14 +492,15 @@ pub fn quick_check_taxo_rule(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
     let last = pairs
         .iter()
         .filter(|v| {
-            let v = v.product
+            let v = v
+                .product
                 .clone()
                 .into_iter()
                 .filter(|x| *x == e.product)
                 .last();
             v.is_some()
         })
-        .filter(|v| { v.category == e.category })
+        .filter(|v| v.category == e.category)
         .last();
     last.is_some()
 }
@@ -509,7 +511,8 @@ pub fn quick_check_plugin_rule(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
         .iter()
         .filter(|v| v.plugin_id == e.plugin_id)
         .filter(|v| {
-            let v = v.plugin_sid
+            let v = v
+                .plugin_sid
                 .clone()
                 .into_iter()
                 .filter(|x| *x == e.plugin_sid)
@@ -551,20 +554,17 @@ mod test {
     fn test_serde() {
         let mut r = DirectiveRule::default();
         let s = serde_json::to_string(&r).unwrap();
-        let s_ref =
-            r#"{"name":"","stage":0,"occurrence":0,"from":"","to":"","plugin_id":0,"type":"PluginRule","port_from":"","port_to":"","protocol":"","reliability":0,"timeout":0}"#;
+        let s_ref = r#"{"name":"","stage":0,"occurrence":0,"from":"","to":"","plugin_id":0,"type":"PluginRule","port_from":"","port_to":"","protocol":"","reliability":0,"timeout":0}"#;
         assert_eq!(s, s_ref);
         let r2: DirectiveRule = serde_json::from_str(s_ref).unwrap();
         assert!(r2.rule_type == RuleType::PluginRule);
         r.rule_type = RuleType::PluginRule;
         let s = serde_json::to_string(&r).unwrap();
-        let s_ref =
-            r#"{"name":"","stage":0,"occurrence":0,"from":"","to":"","plugin_id":0,"type":"PluginRule","port_from":"","port_to":"","protocol":"","reliability":0,"timeout":0}"#;
+        let s_ref = r#"{"name":"","stage":0,"occurrence":0,"from":"","to":"","plugin_id":0,"type":"PluginRule","port_from":"","port_to":"","protocol":"","reliability":0,"timeout":0}"#;
         assert_eq!(s, s_ref);
         r.rule_type = RuleType::TaxonomyRule;
         let s = serde_json::to_string(&r).unwrap();
-        let s_ref =
-            r#"{"name":"","stage":0,"occurrence":0,"from":"","to":"","plugin_id":0,"type":"TaxonomyRule","port_from":"","port_to":"","protocol":"","reliability":0,"timeout":0}"#;
+        let s_ref = r#"{"name":"","stage":0,"occurrence":0,"from":"","to":"","plugin_id":0,"type":"TaxonomyRule","port_from":"","port_to":"","protocol":"","reliability":0,"timeout":0}"#;
         assert_eq!(s, s_ref);
     }
 
@@ -612,7 +612,7 @@ mod test {
             SIDPair {
                 plugin_id: 2,
                 plugin_sid: vec![1, 2, 3],
-            }
+            },
         ];
         let mut event = NormalizedEvent {
             plugin_id: 1,
@@ -635,7 +635,7 @@ mod test {
             TaxoPair {
                 category: "waf".to_owned(),
                 product: vec!["f5".to_owned(), "modsec".to_owned()],
-            }
+            },
         ];
         let mut event = NormalizedEvent {
             product: "checkpoint".to_owned(),
@@ -660,7 +660,13 @@ mod test {
             (("192.168.0.1", "!10.0.0.0/16, 192.168.0.0/24"), true),
             (("192.168.0.1", "!192.168.0.0/24"), false),
             (("192.168.0.1", "10.0.0.0/16, !192.168.0.0/16"), false),
-            (("192.168.0.1", "10.0.0.0/16, !192.168.0.0/16, 192.168.0.0/16"), false)
+            (
+                (
+                    "192.168.0.1",
+                    "10.0.0.0/16, !192.168.0.0/16, 192.168.0.0/16",
+                ),
+                false,
+            ),
         ];
 
         for (validator, (input_1, input_2), expected) in table_test!(table) {
@@ -687,7 +693,7 @@ mod test {
             (("1231", "!1000, 1001"), true),
             (("1231", "1001, !1000"), true),
             (("1231", "!1000, 1231"), true),
-            (("foo", "!bar, foobar, foo"), true)
+            (("foo", "!bar, foobar, foo"), true),
         ];
 
         for (validator, (input_1, input_2), expected) in table_test!(table) {
@@ -703,8 +709,7 @@ mod test {
 
     #[test]
     fn test_rule() {
-        let asset_string =
-            r#"{
+        let asset_string = r#"{
             "assets": [
               {
                 "name": "Firewall",
@@ -994,7 +999,6 @@ mod test {
             ((15, e1.clone(), r15), false),
             ((16, e1.clone(), r16), false),
             ((17, e1.clone(), r17), false),
-
             ((51, ec1, rc1), false),
             ((52, ec2, rc2), true),
             ((53, ec3, rc3), false),
@@ -1004,7 +1008,6 @@ mod test {
             ((57, ec7, rc7), false),
             ((58, ec8, rc8), true),
             ((59, ec9, rc9), false),
-
             ((113, eany1.clone(), rany1.clone()), true),
             ((114, eany1.clone(), rany2.clone()), true),
             ((115, eany1.clone(), rany3.clone()), false),
@@ -1017,7 +1020,6 @@ mod test {
             ((122, eany1.clone(), rany10.clone()), true),
             ((123, eany1.clone(), rany11.clone()), false),
             ((124, eany1, rany12.clone()), true),
-
             ((125, eany2.clone(), rany1), true),
             ((126, eany2.clone(), rany2), true),
             ((127, eany2.clone(), rany3), false),
@@ -1029,7 +1031,7 @@ mod test {
             ((133, eany2.clone(), rany9), true),
             ((134, eany2.clone(), rany10), true),
             ((135, eany2.clone(), rany11), false),
-            ((136, eany2, rany12), false)
+            ((136, eany2, rany12), false),
         ];
 
         for (validator, (case_id, event, rule), expected) in table_test!(table) {
@@ -1052,12 +1054,12 @@ mod test {
             ((110, e1.clone(), rs10, s10), true),
             ((111, e1.clone(), rs11, s11), true),
             ((112, e1.clone(), rs12, s12), true),
-            ((113, e1, rs13, s13), false)
+            ((113, e1, rs13, s13), false),
         ];
 
-        for (validator, (case_id, event, rule, sticky_diff), expected) in table_test!(
-            table_stickydiff
-        ) {
+        for (validator, (case_id, event, rule, sticky_diff), expected) in
+            table_test!(table_stickydiff)
+        {
             let actual = rule.does_event_match(&a, &event, true);
             let sticky_diff_actual: StickyDiffData;
             {
@@ -1080,7 +1082,10 @@ mod test {
         let table = vec![
             ((1, "Network Command Shell", "Network Command Shell"), true),
             ((2, "Network Command Shell", "Network Command Login"), false),
-            ((3, "!Network Command Shell", "Network Command Shell"), false),
+            (
+                (3, "!Network Command Shell", "Network Command Shell"),
+                false,
+            ),
             ((4, "!Network Command Shell", "Network Command Login"), true),
             ((5, "foo,bar,qux", "foo"), true),
             ((6, "foo,bar,qux", "bar"), true),
@@ -1090,7 +1095,7 @@ mod test {
             ((10, "foo,bar,!qux", "qux"), false),
             ((11, "!foo,bar,qux", "foo"), false),
             ((12, "!foo, foo, bar, qux", "foo"), false),
-            ((13, "foo, !foo, bar, qux", "foo"), true)
+            ((13, "foo, !foo, bar, qux", "foo"), true),
         ];
 
         let mut r = DirectiveRule {
@@ -1115,9 +1120,9 @@ mod test {
         };
 
         let a = NetworkAssets::from_string(r#"{ "assets": [] }"#.to_string()).unwrap();
-        for (validator, (case_id, rule_customdata, event_customdata), expected) in table_test!(
-            table
-        ) {
+        for (validator, (case_id, rule_customdata, event_customdata), expected) in
+            table_test!(table)
+        {
             r.custom_data1 = rule_customdata.to_string();
             e.custom_data1 = event_customdata.to_string();
             let actual = r.does_event_match(&a, &e, true);

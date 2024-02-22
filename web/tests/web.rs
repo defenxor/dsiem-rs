@@ -11,8 +11,7 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test]
 async fn test_home_page() {
-    yew::Renderer::<App>
-        ::with_root(gloo_utils::document().get_element_by_id("output").unwrap())
+    yew::Renderer::<App>::with_root(gloo_utils::document().get_element_by_id("output").unwrap())
         .render();
 
     sleep(Duration::new(2, 0)).await;

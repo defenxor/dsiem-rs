@@ -1,30 +1,40 @@
 // ch chan<- event.NormalizedEvent, msq string, msqPrefix string, nodeName string, confDir string, frontend string
 
-use std::{ sync::Arc, time::Duration };
 use futures_lite::StreamExt;
-use tokio::{ sync::{ broadcast::{ Sender, self }, mpsc }, time::{ interval, timeout } };
 use std::str;
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::{
+        broadcast::{self, Sender},
+        mpsc,
+    },
+    time::{interval, timeout},
+};
 
-use crate::{ event::{ self, NormalizedEvent }, asset::NetworkAssets };
-use tracing::{ info, error, debug };
-use anyhow::{ Result, Context, anyhow };
+use crate::{
+    asset::NetworkAssets,
+    event::{self, NormalizedEvent},
+};
+use anyhow::{anyhow, Context, Result};
+use tracing::{debug, error, info};
 
 const EVENT_SUBJECT: &str = "dsiem_events";
 const BP_SUBJECT: &str = "dsiem_overload_signals";
 
 async fn nats_client(nats_url: &str) -> Result<async_nats::Client> {
-    let client = async_nats::ConnectOptions
-        ::new()
+    let client = async_nats::ConnectOptions::new()
         .event_callback(|event| async move {
             match event {
                 async_nats::Event::Disconnected => debug!("nats disconnected"),
                 async_nats::Event::Connected => debug!("nats reconnected"),
-                async_nats::Event::ClientError(err) =>
-                    debug!("nats client error occurred: {}", err),
+                async_nats::Event::ClientError(err) => {
+                    debug!("nats client error occurred: {}", err)
+                }
                 other => debug!("nats event happened: {}", other),
             }
         })
-        .connect(nats_url).await?;
+        .connect(nats_url)
+        .await?;
     Ok(client)
 }
 
@@ -51,13 +61,19 @@ impl Worker {
     pub async fn frontend_start(&self, mut opt: FrontendOpt) -> Result<()> {
         let client = timeout(
             std::time::Duration::from_secs(NATS_CONNECT_MAX_SECONDS),
-            nats_client(&opt.nats_url)
-        ).await?.context(format!("cannot connect to {}", opt.nats_url))?;
+            nats_client(&opt.nats_url),
+        )
+        .await?
+        .context(format!("cannot connect to {}", opt.nats_url))?;
 
         let mut subscription: async_nats::Subscriber = client
-            .subscribe(BP_SUBJECT.into()).await
+            .subscribe(BP_SUBJECT.into())
+            .await
             .map_err(|e| anyhow!("{}", e))
-            .context(format!("cannot subscribe to {} from {}", BP_SUBJECT, opt.nats_url))?;
+            .context(format!(
+                "cannot subscribe to {} from {}",
+                BP_SUBJECT, opt.nats_url
+            ))?;
 
         info!("listening for new back pressure signal");
         loop {
@@ -70,7 +86,7 @@ impl Worker {
                         } else {
                             error!("back pressure message contain bytes that cant be parsed, skipping it");
                         }
-                    } else { 
+                    } else {
                         error!("back pressure message contain bytes that cant be parsed, skipping it");
                     }
                 },
@@ -81,7 +97,7 @@ impl Worker {
                         error!("error sending event to nats: {}", err);
                     } else {
                         debug!("event {} sent to nats", event.id);
-                    }                    
+                    }
                 },
                 _ = opt.cancel_rx.recv() => {
                     info!("cancel signal received, exiting frontend-worker thread");
@@ -95,13 +111,19 @@ impl Worker {
     pub async fn backend_start(&self, mut opt: BackendOpt) -> Result<()> {
         let client = timeout(
             std::time::Duration::from_secs(NATS_CONNECT_MAX_SECONDS),
-            nats_client(&opt.nats_url)
-        ).await?.context(format!("cannot connect to {}", opt.nats_url))?;
+            nats_client(&opt.nats_url),
+        )
+        .await?
+        .context(format!("cannot connect to {}", opt.nats_url))?;
 
         let mut subscription = client
-            .subscribe(EVENT_SUBJECT.into()).await
+            .subscribe(EVENT_SUBJECT.into())
+            .await
             .map_err(|e| anyhow!("{}", e))
-            .context(format!("cannot subscribe to dsiem_events from {}", opt.nats_url))?;
+            .context(format!(
+                "cannot subscribe to dsiem_events from {}",
+                opt.nats_url
+            ))?;
 
         let mut reset_bp = interval(Duration::from_secs(opt.hold_duration.into()));
         let mut bp_state = false;
@@ -135,13 +157,13 @@ impl Worker {
                     if bp_state {
                         debug!("last under pressure signal is still active");
                         continue;
-                    } 
+                    }
                     bp_state = true;
                     if let Err(err) = client.publish(BP_SUBJECT.into(), "true".into()).await {
                         error!("error sending overload = true signal to frontend: {}", err);
                     } else {
                         info!("overload = true signal sent to frontend");
-                    }                    
+                    }
                 },
                 _ = opt.cancel_rx.recv() => {
                     info!("cancel signal received, exiting worker thread");
@@ -156,7 +178,7 @@ impl Worker {
         &self,
         assets: &Arc<NetworkAssets>,
         event_tx: &Sender<event::NormalizedEvent>,
-        payload_str: &str
+        payload_str: &str,
     ) -> Result<()> {
         let res: Result<NormalizedEvent, serde_json::Error> = serde_json::from_str(payload_str);
         if res.is_err() {
@@ -187,15 +209,14 @@ impl Worker {
 #[cfg(test)]
 mod test {
     use super::*;
-    use tokio::{ time::sleep, task };
+    use tokio::{task, time::sleep};
     use tracing_test::traced_test;
 
     #[tokio::test]
     #[traced_test]
     async fn test_backend_start() {
-        let mut pty = rexpect
-            ::spawn("docker run -p 42222:42222 --rm -it nats -p 42222", None)
-            .unwrap();
+        let mut pty =
+            rexpect::spawn("docker run -p 42222:42222 --rm -it nats -p 42222", None).unwrap();
         pty.exp_string("Server is ready").unwrap();
 
         let nats_url = "nats://127.0.0.1:42222";
@@ -230,15 +251,22 @@ mod test {
 
         let client = timeout(
             std::time::Duration::from_secs(NATS_CONNECT_MAX_SECONDS),
-            nats_client(nats_url)
-        ).await
-            .unwrap()
-            .context(format!("cannot connect to {}", nats_url))
-            .unwrap();
+            nats_client(nats_url),
+        )
+        .await
+        .unwrap()
+        .context(format!("cannot connect to {}", nats_url))
+        .unwrap();
 
-        let evt = NormalizedEvent { id: "1".to_string(), ..Default::default() };
+        let evt = NormalizedEvent {
+            id: "1".to_string(),
+            ..Default::default()
+        };
         let payload_str = serde_json::to_string(&evt).unwrap();
-        client.publish(EVENT_SUBJECT.into(), payload_str.into()).await.unwrap();
+        client
+            .publish(EVENT_SUBJECT.into(), payload_str.into())
+            .await
+            .unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("received new event from nats"));
         sleep(Duration::from_millis(1000)).await;
@@ -252,9 +280,8 @@ mod test {
     #[tokio::test]
     #[traced_test]
     async fn test_frontend_start() {
-        let mut pty = rexpect
-            ::spawn("docker run -p 42223:42223 --rm -it nats -p 42223", None)
-            .unwrap();
+        let mut pty =
+            rexpect::spawn("docker run -p 42223:42223 --rm -it nats -p 42223", None).unwrap();
         pty.exp_string("Server is ready").unwrap();
 
         let nats_url = "nats://127.0.0.1:42223";
@@ -279,23 +306,32 @@ mod test {
 
         let client = timeout(
             std::time::Duration::from_secs(NATS_CONNECT_MAX_SECONDS),
-            nats_client(nats_url)
-        ).await
-            .unwrap()
-            .context(format!("cannot connect to {}", nats_url))
-            .unwrap();
+            nats_client(nats_url),
+        )
+        .await
+        .unwrap()
+        .context(format!("cannot connect to {}", nats_url))
+        .unwrap();
 
         let _detached = task::spawn(async move {
             bp_rx.recv().await;
         });
 
-        client.publish(BP_SUBJECT.into(), "true".into()).await.unwrap();
+        client
+            .publish(BP_SUBJECT.into(), "true".into())
+            .await
+            .unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("overload = true signal received from backend"));
 
-        client.publish(BP_SUBJECT.into(), "foo".into()).await.unwrap();
+        client
+            .publish(BP_SUBJECT.into(), "foo".into())
+            .await
+            .unwrap();
         sleep(Duration::from_millis(1000)).await;
-        assert!(logs_contain("back pressure message contain bytes that cant be parsed"));
+        assert!(logs_contain(
+            "back pressure message contain bytes that cant be parsed"
+        ));
 
         _ = event_tx.send(NormalizedEvent::default());
         sleep(Duration::from_millis(1000)).await;

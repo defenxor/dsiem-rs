@@ -1,7 +1,7 @@
+use crate::components::alarm::AlarmView;
+use crate::services::alarm;
 use yew::prelude::*;
 use yew_hooks::prelude::*;
-use crate::services::alarm;
-use crate::components::alarm::AlarmView;
 
 #[derive(Properties, PartialEq)]
 pub struct DetailProps {
@@ -21,10 +21,13 @@ pub fn alarm_detail(props: &DetailProps) -> Html {
     });
 
     let handle = state.clone();
-    use_effect_with_deps(move |_| {
-        let handle = handle;
-        handle.run();
-    }, loaded);
+    use_effect_with_deps(
+        move |_| {
+            let handle = handle;
+            handle.run();
+        },
+        loaded,
+    );
 
     html! {
         <div class={classes!("min-h-screen", "bg-white", "dark:bg-black")}>
