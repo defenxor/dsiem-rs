@@ -1,8 +1,3 @@
-FROM messense/rust-musl-cross:x86_64-musl AS dsiem_builder
-COPY . .
-WORKDIR /home/rust/src/ctx
-RUN cargo build -p dsiem --release --target x86_64-unknown-linux-musl
-
 FROM node:current-alpine as css_builder
 WORKDIR /
 COPY ./ctx/web ./web
@@ -15,8 +10,8 @@ FROM messense/rust-musl-cross:x86_64-musl AS ui_builder
 WORKDIR /
 
 # just for the workspace manifests
-COPY ./ctx/server ./server
 COPY ./ctx/Cargo.toml ./
+RUN cargo init server
 
 COPY ./ctx/web ./web
 WORKDIR /web
@@ -26,6 +21,12 @@ RUN apt-get update && apt-get install -y wget
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.18.7/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf- -C /usr/local/bin
 RUN rustup target add wasm32-unknown-unknown
 RUN trunk build --public-url /ui --release index.html
+
+FROM messense/rust-musl-cross:x86_64-musl AS dsiem_builder
+COPY . .
+WORKDIR /home/rust/src/ctx
+RUN cd server && cargo fetch
+RUN cargo build -p dsiem --release --target x86_64-unknown-linux-musl
 
 FROM alpine:edge
 
