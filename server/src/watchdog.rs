@@ -33,7 +33,7 @@ impl Watchdog {
         let mut report = interval(Duration::from_secs(opt.report_interval));
         let mut cancel_rx = opt.cancel_tx.subscribe();
         let mut resp_histo = HdrHistogram::with_bound(60 * 60 * 1000); // max 1 hour
-        let max_proc_time_ms = round((Duration::from_secs(1) / opt.max_eps).as_millis() as f64, 3);
+        let max_proc_time_ms = 1000.0 / opt.max_eps as f64;
         let mut report_map = HashMap::<u64, usize>::new();
         let mut resptime_rx = opt.resptime_rx;
         let mut report_rx = opt.report_rx;

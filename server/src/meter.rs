@@ -51,6 +51,9 @@ pub struct Meter {
 
 impl Meter {
     pub fn new(config: OtelConfig) -> Option<Self> {
+        if !config.metrics_enabled {
+            return None;
+        }
         match global_meter(config) {
             Ok(meter) => Some(Self {
                 meter,
