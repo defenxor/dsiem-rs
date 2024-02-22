@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{anyhow, Error, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
-use dsiem::{config, eps_limiter::EpsLimiter, logger, server, worker};
+use dsiem::{config, eps_limiter::EpsLimiter, server, tracer, worker};
 use tokio::{
     sync::{broadcast, mpsc},
     task::JoinSet,
@@ -164,6 +164,22 @@ struct ServeArgs {
         default_value = "Identified Threat,False Positive,Valid Threat,Security Incident"
     )]
     tags: Vec<String>,
+    /// Export traces data to opentelemetry collector
+    #[arg(
+        long = "otel-tracing-enabled",
+        env = "DSIEM_OTEL_TRACING_ENABLED",
+        value_name = "boolean",
+        default_value_t = false
+    )]
+    enable_tracing: bool,
+    /// Endpoint of the opentelemetry collector
+    #[arg(
+        long = "otel-endpoint",
+        env = "DSIEM_OTEL_ENDPOINT",
+        value_name = "string",
+        default_value = "http://localhost:4317"
+    )]
+    otel_endpoint: String,
 }
 
 #[tokio::main]
@@ -185,20 +201,24 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     } else {
         args.verbosity
     };
-    let level = logger::verbosity_to_level_filter(verbosity);
-    let sub_json = logger::setup_logger_json(level)?;
-    let sub = logger::setup_logger(level)?;
-    let log_result = if args.use_json {
-        tracing::subscriber::set_global_default(sub_json)
-    } else {
-        tracing::subscriber::set_global_default(sub)
-    };
-    if require_logging {
-        log_result?;
-    }
-
     let SubCommands::ServeCommand(sargs) = args.subcommand;
-
+    let log_format = if args.use_json {
+        tracer::LogType::Json
+    } else {
+        tracer::LogType::Plain
+    };
+    let otel_config = tracer::OtelConfig {
+        tracing_enabled: sargs.enable_tracing,
+        otlp_endpoint: sargs.otel_endpoint,
+        service_name: sargs.node.to_owned(),
+        ..Default::default()
+    };
+    let subscriber = tracer::setup(verbosity, log_format, otel_config.clone())
+        .map_err(|e| log_startup_err("setting up tracer", e))?;
+    let setup_result = tracing::subscriber::set_global_default(subscriber);
+    if require_logging {
+        setup_result?;
+    }
     let mut set = JoinSet::new();
 
     IpAddr::from_str(sargs.address.as_str())

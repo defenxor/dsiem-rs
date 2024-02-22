@@ -1,23 +1,24 @@
 use std::{fs, net::SocketAddr, sync::Arc, time::Duration};
 
-use crate::eps_limiter::EpsLimiter;
-use crate::{event::NormalizedEvent, utils};
-use anyhow::Result;
-use atomic_counter::{AtomicCounter, RelaxedCounter};
-use axum::extract::FromRequest;
 use axum::{
     extract::{ConnectInfo, Path, State},
     http::StatusCode,
     routing::{delete, get, post},
     Router,
 };
+
+use crate::eps_limiter::EpsLimiter;
+use crate::{event::NormalizedEvent, tracer, utils};
+use anyhow::Result;
+use atomic_counter::{AtomicCounter, RelaxedCounter};
+use axum::extract::FromRequest;
 use axum_extra::response::ErasedJson;
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast::Sender;
 use tower_http::{services::ServeDir, timeout::TimeoutLayer};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, info_span, trace, warn};
 
 mod app_error;
 mod validate;
@@ -213,7 +214,7 @@ pub async fn config_delete_handler(
 pub async fn events_handler(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    JsonExtractor(mut evt): JsonExtractor<NormalizedEvent>,
+    JsonExtractor(mut event): JsonExtractor<NormalizedEvent>,
 ) -> Result<(), AppError> {
     if let Some(limiter) = &state.eps_limiter.as_ref().limiter {
         let limiter = limiter.read().await;
@@ -232,26 +233,28 @@ pub async fn events_handler(
 
     state.conn_counter.as_ref().inc();
     let conn_id = state.conn_counter.as_ref().get();
-    evt.conn_id = conn_id as u64;
-    trace!("event received: {:?}", evt);
-    if !evt.valid() {
+    event.conn_id = conn_id as u64;
+
+    trace!("event received: {:?}", event);
+    let span = info_span!("server::events_handler", conn.id = conn_id, event.id);
+    tracer::store_parent_into_event(&span, &mut event);
+
+    if !event.valid() {
         warn!(
-            "l337 or epic fail attempt from {} detected. Discarding event ID {}.",
-            addr.to_string(),
-            evt.id
+            event.id,
+            "l337 or epic fail attempt from {} detected, discarding event",
+            addr.to_string()
         );
         return Err(AppError::new(StatusCode::IM_A_TEAPOT, "Invalid event\n"));
     }
     let now = Utc::now();
     if let Some(n) = now.timestamp_nanos_opt() {
-        evt.rcvd_time = n;
+        event.rcvd_time = n;
     }
-    debug!(
-        "sending event to nats, ID: {}, conn ID: {}",
-        evt.id, evt.conn_id
-    );
 
-    state.event_tx.send(evt).map_err(|e| {
+    debug!(event.id, conn.id = event.conn_id, "sending event to nats");
+
+    state.event_tx.send(event).map_err(|e| {
         AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("error sending to NATS: {}", e),
