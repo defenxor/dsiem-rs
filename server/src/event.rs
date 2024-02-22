@@ -53,8 +53,6 @@ pub struct NormalizedEvent {
     #[serde(default)]
     pub rcvd_time: i64, // for backpressure control
     #[serde(default)]
-    pub trace_parent: String,
-    #[serde(default)]
     pub carrier: HashMap<String, String>
 }
 
