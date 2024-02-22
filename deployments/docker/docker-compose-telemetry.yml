@@ -1,0 +1,238 @@
+version: "3"
+services:
+
+  elasticsearch:
+    container_name: elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.11.0
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - xpack.monitoring.enabled=false
+      - xpack.ml.enabled=false
+      - xpack.graph.enabled=false
+      - xpack.watcher.enabled=false
+      - xpack.security.enabled=false
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
+    ports:
+      - 9200:9200
+    networks:
+      - siemnet
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+
+  logstash:
+    container_name: logstash
+    image: defenxor/docker-logstash:7.11.0
+    command:
+      - -f/etc/logstash/conf.d
+    environment:
+      - xpack.monitoring.enabled=false
+    networks:
+      - siemnet
+    volumes:
+      - ./conf/logstash/conf.d:/etc/logstash/conf.d
+      - ./conf/logstash/index-template.d/es7:/etc/logstash/index-template.d
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    container_name: kibana
+    image: docker.elastic.co/kibana/kibana:7.11.0
+    environment:
+      - xpack.monitoring.ui.container.elasticsearch.enabled=false
+    ports:
+      - 5601:5601
+    networks:
+      - siemnet
+    depends_on:
+      - elasticsearch
+      
+  # use dsiem name for frontend to avoid changing logstash configuration
+  dsiem:
+    container_name: dsiem-frontend
+    image: defenxor/dsiem-rs:latest
+    environment:
+      - DSIEM_MODE=cluster-frontend
+      - DSIEM_NODE=dsiem-frontend-0
+      - DSIEM_MSQ=nats://dsiem-nats:4222
+      - DSIEM_PORT=8080
+      - DSIEM_WEB_ESURL=http://localhost:9200
+      - DSIEM_WEB_KBNURL=http://localhost:5601
+      - DSIEM_TRACE=true
+      - DSIEM_OTEL_TRACING_ENABLED=true
+      - DSIEM_OTEL_ENDPOINT=http://otel-collector:4317
+    ports:
+      - "8080:8080"
+    networks:
+      - siemnet
+
+  dsiem-backend-0:
+    container_name: dsiem-backend-0
+    image: defenxor/dsiem-rs:latest
+    environment:
+      - DSIEM_MODE=cluster-backend
+      - DSIEM_NODE=dsiem-backend-0
+      - DSIEM_FRONTEND=http://dsiem:8080
+      - DSIEM_MSQ=nats://dsiem-nats:4222
+      - DSIEM_RELOAD_BACKLOGS=false
+      - DSIEM_WEB_ESURL=http://localhost:9200
+      - DSIEM_WEB_KBNURL=http://localhost:5601
+      - DSIEM_TRACE=true
+      - DSIEM_JSON=true
+      - DSIEM_OTEL_TRACING_ENABLED=true
+      - DSIEM_OTEL_METRICS_ENABLED=true
+      - DSIEM_OTEL_ENDPOINT=http://otel-collector:4317
+    networks:
+      - siemnet
+    volumes:
+      - dsiem-log:/dsiem/logs
+
+  dsiem-backend-1:
+    container_name: dsiem-backend-1
+    image: defenxor/dsiem-rs:latest
+    environment:
+      - DSIEM_MODE=cluster-backend
+      - DSIEM_NODE=dsiem-backend-1
+      - DSIEM_FRONTEND=http://dsiem:8080
+      - DSIEM_MSQ=nats://dsiem-nats:4222
+      - DSIEM_RELOAD_BACKLOGS=false
+      - DSIEM_WEB_ESURL=http://localhost:9200
+      - DSIEM_WEB_KBNURL=http://localhost:5601
+      - DSIEM_TRACE=true
+      - DSIEM_OTEL_TRACING_ENABLED=true
+      - DSIEM_OTEL_METRICS_ENABLED=true
+      - DSIEM_OTEL_ENDPOINT=http://otel-collector:4317
+    networks:
+      - siemnet
+    volumes:
+      - dsiem-log:/dsiem/logs
+
+  nats:
+    container_name: dsiem-nats
+    image: nats:1.3.0-linux
+    networks:
+      - siemnet
+    ports:
+      - "4222:4222"
+
+  filebeat:
+    container_name: filebeat
+    image: docker.elastic.co/beats/filebeat:7.11.0
+    user: root
+    networks:
+      - siemnet
+    volumes:
+      - filebeat-data:/usr/share/filebeat/data
+      - ./conf/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml
+      - dsiem-log:/var/log/dsiem
+      - suricata-log:/var/log/suricata
+
+  suricata:
+    container_name: suricata
+    image: defenxor/suricata:1710
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+      - NET_RAW
+    command:
+      [
+        "/bin/bash",
+        "-c",
+        'chown -R suri /var/log/suricata && /usr/bin/suricata -v -i ${PROMISC_INTERFACE?"this environment variable must be set"}'
+      ]
+    volumes:
+      - suricata-log:/var/log/suricata
+
+  otel-collector:
+    container_name: otel-collector
+    image: otel/opentelemetry-collector
+    ports:
+      - 4317:4317
+    volumes:
+      - ./conf/otel/collector.yaml:/etc/collector.yaml
+    networks:
+      - siemnet     
+    depends_on:
+      - quickwit
+    command: ["--config", "/etc/collector.yaml"]
+
+  quickwit:
+    container_name: quickwit
+    image: quickwit/quickwit
+    ports:
+      - 7280:7280   # quickwit web UI
+      - 7281:7281   # quickwit grpc endpoint
+    networks:
+      - siemnet      
+    environment:
+      - QW_ENABLE_OTLP_ENDPOINT=true 
+    command: ["run"]
+
+  jaeger-query:
+    container_name: jaeger-query
+    image: jaegertracing/jaeger-query
+    ports:
+      - 9000:16686   # jaeger web UI
+    environment:
+      - SPAN_STORAGE_TYPE=grpc-plugin
+      - GRPC_STORAGE_SERVER=quickwit:7281
+      - GRPC_STORAGE_TLS=false
+      - QUERY_MAX_CLOCK_SKEW_ADJUSTMENT=10ms
+    networks:
+      - siemnet
+    depends_on:
+      - quickwit
+
+  thanos-receiver:
+    container_name: thanos-receiver
+    image: thanosio/thanos:v0.33.0
+    user: root
+    volumes:
+      - ./conf/thanos/thanos-bucket.yaml:/bucket.yaml
+    networks:
+      - siemnet
+    command:
+      - 'receive'
+      - '--tsdb.path=/data/tsdb'
+      - '--label=receive_site="DC"'
+      - '--grpc-address=0.0.0.0:10901'
+      - '--http-address=0.0.0.0:10902'
+      - '--remote-write.address=0.0.0.0:10908'
+      - '--objstore.config-file=/bucket.yaml'
+
+  thanos-query:
+    container_name: thanos-query
+    image: thanosio/thanos:v0.33.0
+    networks:
+      - siemnet
+    command:
+      - 'query'
+      - '--http-address=0.0.0.0:9090'
+      - '--endpoint=thanos-receiver:10901'
+    depends_on:
+      - thanos-receiver
+
+  thanos-frontend:
+    container_name: thanos-frontend
+    image: thanosio/thanos:v0.33.0
+    networks:
+      - siemnet
+    command:
+      - 'query-frontend'
+      - '--http-address=0.0.0.0:9090'
+      - '--query-frontend.downstream-url=http://thanos-query:9090'
+    ports:
+      - 9090:9090 # thanos web UI
+    depends_on:
+      - thanos-query
+
+volumes:
+  filebeat-data:
+  es-data:
+  dsiem-log:
+  suricata-log:
+networks:
+  siemnet:
