@@ -49,7 +49,7 @@ async fn list_config_files(frontend_url: String) -> Result<Vec<ConfigFile>> {
         .await
         .context("cannot parse response for request to list config files")?;
     let c: ConfigFiles = serde_json::from_str(&text)
-        .context("cannot parse response for request to list config files. text: {}")?;
+        .context("cannot parse response for request to list config files")?;
     debug!("found {} config files", c.files.len());
     Ok(c.files)
 }

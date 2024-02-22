@@ -302,7 +302,7 @@ pub fn load_directives(test_env: bool, sub_path: Option<Vec<String>>) -> Result<
         let loaded: Directives = serde_json::from_str(&s)?;
         for d in loaded.directives {
             if d.disabled {
-                warn!(d.id, "skipping disabled directive");
+                warn!(directive.id = d.id, "skipping disabled directive");
                 continue;
             }
             validate_directive(&d, &dirs.directives)?;
@@ -311,9 +311,8 @@ pub fn load_directives(test_env: bool, sub_path: Option<Vec<String>>) -> Result<
     }
     if dirs.directives.is_empty() {
         return Err(anyhow!("cannot load any directive"));
-    } else {
-        info!("{} directives found and loaded", dirs.directives.len());
     }
+    info!("{} directives found and loaded", dirs.directives.len());
     Ok(dirs.directives)
 }
 
