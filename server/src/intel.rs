@@ -4,7 +4,7 @@ use glob::glob;
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 
 use crate::utils;
 
@@ -55,6 +55,7 @@ impl fmt::Debug for IntelPlugin {
 }
 
 impl IntelPlugin {
+    #[instrument(name = "intel_checkers")]
     pub async fn run_checkers(
         &self,
         check_private_ip: bool,

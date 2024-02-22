@@ -21,7 +21,7 @@ Compared to Dsiem in the main repo, this repo currently:
 - Replaces the Angular-based web UI with a WebAssembly built using the [Yew](https://yew.rs) framework.
 - Doesn't include any of the Dsiem tools (e.g. Dpluger, nesd, etc.), but there shouldn't be compatibility issue to use the ones from the main repo.
 - Support saving backlogs to disk before exiting, and reloading them after restart (controlled by `--reload-backlogs` flag, see below for more details).
-- Has no support for Elastic APM. Future support for distributed tracing will likely use a more vendor-neutral platform.
+- Uses OpenTelemetry for tracing and metrics instead of Elastic APM. More details on the [telemetry](./docs/telemetry.md) page.
 - Requires all directives to be loaded without error during startup. The behaviour of the main repo binary which tries to fix minor errors, and skip loading (with a warning) directives that has major errors, is only practical during initial migration from OSSIM.
 - Doesn't default to use JSON-lines log output (enable through `-j` parameter or `DSIEM_JSON=true` env. variable).
 - Integrate `backlog` and `alarm` to one struct to reduce data duplication.

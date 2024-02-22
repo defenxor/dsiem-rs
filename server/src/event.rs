@@ -1,4 +1,4 @@
-use std::{net::IpAddr, str::FromStr};
+use std::{collections::HashMap, net::IpAddr, str::FromStr};
 
 use chrono::prelude::*;
 use serde::Serialize;
@@ -52,6 +52,8 @@ pub struct NormalizedEvent {
     pub custom_label3: String,
     #[serde(default)]
     pub rcvd_time: i64, // for backpressure control
+    #[serde(default)]
+    pub carrier: HashMap<String, String>
 }
 
 impl Default for NormalizedEvent {
@@ -79,6 +81,7 @@ impl Default for NormalizedEvent {
             custom_data3: "".to_owned(),
             custom_label3: "".to_owned(),
             rcvd_time: 0,
+            carrier: HashMap::new()
         }
     }
 }

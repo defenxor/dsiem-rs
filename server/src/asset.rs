@@ -67,9 +67,8 @@ impl NetworkAssets {
         }
         if result.assets.is_empty() {
             return Err(anyhow!("cannot load any asset"));
-        } else {
-            info!("{} assets found and loaded", result.assets.len());
         }
+        info!("{} assets found and loaded", result.assets.len());
         Ok(result)
     }
     pub fn is_in_homenet(&self, ip: &IpAddr) -> bool {

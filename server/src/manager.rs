@@ -1,6 +1,7 @@
 use std::{fs::create_dir_all, sync::Arc, time::Duration};
 
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     asset::NetworkAssets,
@@ -8,7 +9,8 @@ use crate::{
     directive::Directive,
     event::NormalizedEvent,
     intel::IntelPlugin,
-    rule, utils,
+    log_writer::LogWriter,
+    rule, tracer, utils,
     vuln::VulnPlugin,
 };
 
@@ -63,7 +65,11 @@ impl Manager {
     pub async fn load(test_env: bool, directive_id: u64) -> Result<Vec<Backlog>> {
         let backlog_dir = utils::log_dir(test_env)?.join("backlogs");
         let filename = backlog_dir.join(directive_id.to_string() + ".json");
-        debug!("loading {} (if it exist)", filename.to_string_lossy());
+        debug!(
+            directive.id = directive_id,
+            "loading {} (if it exist)",
+            filename.to_string_lossy()
+        );
         let s = read_to_string(filename.clone()).await?;
         // always remove the file if it exist, there could be content error in it
         _ = fs::remove_file(filename).await;
@@ -98,6 +104,13 @@ impl Manager {
     }
     pub async fn listen(self, report_interval: u64) -> Result<()> {
         info!("backlog manager started");
+
+        // use this for all directive managers
+        let mut log_writer = LogWriter::new(self.option.test_env).await?;
+        let log_tx = log_writer.sender.clone();
+        let cancel_tx = self.option.cancel_tx.clone();
+        task::spawn(async move { log_writer.listener(cancel_tx).await });
+
         // copy this channel to all directive managers
         let bp_sender = self.option.backpressure_tx.clone();
         let mut set = JoinSet::new();
@@ -110,6 +123,7 @@ impl Manager {
             let default_tag = self.option.default_tag.clone();
             let cancel_tx = self.option.cancel_tx.clone();
             let resptime_tx = self.option.resptime_tx.clone();
+
             let first_rule = directive
                 .rules
                 .iter()
@@ -121,6 +135,7 @@ impl Manager {
 
             let bp_sender = bp_sender.clone();
             let report_sender = self.option.report_tx.clone();
+            let log_tx = log_tx.clone();
 
             set.spawn(async move {
                 let (sid_pairs, taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
@@ -128,6 +143,7 @@ impl Manager {
                 let contains_taxorule = !taxo_pairs.is_empty();
                 let mut upstream = sender.subscribe();
                 let mut cancel_rx = cancel_tx.subscribe();
+
                 let (downstream_tx, _) = broadcast::channel(1024);
                 let (mgr_delete_tx, mut mgr_delete_rx) = mpsc::channel::<()>(128);
 
@@ -141,6 +157,7 @@ impl Manager {
                         asset: assets.clone(),
                         bp_tx: bp_sender.clone(),
                         delete_tx: mgr_delete_tx.clone(),
+                        log_tx: log_tx.clone(),
                         intels: intels.clone(),
                         vulns: vulns.clone(),
                         min_alarm_lifetime: self.option.min_alarm_lifetime,
@@ -154,13 +171,14 @@ impl Manager {
                     }
                 };
 
-                let start_backlog = |evt: Option<NormalizedEvent>, b: Arc<Backlog>| {
+                let start_backlog = |evt: Option<NormalizedEvent>, backlog: Arc<Backlog>| {
                     let rx = downstream_tx.subscribe();
                     let max_delay = self.option.max_delay;
                     let resptime_tx = resptime_tx.clone();
                     task::spawn(async move {
-                        if let Err(e) = b.start(rx, evt, resptime_tx, max_delay).await {
-                            error!(directive.id, b.id, "backlog exited with an error: {}", e)
+                        info!(directive.id, backlog.id, "starting backlog");
+                        if let Err(e) = backlog.start(rx, evt, resptime_tx, max_delay).await {
+                            error!(directive.id, backlog.id, "backlog exited with an error: {}", e)
                         }
                     })
                 };
@@ -183,14 +201,14 @@ impl Manager {
                             for cause in e.chain() {
                                 if let Some(e) = cause.downcast_ref::<io::Error>() {
                                     if e.kind() != io::ErrorKind::NotFound {
-                                        debug!(directive.id, "cannot load backlogs: {:?}", e);
+                                        info!(directive.id, "cannot load backlogs: {:?}", e);
                                     }
                                 }
                             }
                         }
                         Ok(load_result) => {
                             if !load_result.is_empty() {
-                                debug!(directive.id, "reloading old backlog");
+                                info!(directive.id, "reloading old backlog");
                             }
                             for b in load_result.into_iter() {
                                 // perform all steps in backlog::new here
@@ -198,7 +216,12 @@ impl Manager {
                                 let res = Backlog::runnable_version(get_opt(), b).await;
                                 match res {
                                     Err(e) => {
-                                        error!(directive.id, id, "cannot recreate backlog: {}", e);
+                                        error!(
+                                            directive.id,
+                                            backlog.id = id,
+                                            "cannot recreate backlog: {}",
+                                            e
+                                        );
                                     }
                                     Ok(b) => {
                                         let arced = Arc::new(b);
@@ -257,7 +280,7 @@ impl Manager {
                             clean_deleted().await;
                         },
                         res = upstream.recv() => {
-                            let event = match res {
+                            let mut event = match res {
                                 Ok(evt) => evt,
                                 Err(RecvError::Lagged(n)) => {
                                     warn!(directive.id, "event receiver lagged and skipped {} events", n);
@@ -269,7 +292,15 @@ impl Manager {
                                 }
                             };
 
+
+                            let manager_span = info_span!("manager::listen", directive.id, event.id);
+                            tracer::set_parent_from_event(&manager_span, &event);
+
+                            let manager_context = manager_span.context();
+
+                            let _ = manager_span.enter();
                             debug!(directive.id, event.id, "received event");
+
                             if
                                 (contains_pluginrule &&
                                     !rule::quick_check_plugin_rule(&sid_pairs, &event)) ||
@@ -285,6 +316,8 @@ impl Manager {
 
                             debug!(directive.id, event.id, "total backlogs {}", backlogs.len());
 
+                            tracer::store_parent_into_event(&manager_span, &mut event);
+
                             if !backlogs.is_empty() && downstream_tx.send(event.clone()).is_ok() {
                                 debug!(directive.id, event.id, "event sent downstream");
                                 // check the result, break as soon as there's a match
@@ -294,6 +327,7 @@ impl Manager {
                                     // on the found_channel
                                     if timeout(Duration::from_secs(1), v.changed()).await.is_ok() && *v.borrow() {
                                         match_found = true;
+                                        debug!(directive.id, event.id, backlog.id = b.id, "found existing backlog that consumes the event");
                                         break;
                                     } // else: timeout or v.borrow() == false
                                 }
@@ -304,7 +338,6 @@ impl Manager {
                             // it is ok therefore to continue evaluating this event as a potential trigger for a new backlog
 
                             if match_found {
-                                debug!(directive.id, event.id, "found existing backlog that consumes the event");
                                 continue;
                             }
 
@@ -315,13 +348,19 @@ impl Manager {
                                 continue;
                             }
 
+                            let span = info_span!("manager::new_backlog", directive.id, event.id);
+                            span.set_parent(manager_context);
+                            _ = span.enter();
+
                             debug!(directive.id, event.id, "creating new backlog");
+
                             let mut opt = get_opt();
                             opt.event = Some(&event);
-                            let res = backlog::Backlog::new(opt).await;
+                            let res = backlog::Backlog::new(opt)
+                            .await;
                             match res {
-                                Err(e) => {
-                                    error!(directive.id, event.id, "cannot create backlog: {}", e);
+                                Err(err) => {
+                                    error!(directive.id, event.id, "cannot create backlog: {}", err);
                                 }
                                 Ok(b) => {
                                     let arced = Arc::new(b);

@@ -4,7 +4,7 @@ use glob::glob;
 use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 
 use crate::utils;
 mod plugins;
@@ -53,6 +53,7 @@ impl fmt::Debug for VulnPlugin {
 }
 
 impl VulnPlugin {
+    #[instrument(name = "vuln_checkers")]
     pub async fn run_checkers(&self, ip: IpAddr, port: u16) -> Result<HashSet<VulnResult>> {
         let mut set = HashSet::new();
         let term = ip.to_string() + ":" + &port.to_string();

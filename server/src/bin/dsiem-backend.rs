@@ -3,15 +3,17 @@ use std::sync::Arc;
 use anyhow::{anyhow, Error, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
-    asset::NetworkAssets, config, directive, intel, logger, manager, manager::ManagerOpt, vuln,
-    watchdog, watchdog::WatchdogOpt, worker,
+    asset::NetworkAssets,
+    config, directive, intel,
+    manager::{self, ManagerOpt},
+    tracer, vuln,
+    watchdog::{self, WatchdogOpt, REPORT_INTERVAL_IN_SECONDS},
+    worker,
 };
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tokio::{task::JoinSet, time::sleep};
 use tracing::{error, info};
-
-const REPORT_INTERVAL_IN_SECONDS: u64 = 10;
 
 #[derive(Parser)]
 #[command(
@@ -197,6 +199,30 @@ struct ServeArgs {
         default_value_t = true
     )]
     reload_backlogs: bool,
+    /// Export traces data to opentelemetry collector
+    #[arg(
+        long = "otel-tracing-enabled",
+        env = "DSIEM_OTEL_TRACING_ENABLED",
+        value_name = "boolean",
+        default_value_t = false
+    )]
+    enable_tracing: bool,
+    /// Export metrics data to an opentelemetry collector
+    #[arg(
+        long = "otel-metrics-enabled",
+        env = "DSIEM_OTEL_METRICS_ENABLED",
+        value_name = "boolean",
+        default_value_t = false
+    )]
+    enable_metrics: bool,
+    /// Endpoint of the opentelemetry collector
+    #[arg(
+        long = "otel-endpoint",
+        env = "DSIEM_OTEL_ENDPOINT",
+        value_name = "string",
+        default_value = "http://localhost:4317"
+    )]
+    otel_endpoint: String,
 }
 
 #[tokio::main]
@@ -218,23 +244,25 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     } else {
         args.verbosity
     };
-    let level = logger::verbosity_to_level_filter(verbosity);
-    let sub_json = logger::setup_logger_json(level)?;
-    let sub = logger::setup_logger(level)?;
-    let log_result = if args.use_json {
-        tracing::subscriber::set_global_default(sub_json)
-    } else {
-        tracing::subscriber::set_global_default(sub)
-    };
-    if require_logging {
-        log_result?;
-    }
-
     let SubCommands::ServeCommand(sargs) = args.subcommand;
-    info!(
-        "starting dsiem backend server with frontend {} and message queue {}",
-        sargs.frontend, sargs.msq
-    );
+    let log_format = if args.use_json {
+        tracer::LogType::Json
+    } else {
+        tracer::LogType::Plain
+    };
+    let otel_config = tracer::OtelConfig {
+        tracing_enabled: sargs.enable_tracing,
+        metrics_enabled: sargs.enable_metrics,
+        otlp_endpoint: sargs.otel_endpoint,
+        service_name: sargs.node.to_owned(),
+    };
+
+    let subscriber = tracer::setup(verbosity, log_format, otel_config.clone())
+        .map_err(|e| log_startup_err("setting up tracer", e))?;
+    let setup_result = tracing::subscriber::set_global_default(subscriber);
+    if require_logging {
+        setup_result?;
+    }
 
     // we take in unsigned values from CLI to make sure there's no negative numbers, and convert them
     // to signed value required by timestamp related APIs.
@@ -255,6 +283,11 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     } else {
         sargs.max_queue
     };
+
+    info!(
+        "starting dsiem backend server with frontend {} and message queue {}",
+        sargs.frontend, sargs.msq
+    );
 
     let (event_tx, event_rx) = broadcast::channel(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<()>(8);
@@ -302,7 +335,9 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         }
     });
 
-    let directives = directive::load_directives(
+    let directives = directive
+        // todo: maybe replace this kludgy way of loading test directive5
+        ::load_directives(
         test_env,
         Some(vec!["directives".to_string(), "directive5".to_string()]),
     )
@@ -330,9 +365,10 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             cancel_tx,
             report_interval: REPORT_INTERVAL_IN_SECONDS,
             max_eps: sargs.max_eps,
+            otel_config,
         };
         async move {
-            let w = watchdog::Watchdog::default();
+            let mut w = watchdog::Watchdog::default();
             w.start(opt)
                 .await
                 .map_err(|e| anyhow!("watchdog error: {:?}", e))

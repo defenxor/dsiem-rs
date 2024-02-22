@@ -14,9 +14,10 @@ use tokio::{
 use crate::{
     asset::NetworkAssets,
     event::{self, NormalizedEvent},
+    tracer,
 };
 use anyhow::{anyhow, Context, Result};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, info_span};
 
 const EVENT_SUBJECT: &str = "dsiem_events";
 const BP_SUBJECT: &str = "dsiem_overload_signals";
@@ -133,7 +134,9 @@ impl Worker {
             tokio::select! {
                 Some(message) = subscription.next() => {
                     if let Ok(v) = str::from_utf8(&message.payload) {
+
                         debug!("received new event from nats: {}", v);
+
                         if let Err(e) = self.handle_event_message(&opt.assets, &opt.event_tx, v) {
                             error!("{}", e);
                         }
@@ -180,15 +183,11 @@ impl Worker {
         event_tx: &Sender<event::NormalizedEvent>,
         payload_str: &str,
     ) -> Result<()> {
-        let res: Result<NormalizedEvent, serde_json::Error> = serde_json::from_str(payload_str);
-        if res.is_err() {
-            let err_text = format!(
-                "cannot parse event from message queue: {}, skipping it",
-                res.unwrap_err()
-            );
-            return Err(anyhow!(err_text));
-        }
-        let e = res.unwrap();
+        let span = info_span!("worker::handle_event_message", event = payload_str);
+        _ = span.enter();
+
+        let mut e = serde_json::from_str::<NormalizedEvent>(payload_str)
+            .map_err(|e| anyhow!("cannot parse event from message queue: {}, skipping it", e))?;
         if !e.valid() {
             let err_text = format!("event {} is not valid, skipping it", e.id);
             return Err(anyhow!(err_text));
@@ -197,6 +196,15 @@ impl Worker {
             debug!(e.id, "src_ip {} is whitelisted, skipping event", e.src_ip);
             return Ok(());
         }
+
+        if !e.carrier.is_empty() {
+            // use remote as current span's parent
+            tracer::set_parent_from_event(&span, &e);
+        }
+
+        // set carrier's content to current span
+        tracer::store_parent_into_event(&span, &mut e);
+
         if let Err(err) = event_tx.send(e.clone()) {
             let err_text = format!("cannot send event {}: {}, skipping it", e.id, err);
             return Err(anyhow!(err_text));
