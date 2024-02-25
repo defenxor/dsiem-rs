@@ -8,22 +8,35 @@ use tokio::{
         broadcast::{self, Sender},
         mpsc,
     },
-    time::{interval, timeout},
+    time::interval,
 };
 
+use crate::manager::UNBOUNDED_QUEUE_SIZE;
 use crate::{
     asset::NetworkAssets,
     event::{self, NormalizedEvent},
     tracer,
 };
 use anyhow::{anyhow, Context, Result};
-use tracing::{debug, error, info, info_span};
+use tracing::{debug, error, info, info_span, trace};
 
 const EVENT_SUBJECT: &str = "dsiem_events";
 const BP_SUBJECT: &str = "dsiem_overload_signals";
+const MIN_NATS_CAPACITY: usize = 1024;
+const MAX_NATS_CAPACITY: usize = 10000;
 
-async fn nats_client(nats_url: &str) -> Result<async_nats::Client> {
+async fn nats_client(nats_url: &str, capacity: &usize) -> Result<async_nats::Client> {
+    // set sane boundaries for capacity
+    let cap = match *capacity {
+        UNBOUNDED_QUEUE_SIZE => MAX_NATS_CAPACITY,
+        _ if *capacity < MIN_NATS_CAPACITY => MIN_NATS_CAPACITY,
+        _ => *capacity,
+    };
     let client = async_nats::ConnectOptions::new()
+        .subscription_capacity(cap)
+        .request_timeout(Some(std::time::Duration::from_secs(
+            NATS_CONNECT_MAX_SECONDS,
+        )))
         .event_callback(|event| async move {
             match event {
                 async_nats::Event::Disconnected => debug!("nats disconnected"),
@@ -46,6 +59,7 @@ pub struct BackendOpt {
     pub cancel_rx: broadcast::Receiver<()>,
     pub hold_duration: u8,
     pub assets: Arc<NetworkAssets>,
+    pub nats_capacity: usize,
 }
 
 pub struct FrontendOpt {
@@ -53,6 +67,7 @@ pub struct FrontendOpt {
     pub event_rx: broadcast::Receiver<NormalizedEvent>,
     pub bp_tx: mpsc::Sender<bool>,
     pub cancel_rx: broadcast::Receiver<()>,
+    pub nats_capacity: usize,
 }
 
 const NATS_CONNECT_MAX_SECONDS: u64 = 5;
@@ -60,12 +75,9 @@ pub struct Worker {}
 
 impl Worker {
     pub async fn frontend_start(&self, mut opt: FrontendOpt) -> Result<()> {
-        let client = timeout(
-            std::time::Duration::from_secs(NATS_CONNECT_MAX_SECONDS),
-            nats_client(&opt.nats_url),
-        )
-        .await?
-        .context(format!("cannot connect to {}", opt.nats_url))?;
+        let client = nats_client(&opt.nats_url, &opt.nats_capacity)
+            .await
+            .context(format!("cannot connect to {}", opt.nats_url))?;
 
         let mut subscription: async_nats::Subscriber = client
             .subscribe(BP_SUBJECT.into())
@@ -110,12 +122,9 @@ impl Worker {
     }
 
     pub async fn backend_start(&self, mut opt: BackendOpt) -> Result<()> {
-        let client = timeout(
-            std::time::Duration::from_secs(NATS_CONNECT_MAX_SECONDS),
-            nats_client(&opt.nats_url),
-        )
-        .await?
-        .context(format!("cannot connect to {}", opt.nats_url))?;
+        let client = nats_client(&opt.nats_url, &opt.nats_capacity)
+            .await
+            .context(format!("cannot connect to {}", opt.nats_url))?;
 
         let mut subscription = client
             .subscribe(EVENT_SUBJECT.into())
@@ -135,7 +144,7 @@ impl Worker {
                 Some(message) = subscription.next() => {
                     if let Ok(v) = str::from_utf8(&message.payload) {
 
-                        debug!("received new event from nats: {}", v);
+                        trace!("received new event from nats: {}", v);
 
                         if let Err(e) = self.handle_event_message(&opt.assets, &opt.event_tx, v) {
                             error!("{}", e);
@@ -183,7 +192,7 @@ impl Worker {
         event_tx: &Sender<event::NormalizedEvent>,
         payload_str: &str,
     ) -> Result<()> {
-        let span = info_span!("worker::handle_event_message", event = payload_str);
+        let span = info_span!("backend handler", event = payload_str);
         _ = span.enter();
 
         let mut e = serde_json::from_str::<NormalizedEvent>(payload_str)
@@ -205,11 +214,12 @@ impl Worker {
         // set carrier's content to current span
         tracer::store_parent_into_event(&span, &mut e);
 
-        if let Err(err) = event_tx.send(e.clone()) {
-            let err_text = format!("cannot send event {}: {}, skipping it", e.id, err);
+        let id = e.id.to_owned();
+        if let Err(err) = event_tx.send(e) {
+            let err_text = format!("cannot send event {}: {}, skipping it", id, err);
             return Err(anyhow!(err_text));
         }
-        debug!("event {} broadcasted", e.id);
+        debug!("event {} broadcasted", id);
         Ok(())
     }
 }
@@ -233,6 +243,7 @@ mod test {
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(5);
         let (cancel_tx, cancel_rx) = broadcast::channel::<()>(5);
         let (bp_tx, bp_rx) = mpsc::channel::<()>(5);
+
         let opt = BackendOpt {
             nats_url: nats_url.to_string(),
             assets,
@@ -240,6 +251,7 @@ mod test {
             cancel_rx,
             bp_rx,
             hold_duration: 1,
+            nats_capacity: 5,
         };
 
         let _detached = task::spawn(async {
@@ -257,14 +269,10 @@ mod test {
         assert!(logs_contain("overload = true signal sent to frontend"));
         assert!(logs_contain("last under pressure signal is still active"));
 
-        let client = timeout(
-            std::time::Duration::from_secs(NATS_CONNECT_MAX_SECONDS),
-            nats_client(nats_url),
-        )
-        .await
-        .unwrap()
-        .context(format!("cannot connect to {}", nats_url))
-        .unwrap();
+        let client = nats_client(nats_url, &5)
+            .await
+            .context(format!("cannot connect to {}", nats_url))
+            .unwrap();
 
         let evt = NormalizedEvent {
             id: "1".to_string(),
@@ -302,6 +310,7 @@ mod test {
             event_rx,
             bp_tx,
             cancel_rx,
+            nats_capacity: 5,
         };
 
         let _detached = task::spawn(async {
@@ -312,14 +321,10 @@ mod test {
         sleep(Duration::from_millis(3000)).await;
         assert!(logs_contain("listening for new back pressure signal"));
 
-        let client = timeout(
-            std::time::Duration::from_secs(NATS_CONNECT_MAX_SECONDS),
-            nats_client(nats_url),
-        )
-        .await
-        .unwrap()
-        .context(format!("cannot connect to {}", nats_url))
-        .unwrap();
+        let client = nats_client(nats_url, &5)
+            .await
+            .context(format!("cannot connect to {}", nats_url))
+            .unwrap();
 
         let _detached = task::spawn(async move {
             bp_rx.recv().await;

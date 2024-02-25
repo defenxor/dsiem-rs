@@ -10,7 +10,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use metered::{metered, ResponseTime};
 use parking_lot::RwLock;
 use serde::Deserialize;
 use serde_derive::Serialize;
@@ -19,11 +18,11 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     ops::Deref,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{
     sync::{broadcast::Receiver, mpsc::Sender, watch},
-    time::interval,
+    time::{interval, Instant},
 };
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
@@ -117,8 +116,6 @@ pub struct Backlog {
     #[serde(skip)]
     pub intel_private_ip: bool,
     #[serde(skip)]
-    metrics: Metrics,
-    #[serde(skip)]
     directive_id: u64,
     #[serde(skip)]
     log_tx: Option<Sender<LogWriterMessage>>,
@@ -188,25 +185,24 @@ pub struct BacklogOpt<'a> {
     pub log_tx: Sender<LogWriterMessage>,
 }
 
-#[metered(registry = Metrics)]
 impl Backlog {
-    pub async fn new(o: BacklogOpt<'_>) -> Result<Self> {
+    pub async fn new(o: &BacklogOpt<'_>) -> Result<Self> {
         let mut backlog = Backlog {
             id: utils::generate_id(),
             title: o.directive.name.clone(),
             kingdom: o.directive.kingdom.clone(),
             category: o.directive.category.clone(),
-            status: o.default_status,
-            tag: o.default_tag,
+            status: o.default_status.to_owned(),
+            tag: o.default_tag.to_owned(),
             intel_private_ip: o.intel_private_ip,
             current_stage: RwLock::new(1),
             priority: o.directive.priority,
             all_rules_always_active: o.directive.all_rules_always_active,
-            backpressure_tx: Some(o.bp_tx),
-            log_tx: Some(o.log_tx),
+            backpressure_tx: Some(o.bp_tx.clone()),
+            log_tx: Some(o.log_tx.clone()),
             directive_id: o.directive.id,
 
-            assets: o.asset,
+            assets: o.asset.clone(),
 
             min_alarm_lifetime: o.min_alarm_lifetime,
             med_risk_min: o.med_risk_min,
@@ -240,9 +236,9 @@ impl Backlog {
                 .max()
                 .unwrap_or_default();
         }
-        backlog.delete_channel.to_upstream_manager = Some(o.delete_tx);
-        backlog.intels = Some(o.intels);
-        backlog.vulns = Some(o.vulns);
+        backlog.delete_channel.to_upstream_manager = Some(o.delete_tx.clone());
+        backlog.intels = Some(o.intels.clone());
+        backlog.vulns = Some(o.vulns.clone());
 
         if let Some(v) = o.event {
             info!(
@@ -257,7 +253,7 @@ impl Backlog {
 
     // runable_version produces backlog that manager can start
     pub async fn runnable_version(o: BacklogOpt<'_>, loaded: Backlog) -> Result<Self> {
-        let mut backlog = Backlog::new(o).await?;
+        let mut backlog = Backlog::new(&o).await?;
         // verify that we're still based on the same directive
         if backlog.title != loaded.title {
             return Err(anyhow!(
@@ -344,7 +340,7 @@ impl Backlog {
     }
 
     // saveable_version produces backlog that manager can save to disk
-    pub fn saveable_version(running: Arc<Backlog>) -> Self {
+    pub async fn saveable_version(running: Arc<Backlog>) -> Self {
         // - status, kingdom, tag, category, created_time are empty;
         let mut backlog = Backlog {
             id: (*running.id).to_string(),
@@ -397,21 +393,50 @@ impl Backlog {
         self.delete()
     }
 
+    async fn recv_handler(
+        &self,
+        event: &NormalizedEvent,
+        max_delay: &i64,
+        resptime_tx: &Sender<f64>,
+    ) -> Result<()> {
+        let backlog_span = info_span!(
+            "backlog processing",
+            directive.id = self.directive_id,
+            backlog.id = self.id,
+            event.id
+        );
+        debug!(backlog.id = self.id, event.id, "event received");
+
+        tracer::set_parent_from_event(&backlog_span, event);
+        _ = backlog_span.enter();
+
+        let now = Instant::now();
+
+        self.process_new_event(event, *max_delay)
+            .instrument(backlog_span)
+            .await
+            .map_err(|err| anyhow!("error processing event: {}", err))?;
+
+        let l = now.elapsed().as_nanos();
+        _ = resptime_tx.try_send(l as f64);
+
+        Ok(())
+    }
+
     pub async fn start(
         &self,
         mut rx: Receiver<NormalizedEvent>,
         initial_event: Option<NormalizedEvent>,
-        resptime_tx: Sender<Duration>,
+        resptime_tx: Sender<f64>,
         max_delay: i64,
     ) -> Result<()> {
         if let Some(v) = initial_event {
-            self.process_new_event(&v, max_delay).await?;
+            self.recv_handler(&v, &max_delay, &resptime_tx).await?;
         }
         let mut expiration_checker = interval(Duration::from_secs(10));
         let mut delete_rx = self.delete_channel.rx.clone();
         debug!(self.id, "enter running state");
         self.set_state(BacklogState::Running);
-
         loop {
             tokio::select! {
                 _ = expiration_checker.tick() => {
@@ -427,27 +452,18 @@ impl Backlog {
                     }
                 },
                 Ok(event) = rx.recv() => {
+                    // note that Lagged is silently ignored
                     {
 
                         let r = self.state.read();
                         if *r != BacklogState::Running {
                             warn!(backlog.id = self.id, event.id, "event received, but backlog state is not running");
+                            _ = self.report_to_manager(false);
                             continue;
                         }
                     }
-                    let now = Instant::now();
+                    _ = self.recv_handler(&event, &max_delay, &resptime_tx).await;
 
-                    let backlog_span = info_span!("backlog::process_new_event", directive.id = self.directive_id, backlog.id = self.id, event.id);
-                    debug!(backlog.id = self.id, event.id, "event received");
-
-                    tracer::set_parent_from_event(&backlog_span, &event);
-                    _ = backlog_span.enter();
-
-                    self.process_new_event(&event, max_delay).
-                    instrument(backlog_span)
-                    .await
-                    .map_err(|err| anyhow!("error processing event: {}", err))?;
-                    _ = resptime_tx.try_send( now.elapsed());
                 },
                 _ = delete_rx.changed() => {
                     self.set_state(BacklogState::Stopped);
@@ -517,7 +533,6 @@ impl Backlog {
         Ok(())
     }
 
-    #[measure([ResponseTime])]
     pub async fn process_new_event(&self, event: &NormalizedEvent, max_delay: i64) -> Result<()> {
         let curr_rule = self.current_rule()?;
 
@@ -532,10 +547,7 @@ impl Backlog {
         if !curr_rule.does_event_match(&self.assets, event, true) {
             // if flag is set, check if event match previous stage
             if self.all_rules_always_active && curr_rule.stage != 1 {
-                debug!(
-                    backlog.id = self.id,
-                    "checking prev rules because all_rules_always_active is on"
-                );
+                debug!("checking prev rules because all_rules_always_active is on");
                 let prev_rules = self
                     .rules
                     .iter()
@@ -554,16 +566,13 @@ impl Backlog {
                     self.append_and_write_event(event, Some(r.stage)).await?;
                     // also update alarm to sync any changes to customData
                     self.update_alarm(false).await?;
-                    debug!(
-                        backlog.id = self.id,
-                        event.id, r.stage, "previous rule consume event"
-                    );
+                    debug!(event.id, r.stage, "previous rule consume event");
                     _ = self.report_to_manager(true);
                     return Ok(());
                     // no need to process further rules
                 }
             }
-            debug!(backlog.id = self.id, event.id, "event doesn't match");
+            debug!("event doesn't match");
 
             _ = self.report_to_manager(false);
             return Ok(());
@@ -574,7 +583,6 @@ impl Backlog {
             let reader = curr_rule.sticky_diffdata.read();
             if n_string == reader.sdiff_string.len() && n_int == reader.sdiff_int.len() {
                 debug!(
-                    backlog.id = self.id,
                     "backlog can't find new unique value in stickydiff field {}",
                     curr_rule.sticky_different
                 );
@@ -584,34 +592,25 @@ impl Backlog {
         }
 
         // event match current rule, processing it further here
-        debug!(
-            backlog.id = self.id,
-            event.id, "rule stage {} match event", curr_rule.stage
-        );
+        debug!("rule stage {} match event", curr_rule.stage);
         _ = self.report_to_manager(true);
 
         if !self.is_time_in_order(&event.timestamp) {
             // event is out of order, discard but prevent it from triggering new backlog
-            warn!(
-                backlog.id = self.id,
-                event.id, "discarded out of order event"
-            );
+            warn!("discarded out of order event");
             return Ok(());
         }
 
         if self.is_under_pressure(event.rcvd_time, max_delay) {
-            warn!(backlog.id = self.id, event.id, "is under pressure");
+            warn!("backlog is under pressure");
             if let Some(tx) = &self.backpressure_tx {
                 if let Err(e) = tx.try_send(()) {
-                    warn!(
-                        backlog.id = self.id,
-                        event.id, "error sending under pressure signal: {}", e
-                    );
+                    warn!("error sending under pressure signal: {}", e);
                 }
             }
         }
 
-        debug!(backlog.id = self.id, event.id, "processing matching event");
+        debug!("processing matching event");
         self.process_matched_event(event).await
     }
 
@@ -705,17 +704,11 @@ impl Backlog {
         // exit early if the newly added event hasnt caused events_count == occurrence
         // for the current stage
         if !self.is_stage_reach_max_event_count()? {
-            debug!(
-                backlog.id = self.id,
-                event.id, "stage max event count not yet reached"
-            );
+            debug!("stage max event count not yet reached");
             return Ok(());
         }
         // the new event has caused events_count == occurrence
-        debug!(
-            backlog.id = self.id,
-            event.id, "stage max event count reached"
-        );
+        debug!("stage max event count reached");
         self.set_rule_status("finished")?;
         self.set_rule_endtime(event.timestamp)?;
 
@@ -728,20 +721,14 @@ impl Backlog {
         debug!(backlog.id = self.id, "checking if this is the last stage");
         // if it causes the last stage to reach events_count == occurrence, delete it
         if self.is_last_stage() {
-            info!(
-                backlog.id = self.id,
-                "reached max stage and occurrence, deleting backlog"
-            );
+            info!("reached max stage and occurrence, deleting backlog");
             self.update_alarm(true).await?;
             self.delete()?;
             return Ok(());
         }
 
         // reach max occurrence, but not in last stage.
-        debug!(
-            backlog.id = self.id,
-            event.id, "stage max event count reached, increasing stage and updating alarm"
-        );
+        debug!("stage max event count reached, increasing stage and updating alarm");
         // increase stage.
         if self.increase_stage() {
             // set rule startTime for the new stage
@@ -762,10 +749,10 @@ impl Backlog {
         let mut w = self.current_stage.write();
         if *w < self.highest_stage {
             *w += 1;
-            info!(backlog.id = self.id, "stage increased to {}", *w);
+            info!("stage increased to {}", *w);
             true
         } else {
-            info!(backlog.id = self.id, "stage is at the highest level");
+            info!("stage is at the highest level");
             false
         }
     }
@@ -781,12 +768,8 @@ impl Backlog {
             w.insert(event.id.clone());
             let ttl_events = w.len();
             debug!(
-                backlog.id = self.id,
-                event.id,
-                target_rule.stage,
-                "appended event {}/{}",
-                ttl_events,
-                target_rule.occurrence
+                stage = target_rule.stage,
+                "appended event {}/{}", ttl_events, target_rule.occurrence
             );
         }
 
@@ -903,7 +886,6 @@ impl Backlog {
         trace!(
             alarm.id = sae.id,
             stage = sae.stage,
-            event.id = sae.event_id,
             "appending siem_alarm_events"
         );
         if let Some(sender) = &self.log_tx {
@@ -919,16 +901,16 @@ impl Backlog {
 
     async fn update_alarm(&self, check_intvuln: bool) -> Result<()> {
         if *self.risk.read() == 0 {
-            trace!(backlog.id = self.id, "risk is zero, skip updating alarm");
+            trace!("risk is zero, skip updating alarm");
             return Ok(());
         }
-        debug!(backlog.id = self.id, check_intvuln, "updating alarm");
+        debug!(check_intvuln, "updating alarm");
         self.set_created_time();
         self.update_networks();
 
         if check_intvuln {
             if self.intels.is_some() {
-                debug!(backlog.id = self.id, "querying threat intel plugins");
+                debug!("querying threat intel plugins");
                 // dont fail alarm update if there's intel check err
                 _ = self
                     .check_intel()
@@ -936,12 +918,12 @@ impl Backlog {
                     .map_err(|e| error!(self.id, "intel check error: {:?}", e));
             }
             if self.vulns.is_some() {
-                debug!(backlog.id = self.id, "querying vulnerability check plugins");
+                debug!("querying vulnerability check plugins");
                 // dont fail alarm update if there's intel check err
                 _ = self
                     .check_vuln()
                     .await
-                    .map_err(|e| error!(self.id, "vuln check error: {:?}", e));
+                    .map_err(|e| error!("vuln check error: {:?}", e));
             }
         }
 
@@ -971,15 +953,11 @@ impl Backlog {
         let res = intels.run_checkers(self.intel_private_ip, targets).await?;
         let mut w = self.intel_hits.write();
         if res == *w {
-            debug!(backlog.id = self.id, "no new intel match found");
+            debug!("no new intel match found");
             return Ok(());
         }
         let difference = res.difference(&w);
-        debug!(
-            backlog.id = self.id,
-            "found {} new intel matches",
-            difference.count()
-        );
+        debug!("found {} new intel matches", difference.count());
         *w = res;
         Ok(())
     }
@@ -1006,10 +984,7 @@ impl Backlog {
         for term in vs.terms {
             let ip = term.0;
             let port = term.1;
-            debug!(
-                backlog.id = self.id,
-                "vulnerability check for {}:{}", ip, port
-            );
+            debug!("vulnerability check for {}:{}", ip, port);
             let s = ip.to_string() + ":" + &port.to_string();
             {
                 let r = self.vulnerabilities.read();
@@ -1024,15 +999,11 @@ impl Backlog {
 
         let mut w = self.vulnerabilities.write();
         if combined == *w {
-            debug!(backlog.id = self.id, "no new vulnerability match found");
+            debug!("no new vulnerability match found");
             return Ok(());
         }
         let difference = combined.difference(&w);
-        debug!(
-            self.id,
-            "found {} new vulnerability matches",
-            difference.count()
-        );
+        debug!("found {} new vulnerability matches", difference.count());
         *w = combined;
         Ok(())
     }
@@ -1146,7 +1117,7 @@ mod test {
         let last_srcport = 31337;
         let last_dstport = 80;
 
-        let mut b = Backlog::new(get_opt()).await.unwrap();
+        let mut b = Backlog::new(&get_opt()).await.unwrap();
         {
             let mut w = b.last_srcport.write();
             *w = last_srcport;
@@ -1161,7 +1132,7 @@ mod test {
         }
 
         // saveable test
-        let saveable = Backlog::saveable_version(Arc::new(b));
+        let saveable = Backlog::saveable_version(Arc::new(b)).await;
         assert_eq!(saveable.saved_last_dstport, Some(last_dstport));
         assert_eq!(saveable.saved_last_srcport, Some(last_srcport));
         for rule in saveable.rules.iter() {
@@ -1181,8 +1152,8 @@ mod test {
         }
 
         // should throw error if the saved backlog and the directive have the same ID but different title
-        let b = Backlog::new(get_opt()).await.unwrap();
-        let mut saveable = Backlog::saveable_version(Arc::new(b));
+        let b = Backlog::new(&get_opt()).await.unwrap();
+        let mut saveable = Backlog::saveable_version(Arc::new(b)).await;
         saveable.title = "foo".to_string();
         let res = Backlog::runnable_version(get_opt(), saveable).await;
         assert!(res
@@ -1191,8 +1162,8 @@ mod test {
             .contains("different title detected"));
 
         // should throw error if all rules in the saved backlog already have a status (i.e. finished or timeout)
-        let b = Backlog::new(get_opt()).await.unwrap();
-        let mut saveable = Backlog::saveable_version(Arc::new(b));
+        let b = Backlog::new(&get_opt()).await.unwrap();
+        let mut saveable = Backlog::saveable_version(Arc::new(b)).await;
         for rule in saveable.rules.iter_mut() {
             rule.status = Arc::new(RwLock::new("finished".to_string()));
         }
@@ -1220,7 +1191,7 @@ mod test {
         let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
         let (event_tx, event_rx) = broadcast::channel(10);
         let (bp_tx, _) = mpsc::channel::<()>(1);
-        let (resptime_tx, _resptime_rx) = mpsc::channel::<Duration>(128);
+        let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
         let mut log_writer = LogWriter::new(true).await.unwrap();
         let log_tx = log_writer.sender.clone();
@@ -1264,7 +1235,7 @@ mod test {
             intel_private_ip: true,
             log_tx,
         };
-        let backlog = Backlog::new(opt).await.unwrap();
+        let backlog = Backlog::new(&opt).await.unwrap();
         trace!(backlog.id, "backlog: {:?}", backlog);
 
         // make sure SRC_IP and DST_IP replacement works
@@ -1333,7 +1304,7 @@ mod test {
         let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
         let (event_tx, event_rx) = broadcast::channel(10);
         let (bp_tx, _) = mpsc::channel::<()>(1);
-        let (resptime_tx, _resptime_rx) = mpsc::channel::<Duration>(128);
+        let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
         let mut log_writer = LogWriter::new(true).await.unwrap();
         let log_tx = log_writer.sender.clone();
@@ -1368,7 +1339,7 @@ mod test {
             intel_private_ip: true,
             log_tx,
         };
-        let backlog = Backlog::new(opt).await.unwrap();
+        let backlog = Backlog::new(&opt).await.unwrap();
         let _detached = task::spawn(async move {
             _ = backlog
                 .start(event_rx, Some(evt_cloned), resptime_tx, 1)
@@ -1439,7 +1410,7 @@ mod test {
         let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
         let (_, event_rx) = broadcast::channel(10);
         let (bp_tx, _bp_rx) = mpsc::channel::<()>(8);
-        let (resptime_tx, _resptime_rx) = mpsc::channel::<Duration>(128);
+        let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
         let mut log_writer = LogWriter::new(true).await.unwrap();
         let log_tx = log_writer.sender.clone();
@@ -1471,7 +1442,7 @@ mod test {
                 intel_private_ip: false,
                 log_tx,
             };
-            let backlog = Backlog::new(opt).await.unwrap();
+            let backlog = Backlog::new(&opt).await.unwrap();
             _ = backlog.start(event_rx, Some(evt), resptime_tx, 0).await;
         });
 

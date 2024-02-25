@@ -266,6 +266,7 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
                 bp_tx,
                 cancel_rx,
                 nats_url,
+                nats_capacity: max_queue,
             };
             let w = worker::Worker {};
             w.frontend_start(opt)

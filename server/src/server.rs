@@ -236,7 +236,7 @@ pub async fn events_handler(
     event.conn_id = conn_id as u64;
 
     trace!("event received: {:?}", event);
-    let span = info_span!("server::events_handler", conn.id = conn_id, event.id);
+    let span = info_span!("frontend handler", conn.id = conn_id, event.id);
     tracer::store_parent_into_event(&span, &mut event);
 
     if !event.valid() {

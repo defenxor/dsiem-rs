@@ -53,7 +53,7 @@ pub struct NormalizedEvent {
     #[serde(default)]
     pub rcvd_time: i64, // for backpressure control
     #[serde(default)]
-    pub carrier: HashMap<String, String>
+    pub carrier: HashMap<String, String>,
 }
 
 impl Default for NormalizedEvent {
@@ -81,7 +81,7 @@ impl Default for NormalizedEvent {
             custom_data3: "".to_owned(),
             custom_label3: "".to_owned(),
             rcvd_time: 0,
-            carrier: HashMap::new()
+            carrier: HashMap::new(),
         }
     }
 }

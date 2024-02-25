@@ -2,11 +2,7 @@ use std::{collections::HashMap, time::Duration};
 
 use opentelemetry::{propagation::TextMapPropagator, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{
-    propagation::TraceContextPropagator,
-    trace::{self, RandomIdGenerator, Sampler},
-    Resource,
-};
+use opentelemetry_sdk::{propagation::TraceContextPropagator, trace, Resource};
 
 use anyhow::Result;
 use tracing::{metadata::LevelFilter, Span, Subscriber};
@@ -42,36 +38,36 @@ pub fn setup(
     let filter = filter::Targets::new().with_target(env!("CARGO_PKG_NAME"), log_severity);
 
     let plain_log = if log_format == LogType::Plain {
-        Some(tracing_subscriber::fmt::layer())
+        Some(tracing_subscriber::fmt::layer().compact())
     } else {
         None
     };
 
     let json_log = if log_format == LogType::Json {
-        Some(tracing_subscriber::fmt::layer().json())
+        Some(
+            tracing_subscriber::fmt::layer()
+                .compact()
+                .json()
+                .with_span_list(false),
+        )
     } else {
         None
     };
 
     let tracing = if otel_config.tracing_enabled {
-        let tracer = opentelemetry_otlp::new_pipeline()
-            .tracing()
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_endpoint(otel_config.otlp_endpoint)
-                    .with_timeout(Duration::from_secs(OTLP_TIMEOUT_SECONDS)),
-            )
-            .with_trace_config(
-                trace::config()
-                    .with_sampler(Sampler::AlwaysOn)
-                    .with_id_generator(RandomIdGenerator::default())
-                    .with_resource(Resource::new(vec![KeyValue::new(
-                        "service.name",
-                        otel_config.service_name,
-                    )])),
-            )
-            .install_batch(opentelemetry_sdk::runtime::Tokio)?;
+        let tracer =
+            opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .tonic()
+                        .with_endpoint(otel_config.otlp_endpoint)
+                        .with_timeout(Duration::from_secs(OTLP_TIMEOUT_SECONDS)),
+                )
+                .with_trace_config(trace::config().with_resource(Resource::new(vec![
+                    KeyValue::new("service.name", otel_config.service_name),
+                ])))
+                .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
         Some(tracing_opentelemetry::layer().with_tracer(tracer))
     } else {
@@ -80,9 +76,9 @@ pub fn setup(
 
     let subscriber = Registry::default()
         .with(filter)
+        .with(tracing)
         .with(plain_log)
-        .with(json_log)
-        .with(tracing);
+        .with(json_log);
 
     Ok(subscriber)
 }
