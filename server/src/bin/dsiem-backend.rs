@@ -5,7 +5,7 @@ use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
     asset::NetworkAssets,
     config, directive, intel,
-    manager::{self, ManagerOpt},
+    manager::{self, ManagerOpt, UNBOUNDED_QUEUE_SIZE},
     tracer, vuln,
     watchdog::{self, WatchdogOpt, REPORT_INTERVAL_IN_SECONDS},
     worker,
@@ -279,7 +279,7 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         ));
     }
     let max_queue = if sargs.max_queue == 0 {
-        1_000_000
+        UNBOUNDED_QUEUE_SIZE
     } else {
         sargs.max_queue
     };
@@ -291,7 +291,6 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let (event_tx, event_rx) = broadcast::channel(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<()>(8);
-    let (resptime_tx, resptime_rx) = mpsc::channel::<Duration>(128);
     let (cancel_tx, cancel_rx) = broadcast::channel::<()>(1);
     let event_tx_clone = event_tx.clone();
 
@@ -327,6 +326,7 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
                 assets,
                 nats_url: sargs.msq,
                 hold_duration: sargs.hold_duration,
+                nats_capacity: max_queue,
             };
             let w = worker::Worker {};
             w.backend_start(opt)
@@ -353,8 +353,11 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             .map_err(|e| log_startup_err("loading vulns", e))?,
     );
 
-    let (report_tx, report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
+    let n = directives.len();
+    let (report_tx, report_rx) = mpsc::channel::<manager::ManagerReport>(n);
+    let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(n);
 
+    let max_eps = sargs.max_eps;
     set.spawn({
         let cancel_tx = cancel_tx.clone();
         let opt = WatchdogOpt {
@@ -364,7 +367,7 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             report_rx,
             cancel_tx,
             report_interval: REPORT_INTERVAL_IN_SECONDS,
-            max_eps: sargs.max_eps,
+            max_eps,
             otel_config,
         };
         async move {
@@ -394,19 +397,20 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         default_tag: sargs.tags[0].clone(),
         intel_private_ip: sargs.intel_private_ip,
         report_tx,
+        max_eps,
+        max_queue,
     };
     let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
     set.spawn(async {
         manager
-            .listen(REPORT_INTERVAL_IN_SECONDS)
+            .start(REPORT_INTERVAL_IN_SECONDS)
             .await
             .map_err(|e| anyhow!("manager error: {:?}", e))
     });
 
     if listen {
         while let Some(res) = set.join_next().await {
-            let inner_res = res.unwrap();
-            if let Err(e) = inner_res {
+            if let Ok(Err(e)) = res {
                 error!("{:?}", e);
                 _ = cancel_tx.send(());
                 return Err(e);
