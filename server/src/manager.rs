@@ -8,7 +8,7 @@ use crate::{
     rule, tracer, utils,
     vuln::VulnPlugin,
 };
-use std::{fs::create_dir_all, sync::Arc, time::Duration, vec};
+use std::{fs::create_dir_all, sync::Arc, thread, time::Duration, vec};
 use tracing::{debug, error, info, info_span, trace, warn};
 
 use anyhow::{anyhow, Result};
@@ -108,11 +108,10 @@ impl Manager {
     }
 
     pub async fn start(self, report_interval: u64) -> Result<()> {
-        // use this for all directive managers
-        let mut log_writer = LogWriter::new(self.option.test_env).await?;
+        // use this for all directive managers, and run it on a dedicated thread
+        let mut log_writer = LogWriter::new(self.option.test_env)?;
         let log_tx = log_writer.sender.clone();
-        let cancel_tx = self.option.cancel_tx.clone();
-        task::spawn(async move { log_writer.listener(cancel_tx).await });
+        let _ = thread::spawn(move || log_writer.listener());
 
         let load_param = match self.option.max_queue {
             UNBOUNDED_QUEUE_SIZE => OpLoadParameter {
@@ -162,7 +161,7 @@ struct DirectiveManager {
     option: ManagerOpt,
     load_param: OpLoadParameter,
     directive: Directive,
-    log_tx: mpsc::Sender<LogWriterMessage>,
+    log_tx: crossbeam_channel::Sender<LogWriterMessage>,
     report_interval: u64,
     backlogs: RwLock<Vec<Arc<Backlog>>>,
     downstream_tx: broadcast::Sender<NormalizedEvent>,
@@ -174,7 +173,7 @@ impl DirectiveManager {
         option: &ManagerOpt,
         load_param: &OpLoadParameter,
         directive: &Directive,
-        log_tx: &mpsc::Sender<LogWriterMessage>,
+        log_tx: &crossbeam_channel::Sender<LogWriterMessage>,
         report_interval: &u64,
     ) -> DirectiveManager {
         let (downstream_tx, _) = broadcast::channel(1024);
@@ -612,7 +611,7 @@ mod test {
 
         // unmatched event
         event_tx.send(evt.clone()).unwrap();
-        sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(2000)).await;
         assert!(logs_contain("failed quick check"));
 
         // matched event but not on the first rule
@@ -631,7 +630,7 @@ mod test {
         // matched event 2
         evt.id = "2".to_string();
         event_tx.send(evt.clone()).unwrap();
-        sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("event sent downstream"));
         assert!(logs_contain(
             "found existing backlog that consumes the event"
