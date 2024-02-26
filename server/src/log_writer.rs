@@ -1,22 +1,22 @@
-use std::sync::Arc;
+use std::{
+    fs::{self, File, OpenOptions},
+    io::Write,
+    sync::Arc,
+};
 
 use crate::utils;
 use anyhow::Result;
-use tokio::{
-    fs::{self, File, OpenOptions},
-    io::AsyncWriteExt,
-    sync::{broadcast, mpsc, RwLock},
-};
+use parking_lot::Mutex;
 use tracing::{error, info};
 
 const ALARM_EVENT_LOG: &str = "siem_alarm_events.json";
 const ALARM_LOG: &str = "siem_alarms.json";
 
 pub struct LogWriter {
-    alarm_file: Arc<RwLock<File>>,
-    alarm_event_file: Arc<RwLock<File>>,
-    pub sender: mpsc::Sender<LogWriterMessage>,
-    receiver: mpsc::Receiver<LogWriterMessage>,
+    alarm_file: Arc<Mutex<File>>,
+    alarm_event_file: Arc<Mutex<File>>,
+    pub sender: crossbeam_channel::Sender<LogWriterMessage>,
+    pub receiver: crossbeam_channel::Receiver<LogWriterMessage>,
 }
 
 pub struct LogWriterMessage {
@@ -31,50 +31,47 @@ pub enum FileType {
 }
 
 impl LogWriter {
-    pub async fn new(test_env: bool) -> Result<Self> {
+    pub fn new(test_env: bool) -> Result<Self> {
         let log_dir = utils::log_dir(test_env)?;
-        fs::create_dir_all(&log_dir).await?;
+        fs::create_dir_all(&log_dir)?;
         let alarm_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_dir.join(ALARM_LOG))
-            .await?;
+            .open(log_dir.join(ALARM_LOG))?;
         let alarm_event_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_dir.join(ALARM_EVENT_LOG))
-            .await?;
-        let (log_tx, log_rx) = mpsc::channel::<LogWriterMessage>(128);
+            .open(log_dir.join(ALARM_EVENT_LOG))?;
+        let (log_tx, log_rx) = crossbeam_channel::bounded::<LogWriterMessage>(1024);
         Ok(Self {
-            alarm_file: Arc::new(RwLock::new(alarm_file)),
-            alarm_event_file: Arc::new(RwLock::new(alarm_event_file)),
+            alarm_file: Arc::new(Mutex::new(alarm_file)),
+            alarm_event_file: Arc::new(Mutex::new(alarm_event_file)),
             sender: log_tx,
             receiver: log_rx,
         })
     }
-    pub async fn write(&self, message: LogWriterMessage) -> Result<()> {
+    pub fn write(&self, message: LogWriterMessage) -> Result<()> {
         let mut lock = match message.file_type {
-            FileType::Alarm => self.alarm_file.write().await,
-            FileType::AlarmEvent => self.alarm_event_file.write().await,
+            FileType::Alarm => self.alarm_file.lock(),
+            FileType::AlarmEvent => self.alarm_event_file.lock(),
         };
-        lock.write_all(message.data.as_bytes()).await?;
+        lock.write_all(message.data.as_bytes())?;
         Ok(())
     }
 
-    pub async fn listener(&mut self, cancel_tx: broadcast::Sender<()>) -> Result<()> {
-        let mut cancel_rx = cancel_tx.subscribe();
+    pub fn listener(&mut self) -> Result<()> {
         loop {
-            tokio::select! {
-                _ = cancel_rx.recv() => {
-                    info!("cancel signal received, exiting log writer thread");
+            match self.receiver.recv() {
+                Ok(msg) => {
+                    // dont fail on log write error
+                    self.write(msg)
+                        .map_err(|e| error!("log writer error: {}", e))
+                        .ok();
+                }
+                Err(_) => {
+                    info!("exiting log writer listener");
                     break;
-                },
-                Some(msg) = self.receiver.recv() => {
-                   // dont fail on log write error
-                   self.write(msg)
-                   .await
-                   .map_err(|e| error!("log writer error: {}", e)).ok();
-                },
+                }
             }
         }
         Ok(())

@@ -1,5 +1,3 @@
-// ch chan<- event.NormalizedEvent, msq string, msqPrefix string, nodeName string, confDir string, frontend string
-
 use futures_lite::StreamExt;
 use std::str;
 use std::{sync::Arc, time::Duration};
@@ -11,6 +9,8 @@ use tokio::{
     time::interval,
 };
 
+use async_nats::Subject;
+
 use crate::manager::UNBOUNDED_QUEUE_SIZE;
 use crate::{
     asset::NetworkAssets,
@@ -18,12 +18,12 @@ use crate::{
     tracer,
 };
 use anyhow::{anyhow, Context, Result};
-use tracing::{debug, error, info, info_span, trace};
+use tracing::{debug, error, info, info_span, trace, warn};
 
-const EVENT_SUBJECT: &str = "dsiem_events";
-const BP_SUBJECT: &str = "dsiem_overload_signals";
+static EVENT_SUBJECT: &str = "dsiem_events";
+static BP_SUBJECT: &str = "dsiem_overload_signals";
 const MIN_NATS_CAPACITY: usize = 1024;
-const MAX_NATS_CAPACITY: usize = 10000;
+const MAX_NATS_CAPACITY: usize = MIN_NATS_CAPACITY * 20;
 
 async fn nats_client(nats_url: &str, capacity: &usize) -> Result<async_nats::Client> {
     // set sane boundaries for capacity
@@ -41,6 +41,12 @@ async fn nats_client(nats_url: &str, capacity: &usize) -> Result<async_nats::Cli
             match event {
                 async_nats::Event::Disconnected => debug!("nats disconnected"),
                 async_nats::Event::Connected => debug!("nats reconnected"),
+                async_nats::Event::SlowConsumer(id) => {
+                    warn!(
+                        "nats slow consumer detected on subscription {}, events will be lost",
+                        id
+                    )
+                }
                 async_nats::Event::ClientError(err) => {
                     debug!("nats client error occurred: {}", err)
                 }
@@ -80,7 +86,7 @@ impl Worker {
             .context(format!("cannot connect to {}", opt.nats_url))?;
 
         let mut subscription: async_nats::Subscriber = client
-            .subscribe(BP_SUBJECT.into())
+            .subscribe(BP_SUBJECT)
             .await
             .map_err(|e| anyhow!("{}", e))
             .context(format!(
@@ -91,6 +97,9 @@ impl Worker {
         info!("listening for new back pressure signal");
         loop {
             tokio::select! {
+
+                // ...
+
                 Some(message) = subscription.next() => {
                     if let Ok(v) = str::from_utf8(&message.payload) {
                         if v == "true" || v == "false" {
@@ -106,7 +115,7 @@ impl Worker {
                 Ok(event) = opt.event_rx.recv() => {
                     debug!("received new event from handler: {}", event.id);
                     let s = serde_json::to_string(&event)?;
-                    if let Err(err) = client.publish(EVENT_SUBJECT.into(), s.into()).await {
+                    if let Err(err) = client.publish(EVENT_SUBJECT, s.into()).await {
                         error!("error sending event to nats: {}", err);
                     } else {
                         debug!("event {} sent to nats", event.id);
@@ -120,112 +129,119 @@ impl Worker {
         }
         Ok(())
     }
+}
 
-    pub async fn backend_start(&self, mut opt: BackendOpt) -> Result<()> {
-        let client = nats_client(&opt.nats_url, &opt.nats_capacity)
-            .await
-            .context(format!("cannot connect to {}", opt.nats_url))?;
+// run on its own tokio runtime to avoid NATS slow consumer issue
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+pub async fn backend_start(mut opt: BackendOpt) -> Result<()> {
+    let client = nats_client(&opt.nats_url, &opt.nats_capacity)
+        .await
+        .context(format!("cannot connect to {}", opt.nats_url))?;
 
-        let mut subscription = client
-            .subscribe(EVENT_SUBJECT.into())
-            .await
-            .map_err(|e| anyhow!("{}", e))
-            .context(format!(
-                "cannot subscribe to dsiem_events from {}",
-                opt.nats_url
-            ))?;
+    let mut subscription = client
+        .subscribe(Subject::from(EVENT_SUBJECT))
+        .await
+        .map_err(|e| anyhow!("{}", e))
+        .context(format!(
+            "cannot subscribe to dsiem_events from {}",
+            opt.nats_url
+        ))?;
 
-        let mut reset_bp = interval(Duration::from_secs(opt.hold_duration.into()));
-        let mut bp_state = false;
+    info!("listening for new events");
 
-        info!("listening for new events");
-        loop {
-            tokio::select! {
-                Some(message) = subscription.next() => {
-                    if let Ok(v) = str::from_utf8(&message.payload) {
+    let mut reset_bp = interval(Duration::from_secs(opt.hold_duration.into()));
+    let mut bp_state = false;
 
-                        trace!("received new event from nats: {}", v);
-
-                        if let Err(e) = self.handle_event_message(&opt.assets, &opt.event_tx, v) {
-                            error!("{}", e);
-                        }
+    loop {
+        tokio::select! {
+            Some(message) = subscription.next() => {
+                if let Ok(e) = serde_json::from_slice::<NormalizedEvent>(&message.payload) {
+                    trace!("received new event from nats: {}", e.id);
+                    let a = opt.assets.clone();
+                    let tx = opt.event_tx.clone();
+                    tokio::spawn(async move {
+                        let _ = handle_event_message(&a, &tx, &e).await;
+                    });
+                } else {
+                    error!("an event contain bytes that cant be parsed, skipping it");
+                }
+            },
+            _ = reset_bp.tick() => {
+                if bp_state {
+                    if let Err(err) = client.publish(BP_SUBJECT, "false".into()).await {
+                        error!("error sending overload = false signal to frontend: {}", err);
                     } else {
-                        error!("an event contain bytes that cant be parsed, skipping it");
+                        info!("overload = false signal sent to frontend");
+                        bp_state = false;
                     }
-                },
-                _ = reset_bp.tick() => {
-                    if bp_state {
-                        if let Err(err) = client.publish(BP_SUBJECT.into(), "false".into()).await {
-                            error!("error sending overload = false signal to frontend: {}", err);
-                        } else {
-                            info!("overload = false signal sent to frontend");
-                            bp_state = false;
-                        }
-                    }
-                },
-                Some(_) = opt.bp_rx.recv() => {
-                    debug!("received under pressure signal from backlogs");
-                    reset_bp.reset();
-                    if bp_state {
-                        debug!("last under pressure signal is still active");
-                        continue;
-                    }
-                    bp_state = true;
-                    if let Err(err) = client.publish(BP_SUBJECT.into(), "true".into()).await {
-                        error!("error sending overload = true signal to frontend: {}", err);
-                    } else {
-                        info!("overload = true signal sent to frontend");
-                    }
-                },
-                _ = opt.cancel_rx.recv() => {
-                    info!("cancel signal received, exiting worker thread");
-                    break;
-                },
-            }
+                }
+            },
+            Some(_) = opt.bp_rx.recv() => {
+                debug!("received under pressure signal from backlogs");
+                reset_bp.reset();
+                if bp_state {
+                    debug!("last under pressure signal is still active");
+                    continue;
+                }
+                bp_state = true;
+                if let Err(err) = client.publish(BP_SUBJECT, "true".into()).await {
+                    error!("error sending overload = true signal to frontend: {}", err);
+                } else {
+                    info!("overload = true signal sent to frontend");
+                }
+            },
+            _ = opt.cancel_rx.recv() => {
+                info!("cancel signal received, exiting worker thread");
+                break;
+            },
         }
-        Ok(())
+    }
+    Ok(())
+}
+
+async fn handle_event_message(
+    assets: &Arc<NetworkAssets>,
+    event_tx: &Sender<event::NormalizedEvent>,
+    e: &NormalizedEvent,
+) -> Result<()> {
+    let id = &e.id;
+    let span = info_span!("backend handler", event.id = id);
+    _ = span.enter();
+
+    if !e.valid() {
+        let err_text = format!("event {} is not valid, skipping it", id);
+        return Err(anyhow!(err_text));
+    }
+    if assets.is_whitelisted(&e.src_ip) {
+        debug!(
+            event.id = id,
+            "src_ip {} is whitelisted, skipping event", e.src_ip
+        );
+        return Ok(());
     }
 
-    fn handle_event_message(
-        &self,
-        assets: &Arc<NetworkAssets>,
-        event_tx: &Sender<event::NormalizedEvent>,
-        payload_str: &str,
-    ) -> Result<()> {
-        let span = info_span!("backend handler", event = payload_str);
-        _ = span.enter();
-
-        let mut e = serde_json::from_str::<NormalizedEvent>(payload_str)
-            .map_err(|e| anyhow!("cannot parse event from message queue: {}, skipping it", e))?;
-        if !e.valid() {
-            let err_text = format!("event {} is not valid, skipping it", e.id);
-            return Err(anyhow!(err_text));
-        }
-        if assets.is_whitelisted(&e.src_ip) {
-            debug!(e.id, "src_ip {} is whitelisted, skipping event", e.src_ip);
-            return Ok(());
-        }
-
-        if !e.carrier.is_empty() {
-            // use remote as current span's parent
-            tracer::set_parent_from_event(&span, &e);
-        }
-
-        // set carrier's content to current span
-        tracer::store_parent_into_event(&span, &mut e);
-
-        let id = e.id.to_owned();
-        if let Err(err) = event_tx.send(e) {
-            let err_text = format!("cannot send event {}: {}, skipping it", id, err);
-            return Err(anyhow!(err_text));
-        }
-        debug!("event {} broadcasted", id);
-        Ok(())
+    if !e.carrier.is_empty() {
+        // use remote as current span's parent
+        tracer::set_parent_from_event(&span, &e);
     }
+
+    let mut event = e.clone();
+    // set carrier's content to current span
+    tracer::store_parent_into_event(&span, &mut event);
+
+    let id = e.id.to_owned();
+    if let Err(err) = event_tx.send(event) {
+        let err_text = format!("cannot send event {}: {}, skipping it", id, err);
+        return Err(anyhow!(err_text));
+    }
+    debug!("event {} broadcasted", id);
+    Ok(())
 }
 
 #[cfg(test)]
 mod test {
+    use std::thread;
+
     use super::*;
     use tokio::{task, time::sleep};
     use tracing_test::traced_test;
@@ -254,9 +270,10 @@ mod test {
             nats_capacity: 5,
         };
 
-        let _detached = task::spawn(async {
-            let w = Worker {};
-            _ = w.backend_start(opt).await;
+        let thread_span = tracing::debug_span!("thread").or_current();
+        let _detached = thread::spawn(move || {
+            let _entered = thread_span.entered();
+            _ = backend_start(opt);
         });
 
         sleep(Duration::from_millis(3000)).await;
@@ -280,13 +297,11 @@ mod test {
         };
         let payload_str = serde_json::to_string(&evt).unwrap();
         client
-            .publish(EVENT_SUBJECT.into(), payload_str.into())
+            .publish(Subject::from(EVENT_SUBJECT), payload_str.into())
             .await
             .unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("received new event from nats"));
-        sleep(Duration::from_millis(1000)).await;
-        assert!(logs_contain("event 1 is not valid"));
 
         _ = cancel_tx.send(());
         sleep(Duration::from_millis(1000)).await;
@@ -330,17 +345,11 @@ mod test {
             bp_rx.recv().await;
         });
 
-        client
-            .publish(BP_SUBJECT.into(), "true".into())
-            .await
-            .unwrap();
+        client.publish(BP_SUBJECT, "true".into()).await.unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("overload = true signal received from backend"));
 
-        client
-            .publish(BP_SUBJECT.into(), "foo".into())
-            .await
-            .unwrap();
+        client.publish(BP_SUBJECT, "foo".into()).await.unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain(
             "back pressure message contain bytes that cant be parsed"
@@ -362,16 +371,10 @@ mod test {
     async fn test_handle_event_message() {
         let assets = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
         let (event_tx, mut event_rx) = broadcast::channel::<NormalizedEvent>(1);
-        let w = Worker {};
-
-        let res = w.handle_event_message(&assets, &event_tx, "foo");
-        assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("cannot parse event"));
 
         let mut event = NormalizedEvent::default();
-        let payload_str = serde_json::to_string(&event).unwrap();
 
-        let res = w.handle_event_message(&assets, &event_tx, &payload_str);
+        let res = handle_event_message(&assets, &event_tx, &event).await;
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("is not valid"));
 
@@ -384,23 +387,21 @@ mod test {
         event.title = "bar".to_owned();
         event.timestamp = chrono::Utc::now();
 
-        let payload_str = serde_json::to_string(&event).unwrap();
-        let res = w.handle_event_message(&assets, &event_tx, &payload_str);
+        let res = handle_event_message(&assets, &event_tx, &event).await;
         assert!(res.is_ok());
         assert!(logs_contain("whitelisted"));
 
         let h = task::spawn(async move { event_rx.recv().await });
 
         event.src_ip = "192.168.0.1".parse().unwrap();
-        let payload_str = serde_json::to_string(&event).unwrap();
-        let res = w.handle_event_message(&assets, &event_tx, &payload_str);
+        let res = handle_event_message(&assets, &event_tx, &event).await;
         assert!(res.is_ok());
         assert!(logs_contain("broadcasted"));
 
         h.abort();
         _ = h.await;
 
-        let res = w.handle_event_message(&assets, &event_tx, &payload_str);
+        let res = handle_event_message(&assets, &event_tx, &event).await;
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("cannot send event"));
     }

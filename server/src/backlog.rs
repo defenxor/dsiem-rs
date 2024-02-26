@@ -118,7 +118,7 @@ pub struct Backlog {
     #[serde(skip)]
     directive_id: u64,
     #[serde(skip)]
-    log_tx: Option<Sender<LogWriterMessage>>,
+    log_tx: Option<crossbeam_channel::Sender<LogWriterMessage>>,
 }
 
 // This is only used for serialize
@@ -182,7 +182,7 @@ pub struct BacklogOpt<'a> {
     pub med_risk_min: u8,
     pub med_risk_max: u8,
     pub intel_private_ip: bool,
-    pub log_tx: Sender<LogWriterMessage>,
+    pub log_tx: crossbeam_channel::Sender<LogWriterMessage>,
 }
 
 impl Backlog {
@@ -889,12 +889,10 @@ impl Backlog {
             "appending siem_alarm_events"
         );
         if let Some(sender) = &self.log_tx {
-            sender
-                .send(LogWriterMessage {
-                    data: s,
-                    file_type: FileType::AlarmEvent,
-                })
-                .await?;
+            sender.send(LogWriterMessage {
+                data: s,
+                file_type: FileType::AlarmEvent,
+            })?;
         }
         Ok(())
     }
@@ -930,12 +928,10 @@ impl Backlog {
         let s = serde_json::to_string(&self)? + "\n";
 
         if let Some(sender) = &self.log_tx {
-            sender
-                .send(LogWriterMessage {
-                    data: s,
-                    file_type: FileType::Alarm,
-                })
-                .await?;
+            sender.send(LogWriterMessage {
+                data: s,
+                file_type: FileType::Alarm,
+            })?
         }
         Ok(())
     }
@@ -1035,6 +1031,8 @@ impl VulnSearchTerm {
 
 #[cfg(test)]
 mod test {
+    use std::thread;
+
     use crate::{directive, log_writer::LogWriter, rule::StickyDiffData};
 
     use super::*;
@@ -1087,7 +1085,7 @@ mod test {
             );
             let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
             let (bp_tx, _) = mpsc::channel::<()>(1);
-            let (log_tx, _) = mpsc::channel::<LogWriterMessage>(1);
+            let (log_tx, _) = crossbeam_channel::bounded(1);
 
             BacklogOpt {
                 directive: &d,
@@ -1193,10 +1191,12 @@ mod test {
         let (bp_tx, _) = mpsc::channel::<()>(1);
         let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
-        let mut log_writer = LogWriter::new(true).await.unwrap();
+        let mut log_writer = LogWriter::new(true).unwrap();
         let log_tx = log_writer.sender.clone();
-        let cancel_tx = broadcast::channel(1).0.clone();
-        task::spawn(async move { log_writer.listener(cancel_tx).await });
+
+        let _ = thread::spawn(move || {
+            log_writer.listener().unwrap();
+        });
 
         let now = Utc::now().timestamp_nanos_opt().unwrap();
 
@@ -1306,10 +1306,11 @@ mod test {
         let (bp_tx, _) = mpsc::channel::<()>(1);
         let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
-        let mut log_writer = LogWriter::new(true).await.unwrap();
+        let mut log_writer = LogWriter::new(true).unwrap();
         let log_tx = log_writer.sender.clone();
-        let cancel_tx = broadcast::channel(1).0.clone();
-        task::spawn(async move { log_writer.listener(cancel_tx).await });
+        let _ = thread::spawn(move || {
+            log_writer.listener().unwrap();
+        });
 
         let mut evt = NormalizedEvent {
             plugin_id: 1337,
@@ -1412,10 +1413,14 @@ mod test {
         let (bp_tx, _bp_rx) = mpsc::channel::<()>(8);
         let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
-        let mut log_writer = LogWriter::new(true).await.unwrap();
+        info!("about to start blocking");
+        let mut log_writer = LogWriter::new(true).unwrap();
         let log_tx = log_writer.sender.clone();
-        let cancel_tx = broadcast::channel(1).0.clone();
-        task::spawn(async move { log_writer.listener(cancel_tx).await });
+        let _ = thread::spawn(move || {
+            log_writer.listener().unwrap();
+        });
+
+        info!("done spawn blocking");
 
         let evt = NormalizedEvent {
             plugin_id: 1337,

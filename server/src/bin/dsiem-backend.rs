@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, thread};
 
 use anyhow::{anyhow, Error, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
@@ -315,24 +315,19 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let mut set = JoinSet::new();
 
-    set.spawn({
-        let assets = assets.clone();
-        let event_tx = event_tx.clone();
-        async move {
-            let opt = worker::BackendOpt {
-                event_tx,
-                bp_rx,
-                cancel_rx,
-                assets,
-                nats_url: sargs.msq,
-                hold_duration: sargs.hold_duration,
-                nats_capacity: max_queue,
-            };
-            let w = worker::Worker {};
-            w.backend_start(opt)
-                .await
-                .map_err(|e| anyhow!("worker error: {:?}", e))
-        }
+    let backend_asset = assets.clone();
+    let backend_tx = event_tx.clone();
+    thread::spawn(move || {
+        let opt = worker::BackendOpt {
+            event_tx: backend_tx,
+            bp_rx,
+            cancel_rx,
+            assets: backend_asset,
+            nats_url: sargs.msq,
+            hold_duration: sargs.hold_duration,
+            nats_capacity: max_queue,
+        };
+        worker::backend_start(opt).map_err(|e| anyhow!("worker error: {:?}", e))
     });
 
     let directives = directive
