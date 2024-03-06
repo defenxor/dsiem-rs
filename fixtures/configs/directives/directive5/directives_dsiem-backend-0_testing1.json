@@ -34,7 +34,7 @@
           "reliability": 1,
           "port_from": "ANY",
           "port_to": "ANY",
-          "timeout": 3,
+          "timeout": 8,
           "name": "test-custom-data",
           "type": "PluginRule",
           "from": "ANY",

@@ -1,9 +1,9 @@
-use std::{collections::HashSet, net::IpAddr, sync::Arc};
-
 use cidr::IpCidr;
 use parking_lot::RwLock;
+use rayon::prelude::*;
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
+use std::{collections::HashSet, net::IpAddr, sync::Arc};
 use tracing::warn;
 
 use crate::{asset::NetworkAssets, event::NormalizedEvent};
@@ -489,8 +489,8 @@ pub fn get_quick_check_pairs(rules: &Vec<DirectiveRule>) -> (Vec<SIDPair>, Vec<T
 
 // QuickCheckTaxoRule checks event against the key fields in a directive taxonomy rules
 pub fn quick_check_taxo_rule(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
-    let last = pairs
-        .iter()
+    let count = pairs
+        .par_iter()
         .filter(|v| {
             let v = v
                 .product
@@ -501,14 +501,15 @@ pub fn quick_check_taxo_rule(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
             v.is_some()
         })
         .filter(|v| v.category == e.category)
-        .last();
-    last.is_some()
+        .count();
+
+    count > 0
 }
 
 // QuickCheckPluginRule checks event against the key fields in a directive plugin rules
 pub fn quick_check_plugin_rule(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
-    let last = pairs
-        .iter()
+    let count = pairs
+        .par_iter()
         .filter(|v| v.plugin_id == e.plugin_id)
         .filter(|v| {
             let v = v
@@ -519,8 +520,9 @@ pub fn quick_check_plugin_rule(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
                 .last();
             v.is_some()
         })
-        .last();
-    last.is_some()
+        .count();
+
+    count > 0
 }
 
 // WARNING: deprecated fn

@@ -1,12 +1,14 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use metered::{hdr_histogram::HdrHistogram, metered, Throughput};
+use metered::hdr_histogram::HdrHistogram;
 use tokio::{
     sync::{broadcast, mpsc},
     time::interval,
 };
 use tracing::{info, warn};
+
+pub mod eps;
 
 use crate::{event::NormalizedEvent, manager::ManagerReport, tracer::OtelConfig};
 
@@ -14,21 +16,18 @@ pub const REPORT_INTERVAL_IN_SECONDS: u64 = 10;
 const UNIT_MULTIPLIER: f64 = 1000000.0; // nano to milli
 
 #[derive(Default)]
-pub struct Watchdog {
-    metrics: Metrics,
-}
+pub struct Watchdog {}
 pub struct WatchdogOpt {
-    pub event_tx: broadcast::Sender<NormalizedEvent>,
-    pub event_rx: broadcast::Receiver<NormalizedEvent>,
+    pub event_tx: mpsc::Sender<NormalizedEvent>,
     pub resptime_rx: mpsc::Receiver<f64>,
     pub report_rx: mpsc::Receiver<ManagerReport>,
     pub cancel_tx: broadcast::Sender<()>,
     pub report_interval: u64,
     pub max_eps: u32,
     pub otel_config: OtelConfig,
+    pub eps: Arc<eps::Eps>,
 }
 
-#[metered(registry = Metrics)]
 impl Watchdog {
     pub async fn start(&mut self, opt: WatchdogOpt) -> Result<()> {
         let mut report = interval(Duration::from_secs(opt.report_interval));
@@ -38,7 +37,6 @@ impl Watchdog {
         let mut report_map = HashMap::<u64, (usize, usize)>::new();
         let mut resptime_rx = opt.resptime_rx;
         let mut report_rx = opt.report_rx;
-        let mut event_rx = opt.event_rx;
 
         let mut meter = crate::meter::Meter::new(opt.otel_config);
 
@@ -71,8 +69,8 @@ impl Watchdog {
                 }
                 _ = report.tick() => {
 
-                let eps = round(self.metrics.eps.throughput.histogram().mean(), 2);
-                let queue_length = opt.event_tx.len();
+                let eps = round(opt.eps.metrics.count.throughput.histogram().mean(), 2);
+                let queue_length = opt.event_tx.max_capacity() - opt.event_tx.capacity();
                 let avg_proc_time_ms = resp_histo.mean()/UNIT_MULTIPLIER;
                 let ttl_directives = report_map.len();
                 let active_directives =  report_map.iter().filter(|&(_, (x, _))|*x > 0).count();
@@ -106,17 +104,10 @@ impl Watchdog {
                   resp_histo.clear();
                 }
               }
-
-              Ok(_) = event_rx.recv() => {
-                self.eps()
-              }
             }
         }
         Ok(())
     }
-
-    #[measure([Throughput])]
-    fn eps(&self) {}
 }
 
 fn round(x: f64, decimals: u32) -> f64 {
@@ -128,32 +119,36 @@ fn round(x: f64, decimals: u32) -> f64 {
 mod test {
     use super::*;
     use tokio::{task, time::sleep};
+    use tracing::{Instrument, Span};
     use tracing_test::traced_test;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[traced_test]
     async fn test_watchdog() {
-        let (event_tx, event_rx) = broadcast::channel::<NormalizedEvent>(5);
+        let (event_tx, _event_rx) = mpsc::channel::<NormalizedEvent>(5);
         let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(1);
         let (report_tx, report_rx) = mpsc::channel::<ManagerReport>(1);
         let (cancel_tx, _) = broadcast::channel::<()>(5);
         let report_interval = 1;
         let max_eps = 1000;
 
+        let eps = Arc::new(eps::Eps::default());
+
         let opt = WatchdogOpt {
             event_tx: event_tx.clone(),
-            event_rx,
             resptime_rx,
             report_rx,
             cancel_tx: cancel_tx.clone(),
             report_interval,
             max_eps,
             otel_config: OtelConfig::default(),
+            eps,
         };
 
+        let span = Span::current();
         let _detached = task::spawn(async {
             let mut w = Watchdog::default();
-            _ = w.start(opt).await;
+            _ = w.start(opt).instrument(span).await;
         });
         _ = resptime_tx.send(100.0 * UNIT_MULTIPLIER).await;
         _ = resptime_tx.send(100.0 * UNIT_MULTIPLIER).await;
@@ -161,14 +156,17 @@ mod test {
         sleep(Duration::from_millis(2000)).await;
         assert!(logs_contain("avg_proc_time_ms=74") || logs_contain("avg_proc_time_ms=75"));
 
-        for _ in 0..100000 {
-            let e = NormalizedEvent::default();
-            _ = event_tx.send(e);
-        }
+        sleep(Duration::from_millis(1000)).await;
         _ = resptime_tx.send(10000.0 * UNIT_MULTIPLIER).await;
         sleep(Duration::from_millis(1000)).await;
 
         // this should trigger a clear() on the histogram
+        let _handle = task::spawn(async move {
+            for _ in 0..10000 {
+                event_tx.send(NormalizedEvent::default()).await.unwrap();
+            }
+        });
+        sleep(Duration::from_millis(3000)).await;
         assert!(logs_contain("processing time maybe too long"));
 
         _ = resptime_tx.send(25.0 * UNIT_MULTIPLIER).await;
