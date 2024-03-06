@@ -2,16 +2,14 @@ use futures_lite::StreamExt;
 use std::str;
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{
-        broadcast::{self, Sender},
-        mpsc,
-    },
+    sync::{broadcast, mpsc},
     time::interval,
 };
 
 use async_nats::Subject;
 
 use crate::manager::UNBOUNDED_QUEUE_SIZE;
+use crate::watchdog::eps::Eps;
 use crate::{
     asset::NetworkAssets,
     event::{self, NormalizedEvent},
@@ -60,12 +58,13 @@ async fn nats_client(nats_url: &str, capacity: &usize) -> Result<async_nats::Cli
 
 pub struct BackendOpt {
     pub nats_url: String,
-    pub event_tx: broadcast::Sender<NormalizedEvent>,
+    pub event_tx: mpsc::Sender<NormalizedEvent>,
     pub bp_rx: mpsc::Receiver<()>,
     pub cancel_rx: broadcast::Receiver<()>,
     pub hold_duration: u8,
     pub assets: Arc<NetworkAssets>,
     pub nats_capacity: usize,
+    pub eps: Arc<Eps>,
 }
 
 pub struct FrontendOpt {
@@ -159,6 +158,7 @@ pub async fn backend_start(mut opt: BackendOpt) -> Result<()> {
                     trace!("received new event from nats: {}", e.id);
                     let a = opt.assets.clone();
                     let tx = opt.event_tx.clone();
+                    opt.eps.count();
                     tokio::spawn(async move {
                         let _ = handle_event_message(&a, &tx, &e).await;
                     });
@@ -201,7 +201,7 @@ pub async fn backend_start(mut opt: BackendOpt) -> Result<()> {
 
 async fn handle_event_message(
     assets: &Arc<NetworkAssets>,
-    event_tx: &Sender<event::NormalizedEvent>,
+    event_tx: &mpsc::Sender<event::NormalizedEvent>,
     e: &NormalizedEvent,
 ) -> Result<()> {
     let id = &e.id;
@@ -230,11 +230,11 @@ async fn handle_event_message(
     tracer::store_parent_into_event(&span, &mut event);
 
     let id = e.id.to_owned();
-    if let Err(err) = event_tx.send(event) {
+    if let Err(err) = event_tx.send(event).await {
         let err_text = format!("cannot send event {}: {}, skipping it", id, err);
         return Err(anyhow!(err_text));
     }
-    debug!("event {} broadcasted", id);
+    debug!("event {} sent", id);
     Ok(())
 }
 
@@ -256,10 +256,11 @@ mod test {
         let nats_url = "nats://127.0.0.1:42222";
 
         let assets = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let (event_tx, _) = broadcast::channel::<NormalizedEvent>(5);
+        let (event_tx, _) = mpsc::channel::<NormalizedEvent>(5);
         let (cancel_tx, cancel_rx) = broadcast::channel::<()>(5);
         let (bp_tx, bp_rx) = mpsc::channel::<()>(5);
 
+        let eps = Arc::new(Eps::default());
         let opt = BackendOpt {
             nats_url: nats_url.to_string(),
             assets,
@@ -268,6 +269,7 @@ mod test {
             bp_rx,
             hold_duration: 1,
             nats_capacity: 5,
+            eps,
         };
 
         let thread_span = tracing::debug_span!("thread").or_current();
@@ -370,7 +372,7 @@ mod test {
     #[traced_test]
     async fn test_handle_event_message() {
         let assets = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let (event_tx, mut event_rx) = broadcast::channel::<NormalizedEvent>(1);
+        let (event_tx, mut event_rx) = mpsc::channel::<NormalizedEvent>(1);
 
         let mut event = NormalizedEvent::default();
 
@@ -396,7 +398,7 @@ mod test {
         event.src_ip = "192.168.0.1".parse().unwrap();
         let res = handle_event_message(&assets, &event_tx, &event).await;
         assert!(res.is_ok());
-        assert!(logs_contain("broadcasted"));
+        assert!(logs_contain("event foo sent"));
 
         h.abort();
         _ = h.await;

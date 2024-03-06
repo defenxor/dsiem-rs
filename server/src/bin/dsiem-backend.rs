@@ -4,14 +4,16 @@ use anyhow::{anyhow, Error, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
     asset::NetworkAssets,
-    config, directive, intel,
+    config, directive,
+    event::NormalizedEvent,
+    intel,
     manager::{self, ManagerOpt, UNBOUNDED_QUEUE_SIZE},
     tracer, vuln,
-    watchdog::{self, WatchdogOpt, REPORT_INTERVAL_IN_SECONDS},
+    watchdog::{self, eps::Eps, WatchdogOpt, REPORT_INTERVAL_IN_SECONDS},
     worker,
 };
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio::{task::JoinSet, time::sleep};
 use tracing::{error, info};
 
@@ -289,10 +291,9 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         sargs.frontend, sargs.msq
     );
 
-    let (event_tx, event_rx) = broadcast::channel(max_queue);
+    let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<()>(8);
     let (cancel_tx, cancel_rx) = broadcast::channel::<()>(1);
-    let event_tx_clone = event_tx.clone();
 
     let c = cancel_tx.clone();
     ctrlc::set_handler(move || {
@@ -317,6 +318,10 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let backend_asset = assets.clone();
     let backend_tx = event_tx.clone();
+
+    let eps = Arc::new(Eps::default());
+
+    let eps_clone = eps.clone();
     thread::spawn(move || {
         let opt = worker::BackendOpt {
             event_tx: backend_tx,
@@ -326,6 +331,7 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             nats_url: sargs.msq,
             hold_duration: sargs.hold_duration,
             nats_capacity: max_queue,
+            eps: eps_clone,
         };
         worker::backend_start(opt).map_err(|e| anyhow!("worker error: {:?}", e))
     });
@@ -353,17 +359,18 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(n);
 
     let max_eps = sargs.max_eps;
+
     set.spawn({
         let cancel_tx = cancel_tx.clone();
         let opt = WatchdogOpt {
             event_tx,
-            event_rx,
             resptime_rx,
             report_rx,
             cancel_tx,
             report_interval: REPORT_INTERVAL_IN_SECONDS,
             max_eps,
             otel_config,
+            eps,
         };
         async move {
             let mut w = watchdog::Watchdog::default();
@@ -385,7 +392,7 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         backpressure_tx: bp_tx,
         resptime_tx,
         cancel_tx: cancel_tx.clone(),
-        publisher: event_tx_clone,
+        receiver: Arc::new(RwLock::new(event_rx)),
         med_risk_max: sargs.med_risk_max,
         med_risk_min: sargs.med_risk_min,
         default_status: sargs.status[0].clone(),
