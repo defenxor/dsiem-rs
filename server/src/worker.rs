@@ -128,75 +128,75 @@ impl Worker {
         }
         Ok(())
     }
-}
 
-// run on its own tokio runtime to avoid NATS slow consumer issue
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
-pub async fn backend_start(mut opt: BackendOpt) -> Result<()> {
-    let client = nats_client(&opt.nats_url, &opt.nats_capacity)
-        .await
-        .context(format!("cannot connect to {}", opt.nats_url))?;
+    // run on its own tokio runtime to avoid NATS slow consumer issue
+    #[tokio::main(flavor = "current_thread")]
+    pub async fn backend_start(&self, mut opt: BackendOpt) -> Result<()> {
+        let client = nats_client(&opt.nats_url, &opt.nats_capacity)
+            .await
+            .context(format!("cannot connect to {}", opt.nats_url))?;
 
-    let mut subscription = client
-        .subscribe(Subject::from(EVENT_SUBJECT))
-        .await
-        .map_err(|e| anyhow!("{}", e))
-        .context(format!(
-            "cannot subscribe to dsiem_events from {}",
-            opt.nats_url
-        ))?;
+        let mut subscription = client
+            .subscribe(Subject::from(EVENT_SUBJECT))
+            .await
+            .map_err(|e| anyhow!("{}", e))
+            .context(format!(
+                "cannot subscribe to dsiem_events from {}",
+                opt.nats_url
+            ))?;
 
-    info!("listening for new events");
+        info!("listening for new events");
 
-    let mut reset_bp = interval(Duration::from_secs(opt.hold_duration.into()));
-    let mut bp_state = false;
+        let mut reset_bp = interval(Duration::from_secs(opt.hold_duration.into()));
+        let mut bp_state = false;
 
-    loop {
-        tokio::select! {
-            Some(message) = subscription.next() => {
-                if let Ok(e) = serde_json::from_slice::<NormalizedEvent>(&message.payload) {
-                    trace!("received new event from nats: {}", e.id);
-                    let a = opt.assets.clone();
-                    let tx = opt.event_tx.clone();
-                    opt.eps.count();
-                    tokio::spawn(async move {
-                        let _ = handle_event_message(&a, &tx, &e).await;
-                    });
-                } else {
-                    error!("an event contain bytes that cant be parsed, skipping it");
-                }
-            },
-            _ = reset_bp.tick() => {
-                if bp_state {
-                    if let Err(err) = client.publish(BP_SUBJECT, "false".into()).await {
-                        error!("error sending overload = false signal to frontend: {}", err);
+        loop {
+            tokio::select! {
+                Some(message) = subscription.next() => {
+                    if let Ok(e) = serde_json::from_slice::<NormalizedEvent>(&message.payload) {
+                        trace!("received new event from nats: {}", e.id);
+                        let a = opt.assets.clone();
+                        let tx = opt.event_tx.clone();
+                        opt.eps.count();
+                        tokio::spawn(async move {
+                            let _ = handle_event_message(&a, &tx, &e).await;
+                        });
                     } else {
-                        info!("overload = false signal sent to frontend");
-                        bp_state = false;
+                        error!("an event contain bytes that cant be parsed, skipping it");
                     }
-                }
-            },
-            Some(_) = opt.bp_rx.recv() => {
-                debug!("received under pressure signal from backlogs");
-                reset_bp.reset();
-                if bp_state {
-                    debug!("last under pressure signal is still active");
-                    continue;
-                }
-                bp_state = true;
-                if let Err(err) = client.publish(BP_SUBJECT, "true".into()).await {
-                    error!("error sending overload = true signal to frontend: {}", err);
-                } else {
-                    info!("overload = true signal sent to frontend");
-                }
-            },
-            _ = opt.cancel_rx.recv() => {
-                info!("cancel signal received, exiting worker thread");
-                break;
-            },
+                },
+                _ = reset_bp.tick() => {
+                    if bp_state {
+                        if let Err(err) = client.publish(BP_SUBJECT, "false".into()).await {
+                            error!("error sending overload = false signal to frontend: {}", err);
+                        } else {
+                            info!("overload = false signal sent to frontend");
+                            bp_state = false;
+                        }
+                    }
+                },
+                Some(_) = opt.bp_rx.recv() => {
+                    debug!("received under pressure signal from backlogs");
+                    reset_bp.reset();
+                    if bp_state {
+                        debug!("last under pressure signal is still active");
+                        continue;
+                    }
+                    bp_state = true;
+                    if let Err(err) = client.publish(BP_SUBJECT, "true".into()).await {
+                        error!("error sending overload = true signal to frontend: {}", err);
+                    } else {
+                        info!("overload = true signal sent to frontend");
+                    }
+                },
+                _ = opt.cancel_rx.recv() => {
+                    info!("cancel signal received, exiting worker thread");
+                    break;
+                },
+            }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 async fn handle_event_message(
@@ -275,7 +275,8 @@ mod test {
         let thread_span = tracing::debug_span!("thread").or_current();
         let _detached = thread::spawn(move || {
             let _entered = thread_span.entered();
-            _ = backend_start(opt);
+            let w = Worker {};
+            _ = w.backend_start(opt);
         });
 
         sleep(Duration::from_millis(3000)).await;
