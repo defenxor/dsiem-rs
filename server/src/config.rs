@@ -39,14 +39,12 @@ pub fn write_dsiem_config(test_env: bool, status: Vec<String>, tags: Vec<String>
     Ok(())
 }
 
-async fn list_config_files(frontend_url: String) -> Result<Vec<ConfigFile>> {
+fn list_config_files(frontend_url: String) -> Result<Vec<ConfigFile>> {
     debug!("listing config files from {}", frontend_url);
-    let resp = reqwest::get(frontend_url.clone() + "/config/")
-        .await
+    let resp = reqwest::blocking::get(frontend_url.clone() + "/config/")
         .context("cannot get a list of config files from frontend")?;
     let text = resp
         .text()
-        .await
         .context("cannot parse response for request to list config files")?;
     let c: ConfigFiles = serde_json::from_str(&text)
         .context("cannot parse response for request to list config files")?;
@@ -54,7 +52,7 @@ async fn list_config_files(frontend_url: String) -> Result<Vec<ConfigFile>> {
     Ok(c.files)
 }
 
-pub async fn download_files(
+pub fn download_files(
     test_env: bool,
     subdir: Option<Vec<String>>,
     frontend_url: String,
@@ -63,7 +61,7 @@ pub async fn download_files(
     let config_dir = utils::config_dir(test_env, subdir)?
         .to_string_lossy()
         .to_string();
-    let files = list_config_files(frontend_url.clone()).await?;
+    let files = list_config_files(frontend_url.clone())?;
     for f in files.into_iter().filter(|f| {
         f.filename.starts_with("assets_")
             || f.filename.starts_with("intel_")
@@ -73,8 +71,8 @@ pub async fn download_files(
     }) {
         let url = frontend_url.clone() + "/config/" + &f.filename;
         debug!("downloading config file {}", url.clone());
-        let resp = reqwest::get(url.clone()).await?;
-        let content = resp.text().await?;
+        let resp = reqwest::blocking::get(url.clone())?;
+        let content = resp.text()?;
         let path = config_dir.clone() + "/" + &f.filename;
         let mut local =
             File::create(&path).context(format!("cannot create config file {}", path))?;
@@ -88,25 +86,18 @@ pub async fn download_files(
 
 #[cfg(test)]
 mod test {
-    use tokio::join;
     use tracing_test::traced_test;
 
     use super::*;
-    #[tokio::test]
+    #[test]
     #[traced_test]
-    async fn test_config() {
-        let mut server = mockito::Server::new_async().await;
+    fn test_config() {
+        let mut server = mockito::Server::new();
         let url = server.url();
         debug!("using url: {}", url.clone());
-        tokio::spawn(async move {
-            let _m1 = server
-                .mock("GET", "/config/")
-                .with_status(418)
-                .create_async()
-                .await;
-        });
+        let _m1 = server.mock("GET", "/config/").with_status(418).create();
 
-        let res = list_config_files(url).await;
+        let res = list_config_files(url);
         assert!(res.is_err());
 
         let file_list = r#"{ 
@@ -117,7 +108,7 @@ mod test {
                 ] 
             }"#;
 
-        let mut server = mockito::Server::new_async().await;
+        let mut server = mockito::Server::new();
         let url = server.url();
         debug!("using url: {}", url.clone());
 
@@ -125,25 +116,24 @@ mod test {
             .mock("GET", "/config/")
             .with_status(200)
             .with_body(file_list)
-            .create_async();
+            .create();
         let _m2 = server
             .mock("GET", "/config/assets_foo.json")
             .with_status(200)
             .with_body("{}")
-            .create_async();
+            .create();
         let _m3 = server
             .mock("GET", "/config/intel_bar.json")
             .with_status(200)
             .with_body("{}")
-            .create_async();
+            .create();
         let _m4 = server
             .mock("GET", "/config/vuln_baz.json")
             .with_status(200)
             .with_body("{}")
-            .create_async();
-        join!(_m1, _m2, _m3, _m4);
+            .create();
 
-        let config_files = list_config_files(url.clone()).await;
+        let config_files = list_config_files(url.clone());
         if let Err(e) = config_files {
             panic!("error: {}", e);
         }
@@ -155,8 +145,7 @@ mod test {
             Some(vec!["dl_config".to_owned()]),
             url,
             "qux".to_owned(),
-        )
-        .await;
+        );
         assert!(res.is_ok());
     }
 }
