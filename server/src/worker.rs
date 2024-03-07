@@ -230,11 +230,11 @@ async fn handle_event_message(
     tracer::store_parent_into_event(&span, &mut event);
 
     let id = e.id.to_owned();
-    if let Err(err) = event_tx.send(event).await {
-        let err_text = format!("cannot send event {}: {}, skipping it", id, err);
-        return Err(anyhow!(err_text));
+    if let Err(err) = event_tx.try_send(event) {
+        warn!(event.id = id, "error sending event: {}", err);
+        return Err(anyhow!(err.to_string()));
     }
-    debug!("event {} sent", id);
+    debug!(event.id = id, "event sent");
     Ok(())
 }
 
@@ -399,13 +399,13 @@ mod test {
         event.src_ip = "192.168.0.1".parse().unwrap();
         let res = handle_event_message(&assets, &event_tx, &event).await;
         assert!(res.is_ok());
-        assert!(logs_contain("event foo sent"));
+        assert!(logs_contain("event sent"));
 
         h.abort();
         _ = h.await;
 
         let res = handle_event_message(&assets, &event_tx, &event).await;
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("cannot send event"));
+        assert!(logs_contain("error sending event"));
     }
 }
