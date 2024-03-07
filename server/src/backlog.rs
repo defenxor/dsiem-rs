@@ -48,7 +48,9 @@ pub enum BacklogState {
     Stopped,
 }
 
-// serialize should only for alarm fields
+// serialize should only for alarm fields.
+// RwLocks are used so that self doesnt have to be mutable
+// if it's mutable, backlogs type can't be Vec<Arc<Backlog>> in the manager
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Backlog {
     #[serde(rename(serialize = "alarm_id", deserialize = "alarm_id"))]
@@ -186,7 +188,7 @@ pub struct BacklogOpt<'a> {
 }
 
 impl Backlog {
-    pub async fn new(o: &BacklogOpt<'_>) -> Result<Self> {
+    pub fn new(o: &BacklogOpt<'_>) -> Result<Self> {
         let mut backlog = Backlog {
             id: utils::generate_id(),
             title: o.directive.name.clone(),
@@ -252,8 +254,8 @@ impl Backlog {
     }
 
     // runable_version produces backlog that manager can start
-    pub async fn runnable_version(o: BacklogOpt<'_>, loaded: Backlog) -> Result<Self> {
-        let mut backlog = Backlog::new(&o).await?;
+    pub fn runnable_version(o: BacklogOpt<'_>, loaded: Backlog) -> Result<Self> {
+        let mut backlog = Backlog::new(&o)?;
         // verify that we're still based on the same directive
         if backlog.title != loaded.title {
             return Err(anyhow!(
@@ -340,7 +342,7 @@ impl Backlog {
     }
 
     // saveable_version produces backlog that manager can save to disk
-    pub async fn saveable_version(running: Arc<Backlog>) -> Self {
+    pub fn saveable_version(running: Arc<Backlog>) -> Self {
         // - status, kingdom, tag, category, created_time are empty;
         let mut backlog = Backlog {
             id: (*running.id).to_string(),
@@ -563,7 +565,7 @@ impl Backlog {
                         backlog.id = self.id,
                         event.id, r.stage, "previous rule match"
                     );
-                    self.append_and_write_event(event, Some(r.stage)).await?;
+                    self.append_and_write_event(event, Some(r.stage))?;
                     // also update alarm to sync any changes to customData
                     self.update_alarm(false).await?;
                     debug!(event.id, r.stage, "previous rule consume event");
@@ -700,7 +702,7 @@ impl Backlog {
     }
 
     async fn process_matched_event(&self, event: &NormalizedEvent) -> Result<()> {
-        self.append_and_write_event(event, None).await?;
+        self.append_and_write_event(event, None)?;
         // exit early if the newly added event hasnt caused events_count == occurrence
         // for the current stage
         if !self.is_stage_reach_max_event_count()? {
@@ -757,11 +759,7 @@ impl Backlog {
         }
     }
 
-    async fn append_and_write_event(
-        &self,
-        event: &NormalizedEvent,
-        stage: Option<u8>,
-    ) -> Result<()> {
+    fn append_and_write_event(&self, event: &NormalizedEvent, stage: Option<u8>) -> Result<()> {
         let target_rule = self.get_rule(stage)?;
         {
             let mut w = target_rule.event_ids.write();
@@ -813,7 +811,7 @@ impl Backlog {
 
         self.set_ports(event);
         self.set_update_time();
-        self.append_siem_alarm_events(event, stage).await?;
+        self.append_siem_alarm_events(event, stage)?;
         Ok(())
     }
 
@@ -870,7 +868,7 @@ impl Backlog {
         }
     }
 
-    async fn append_siem_alarm_events(&self, e: &NormalizedEvent, stage: Option<u8>) -> Result<()> {
+    fn append_siem_alarm_events(&self, e: &NormalizedEvent, stage: Option<u8>) -> Result<()> {
         let s = if let Some(v) = stage {
             v
         } else {
@@ -1058,8 +1056,8 @@ mod test {
         assert!(vs.terms.len() == 2);
     }
 
-    #[tokio::test]
-    async fn test_saved_reload() {
+    #[test]
+    fn test_saved_reload() {
         let directives = directive::load_directives(
             true,
             Some(vec!["directives".to_string(), "directive5".to_string()]),
@@ -1115,7 +1113,7 @@ mod test {
         let last_srcport = 31337;
         let last_dstport = 80;
 
-        let mut b = Backlog::new(&get_opt()).await.unwrap();
+        let mut b = Backlog::new(&get_opt()).unwrap();
         {
             let mut w = b.last_srcport.write();
             *w = last_srcport;
@@ -1130,7 +1128,7 @@ mod test {
         }
 
         // saveable test
-        let saveable = Backlog::saveable_version(Arc::new(b)).await;
+        let saveable = Backlog::saveable_version(Arc::new(b));
         assert_eq!(saveable.saved_last_dstport, Some(last_dstport));
         assert_eq!(saveable.saved_last_srcport, Some(last_srcport));
         for rule in saveable.rules.iter() {
@@ -1139,9 +1137,7 @@ mod test {
         }
 
         // runable test, reverses saveable
-        let runnable = Backlog::runnable_version(get_opt(), saveable)
-            .await
-            .unwrap();
+        let runnable = Backlog::runnable_version(get_opt(), saveable).unwrap();
         assert_eq!(*runnable.last_srcport.read(), last_srcport);
         assert_eq!(*runnable.last_dstport.read(), last_dstport);
         for rule in runnable.rules.iter() {
@@ -1150,22 +1146,22 @@ mod test {
         }
 
         // should throw error if the saved backlog and the directive have the same ID but different title
-        let b = Backlog::new(&get_opt()).await.unwrap();
-        let mut saveable = Backlog::saveable_version(Arc::new(b)).await;
+        let b = Backlog::new(&get_opt()).unwrap();
+        let mut saveable = Backlog::saveable_version(Arc::new(b));
         saveable.title = "foo".to_string();
-        let res = Backlog::runnable_version(get_opt(), saveable).await;
+        let res = Backlog::runnable_version(get_opt(), saveable);
         assert!(res
             .unwrap_err()
             .to_string()
             .contains("different title detected"));
 
         // should throw error if all rules in the saved backlog already have a status (i.e. finished or timeout)
-        let b = Backlog::new(&get_opt()).await.unwrap();
-        let mut saveable = Backlog::saveable_version(Arc::new(b)).await;
+        let b = Backlog::new(&get_opt()).unwrap();
+        let mut saveable = Backlog::saveable_version(Arc::new(b));
         for rule in saveable.rules.iter_mut() {
             rule.status = Arc::new(RwLock::new("finished".to_string()));
         }
-        let res = Backlog::runnable_version(get_opt(), saveable).await;
+        let res = Backlog::runnable_version(get_opt(), saveable);
         assert!(res
             .unwrap_err()
             .to_string()
@@ -1235,7 +1231,7 @@ mod test {
             intel_private_ip: true,
             log_tx,
         };
-        let backlog = Backlog::new(&opt).await.unwrap();
+        let backlog = Backlog::new(&opt).unwrap();
         trace!(backlog.id, "backlog: {:?}", backlog);
 
         // make sure SRC_IP and DST_IP replacement works
@@ -1340,7 +1336,7 @@ mod test {
             intel_private_ip: true,
             log_tx,
         };
-        let backlog = Backlog::new(&opt).await.unwrap();
+        let backlog = Backlog::new(&opt).unwrap();
         let _detached = task::spawn(async move {
             _ = backlog
                 .start(event_rx, Some(evt_cloned), resptime_tx, 1)
@@ -1447,7 +1443,7 @@ mod test {
                 intel_private_ip: false,
                 log_tx,
             };
-            let backlog = Backlog::new(&opt).await.unwrap();
+            let backlog = Backlog::new(&opt).unwrap();
             _ = backlog.start(event_rx, Some(evt), resptime_tx, 0).await;
         });
 

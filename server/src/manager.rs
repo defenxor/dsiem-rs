@@ -94,7 +94,7 @@ impl Manager {
 
         let mut backlogs = vec![];
         for b in source.into_iter() {
-            let saveable = Backlog::saveable_version(b).await;
+            let saveable = Backlog::saveable_version(b);
 
             // if extra sanity check for occurrence & stage are needed, they should be done here
             // currently such tests are only during loading in Backlog::runable_version()
@@ -344,7 +344,7 @@ impl DirectiveManager {
                     // perform all steps in backlog::new here
                     let id = &b.id.clone();
                     let opt = self.get_backlog_opt()?;
-                    let res = Backlog::runnable_version(opt, b).await;
+                    let res = Backlog::runnable_version(opt, b);
                     match res {
                         Err(e) => {
                             error!(
@@ -529,7 +529,7 @@ impl DirectiveManager {
 
                     // new backlog, error here should means fatal for this directive and we should exit
 
-                    let res = self.new_backlog(&event).await;
+                    let res = self.new_backlog(&event);
                     if let Err(e) = res {
                         error!(directive.id = self.directive.id, event.id, "exiting, cannot create new backlog: {}", e);
                         break; // main loop
@@ -547,7 +547,7 @@ impl DirectiveManager {
         Ok(())
     }
 
-    async fn new_backlog(&self, event: &NormalizedEvent) -> Result<Option<Backlog>> {
+    fn new_backlog(&self, event: &NormalizedEvent) -> Result<Option<Backlog>> {
         // returns error only on fatal condition, non-fatal should return Ok(None)
         let first_rule = self
             .directive
@@ -572,7 +572,7 @@ impl DirectiveManager {
 
         let mut opt = self.get_backlog_opt()?;
         opt.event = Some(event);
-        let res = backlog::Backlog::new(&opt).await;
+        let res = backlog::Backlog::new(&opt);
         match res {
             Ok(b) => Ok(Some(b)),
             Err(err) => {
