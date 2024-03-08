@@ -220,7 +220,7 @@ impl Manager {
             let _h = span.entered();
             let span = Span::current();
             runtime::Builder::new_multi_thread()
-                .enable_time()
+                .enable_all()
                 .build()
                 .unwrap()
                 .block_on(async move {
