@@ -1,6 +1,5 @@
 use cidr::IpCidr;
 use parking_lot::RwLock;
-use rayon::prelude::*;
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashSet, net::IpAddr, sync::Arc};
@@ -487,42 +486,19 @@ pub fn get_quick_check_pairs(rules: &Vec<DirectiveRule>) -> (Vec<SIDPair>, Vec<T
     (sid_pairs, taxo_pairs)
 }
 
-// QuickCheckTaxoRule checks event against the key fields in a directive taxonomy rules
 pub fn quick_check_taxo_rule(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
-    let count = pairs
-        .par_iter()
-        .filter(|v| {
-            let v = v
-                .product
-                .clone()
-                .into_iter()
-                .filter(|x| *x == e.product)
-                .last();
-            v.is_some()
-        })
-        .filter(|v| v.category == e.category)
-        .count();
-
-    count > 0
+    pairs
+        .iter()
+        .filter(|v| v.product.clone().into_iter().any(|x| *x == e.product))
+        .any(|v| v.category == e.category)
 }
 
 // QuickCheckPluginRule checks event against the key fields in a directive plugin rules
 pub fn quick_check_plugin_rule(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
-    let count = pairs
-        .par_iter()
+    pairs
+        .iter()
         .filter(|v| v.plugin_id == e.plugin_id)
-        .filter(|v| {
-            let v = v
-                .plugin_sid
-                .clone()
-                .into_iter()
-                .filter(|x| *x == e.plugin_sid)
-                .last();
-            v.is_some()
-        })
-        .count();
-
-    count > 0
+        .any(|v| v.plugin_sid.clone().into_iter().any(|x| x == e.plugin_sid))
 }
 
 // WARNING: deprecated fn

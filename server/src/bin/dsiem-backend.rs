@@ -1,4 +1,7 @@
-use std::{sync::Arc, thread};
+use std::{
+    sync::Arc,
+    thread::{self, sleep},
+};
 
 use anyhow::{anyhow, Error, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
@@ -13,9 +16,10 @@ use dsiem::{
     worker,
 };
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, RwLock};
-use tokio::{task::JoinSet, time::sleep};
+use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info};
+
+use parking_lot::lock_api::RwLock;
 
 #[derive(Parser)]
 #[command(
@@ -227,9 +231,8 @@ struct ServeArgs {
     otel_endpoint: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    serve(true, true, Cli::parse()).await
+fn main() -> Result<()> {
+    serve(true, true, Cli::parse())
 }
 
 fn log_startup_err(context: &str, err: Error) -> Error {
@@ -237,7 +240,7 @@ fn log_startup_err(context: &str, err: Error) -> Error {
     err
 }
 
-async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
+fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let test_env = args.test_env;
     let verbosity = if args.debug {
         1
@@ -306,7 +309,6 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         sargs.frontend,
         sargs.node,
     )
-    .await
     .map_err(|e| log_startup_err("downloading config", e))?;
 
     let assets = Arc::new(
@@ -314,15 +316,13 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             .map_err(|e| log_startup_err("loading assets", e))?,
     );
 
-    let mut set = JoinSet::new();
-
     let backend_asset = assets.clone();
     let backend_tx = event_tx.clone();
 
     let eps = Arc::new(Eps::default());
 
     let eps_clone = eps.clone();
-    thread::spawn(move || {
+    let handle_worker = thread::spawn(move || {
         let opt = worker::BackendOpt {
             event_tx: backend_tx,
             bp_rx,
@@ -333,7 +333,9 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             nats_capacity: max_queue,
             eps: eps_clone,
         };
-        worker::backend_start(opt).map_err(|e| anyhow!("worker error: {:?}", e))
+        let w = worker::Worker {};
+        w.backend_start(opt)
+            .map_err(|e| anyhow!("worker error: {:?}", e))
     });
 
     let directives = directive
@@ -360,24 +362,20 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let max_eps = sargs.max_eps;
 
-    set.spawn({
-        let cancel_tx = cancel_tx.clone();
+    let cancel_tx_clone = cancel_tx.clone();
+    let handle_watchdog = thread::spawn(move || {
         let opt = WatchdogOpt {
             event_tx,
             resptime_rx,
             report_rx,
-            cancel_tx,
+            cancel_tx: cancel_tx_clone,
             report_interval: REPORT_INTERVAL_IN_SECONDS,
             max_eps,
             otel_config,
             eps,
         };
-        async move {
-            let mut w = watchdog::Watchdog::default();
-            w.start(opt)
-                .await
-                .map_err(|e| anyhow!("watchdog error: {:?}", e))
-        }
+        let mut w = watchdog::Watchdog::default();
+        w.start(opt).map_err(|e| anyhow!("watchdog error: {:?}", e))
     });
 
     let opt = ManagerOpt {
@@ -403,23 +401,22 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         max_queue,
     };
     let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
-    set.spawn(async {
+    let handle_manager = thread::spawn(move || {
         manager
             .start(REPORT_INTERVAL_IN_SECONDS)
-            .await
             .map_err(|e| anyhow!("manager error: {:?}", e))
     });
 
     if listen {
-        while let Some(res) = set.join_next().await {
-            if let Ok(Err(e)) = res {
-                error!("{:?}", e);
-                _ = cancel_tx.send(());
+        let handles = vec![handle_worker, handle_watchdog, handle_manager];
+        for h in handles {
+            if let Err(e) = h.join().unwrap() {
+                error!("error: {:?}", e);
                 return Err(e);
             }
         }
     } else {
-        sleep(Duration::from_secs(1)).await; // gives time for all spawns to await
+        sleep(Duration::from_secs(1)); // gives time for all spawns to await
     }
     Ok(())
 }
@@ -462,9 +459,9 @@ mod test {
         assert!(sargs.reload_backlogs);
     }
 
-    #[tokio::test]
+    #[test]
     #[traced_test]
-    async fn test_serve() {
+    fn test_serve() {
         let cli = Cli::parse_from([
             "dsiem-backend",
             "--test-env",
@@ -475,7 +472,7 @@ mod test {
             "--med_risk_max",
             "11",
         ]);
-        let res = serve(false, false, cli).await;
+        let res = serve(false, false, cli);
         assert!(logs_contain("error reading med_risk_min and med_risk_max"));
         assert!(res.is_err());
 
@@ -483,18 +480,17 @@ mod test {
                 "files" : [] 
             }"#;
 
-        let mut server = mockito::Server::new_with_port_async(19005).await;
+        let mut server = mockito::Server::new_with_port(19005);
         let url = server.url();
         debug!("using url: {}", url.clone());
         server
             .mock("GET", "/config/")
             .with_status(200)
             .with_body(file_list)
-            .create_async()
-            .await;
+            .create();
 
         let mut pty = rexpect::spawn(
-            "docker run --name nats-main -p 42223:42223 --rm -it nats -p 42223",
+            "docker run --name nats-main -p 42225:42225 --rm -it nats -p 42225",
             Some(5000),
         )
         .unwrap();
@@ -509,9 +505,9 @@ mod test {
             "-f",
             "http://127.0.0.1:19005",
             "--msq",
-            "nats://127.0.0.1:42223",
+            "nats://127.0.0.1:42225",
         ]);
-        let res = serve(false, false, cli).await;
+        let res = serve(false, false, cli);
         assert!(res.is_ok())
     }
 }

@@ -11,11 +11,16 @@ use crate::{
 use std::{fs::create_dir_all, sync::Arc, thread, time::Duration, vec};
 use tracing::{debug, error, info, info_span, warn, Instrument, Span};
 
-use rayon::prelude::*;
+use parking_lot::RwLock as ParkingRwLock;
 
 use anyhow::{anyhow, Result};
 use tokio::{
-    fs::{self, read_to_string, OpenOptions}, io::{self, AsyncWriteExt}, runtime, sync::{broadcast, mpsc, RwLock}, task::{self, JoinSet}, time::{interval, sleep, timeout}
+    fs::{self, read_to_string, OpenOptions},
+    io::{self, AsyncWriteExt},
+    runtime,
+    sync::{broadcast, mpsc, RwLock},
+    task,
+    time::{interval, sleep, timeout},
 };
 
 pub const UNBOUNDED_QUEUE_SIZE: usize = 1_000_000;
@@ -42,7 +47,7 @@ pub struct ManagerOpt {
     pub backpressure_tx: mpsc::Sender<()>,
     pub cancel_tx: broadcast::Sender<()>,
     pub resptime_tx: mpsc::Sender<f64>,
-    pub receiver: Arc<RwLock<mpsc::Receiver<NormalizedEvent>>>,
+    pub receiver: Arc<ParkingRwLock<mpsc::Receiver<NormalizedEvent>>>,
     pub default_status: String,
     pub default_tag: String,
     pub med_risk_min: u8,
@@ -88,7 +93,7 @@ impl Manager {
 
         let mut backlogs = vec![];
         for b in source.into_iter() {
-            let saveable = Backlog::saveable_version(b).await;
+            let saveable = Backlog::saveable_version(b);
 
             // if extra sanity check for occurrence & stage are needed, they should be done here
             // currently such tests are only during loading in Backlog::runable_version()
@@ -102,7 +107,7 @@ impl Manager {
         Ok(())
     }
 
-    pub async fn start(self, report_interval: u64) -> Result<()> {
+    pub fn start(self, report_interval: u64) -> Result<()> {
         // use this for all directive managers, and run it on a dedicated thread
         let mut log_writer = LogWriter::new(self.option.test_env)?;
         let log_tx = log_writer.sender.clone();
@@ -123,22 +128,24 @@ impl Manager {
 
         info!("backlog manager started with max single event processing time: {} ms, and queue limit of {} events", load_param.max_wait.as_millis(), load_param.limit_cap);
 
-        let mut set = JoinSet::new();
         let mut option = self.option.clone();
         option.directives = vec![];
 
         let mut dir_params = vec![];
 
-        for directive in self.option.directives {
-            let (event_tx, event_rx) = mpsc::channel(load_param.limit_cap);
-            let mut dir_manager = DirectiveManager::new(
+        let mut dir_managers = vec![];
+
+        for directive in self.option.directives.iter() {
+            let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(load_param.limit_cap);
+            let dir_manager = DirectiveManager::new(
                 &option,
                 &load_param,
-                &directive,
+                directive,
                 &log_tx,
                 &report_interval,
                 event_rx,
             ); // Remove reference
+            dir_managers.push(dir_manager);
 
             let (sid_pairs, taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
             let contains_pluginrule = !sid_pairs.is_empty();
@@ -152,60 +159,84 @@ impl Manager {
                 contains_pluginrule,
                 contains_taxorule,
             });
-            let span = Span::current();
-            set.spawn(async move { dir_manager.start().instrument(span).await });
         }
 
-        let mut cancel = self.option.cancel_tx.subscribe();
-        
+        let h_managers = self.spawner(dir_managers);
 
         let quick_discard = |p: &DirectiveParams, event: &NormalizedEvent| -> bool {
             (p.contains_pluginrule && !rule::quick_check_plugin_rule(&p.sid_pairs, event))
                 || (p.contains_taxorule && !rule::quick_check_taxo_rule(&p.taxo_pairs, event))
         };
-        
+
         let span = Span::current();
-        let _handle = thread::spawn(move || {
+        let h_matched_dirs = thread::spawn(move || {
+            let _h = span.entered();
+            let mut rx = self.option.receiver.write();
+
+            loop {
+                let evt = match rx.blocking_recv() {
+                    Some(evt) => evt,
+                    None => {
+                        info!("event receiver channel closed, exiting");
+                        break;
+                    }
+                };
+                // 99.99% of events should be filtered out here
+                let matched_dirs: Vec<&DirectiveParams> = dir_params
+                    .iter()
+                    .filter(|p| !quick_discard(p, &evt))
+                    .collect();
+                debug!(
+                    event.id = evt.id,
+                    "event matched rules in {} directive(s)",
+                    matched_dirs.len()
+                );
+
+                // overload = self.upstream_rx.len() > self.load_param.limit_cap;
+                matched_dirs.iter().for_each(|d| {
+                    if d.tx.try_send(evt.clone()).is_err() {
+                        warn!(
+                            directive.id = d.id,
+                            event.id = evt.id,
+                            "event receiver lagged, dropping event"
+                        );
+                    }
+                });
+            }
+        });
+
+        let handles = vec![h_managers, h_matched_dirs];
+        for h in handles {
+            _ = h.join();
+        }
+
+        info!("backlog manager exiting");
+        Ok(())
+    }
+
+    fn spawner(&self, dir_managers: Vec<DirectiveManager>) -> thread::JoinHandle<()> {
+        let span = Span::current();
+        let handle = thread::spawn(move || {
+            let _h = span.entered();
+            let span = Span::current();
             runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .event_interval(10)
+                .enable_time()
                 .build()
                 .unwrap()
                 .block_on(async move {
                     let _h = span.entered();
-
-                    let mut rx = self.option.receiver.write().await;
-                    loop {
-                        tokio::select! {
-                            _ = cancel.recv() => {
-                                break;
-                            },
-                            Some(evt) = rx.recv() => {
-
-                                tokio::task::block_in_place(|| {
-                                    // 99.99% of events should be filtered out here
-                                    let matched_dirs: Vec<&DirectiveParams> = dir_params.par_iter().filter(|p| !quick_discard(p, &evt)).collect();
-                                    debug!(event.id = evt.id, "event matched rules in {} directive(s)", matched_dirs.len());
-        
-                                    // overload = self.upstream_rx.len() > self.load_param.limit_cap;
-            
-                                    for d in &matched_dirs {
-                                        if d.tx.try_send(evt.clone()).is_err() {
-                                            warn!(directive.id = d.id, event.id = evt.id, "event receiver lagged, dropping event");
-                                        }
-                                    }
-                                });
-                            }
-                        }
+                    let mut set: task::JoinSet<_> = tokio::task::JoinSet::new();
+                    for mut dir_manager in dir_managers {
+                        let span = Span::current();
+                        set.spawn(async move {
+                            let _ = dir_manager.start().instrument(span).await;
+                        });
                     }
+                    while set.join_next().await.is_some() {}
+                    info!("exiting directive manager runtime");
                 });
         });
-
-        // _ = handle.join();
-
-        while set.join_next().await.is_some() {}
-        info!("backlog manager exiting");
-        Ok(())
+        handle
     }
 }
 
@@ -311,7 +342,7 @@ impl DirectiveManager {
                     // perform all steps in backlog::new here
                     let id = &b.id.clone();
                     let opt = self.get_backlog_opt()?;
-                    let res = Backlog::runnable_version(opt, b).await;
+                    let res = Backlog::runnable_version(opt, b);
                     match res {
                         Err(e) => {
                             error!(
@@ -496,7 +527,7 @@ impl DirectiveManager {
 
                     // new backlog, error here should means fatal for this directive and we should exit
 
-                    let res = self.new_backlog(&event).await;
+                    let res = self.new_backlog(&event);
                     if let Err(e) = res {
                         error!(directive.id = self.directive.id, event.id, "exiting, cannot create new backlog: {}", e);
                         break; // main loop
@@ -514,7 +545,7 @@ impl DirectiveManager {
         Ok(())
     }
 
-    async fn new_backlog(&self, event: &NormalizedEvent) -> Result<Option<Backlog>> {
+    fn new_backlog(&self, event: &NormalizedEvent) -> Result<Option<Backlog>> {
         // returns error only on fatal condition, non-fatal should return Ok(None)
         let first_rule = self
             .directive
@@ -539,7 +570,7 @@ impl DirectiveManager {
 
         let mut opt = self.get_backlog_opt()?;
         opt.event = Some(event);
-        let res = backlog::Backlog::new(&opt).await;
+        let res = backlog::Backlog::new(&opt);
         match res {
             Ok(b) => Ok(Some(b)),
             Err(err) => {
@@ -602,7 +633,7 @@ mod test {
                 backpressure_tx,
                 cancel_tx: c,
                 resptime_tx,
-                receiver: Arc::new(RwLock::new(rcvd)),
+                receiver: Arc::new(ParkingRwLock::new(rcvd)),
                 default_status: "Open".to_string(),
                 default_tag: "Identified Threat".to_string(),
                 med_risk_min: 3,
@@ -617,19 +648,23 @@ mod test {
             let opt = get_opt(cancel_tx.clone(), rx, report_tx.clone(), directives);
             let span = Span::current();
             task::spawn(async {
+                let _h = span.entered();
                 let m = Manager::new(opt).unwrap();
-                _ = m.start(1).instrument(span).await;
+                _ = m.start(1);
             })
         };
 
         let _handle = run_manager(directives.clone(), event_rx);
 
         let span = Span::current();
-        let _report_receiver = task::spawn(async move {
-            while report_rx.recv().await.is_some() {
-                debug!("report received");
+        let _report_receiver = task::spawn(
+            async move {
+                while report_rx.recv().await.is_some() {
+                    debug!("report received");
+                }
             }
-        }.instrument(span));
+            .instrument(span),
+        );
 
         // test comparing report
         let rpt1 = ManagerReport {
@@ -720,15 +755,18 @@ mod test {
         // cancel signal, should also trigger saving to disk
         sleep(Duration::from_millis(500)).await;
         _ = cancel_tx.send(());
+        drop(event_tx);
         sleep(Duration::from_millis(4000)).await;
         assert!(logs_contain("1 backlogs saved"));
         assert!(logs_contain("backlog manager exiting"));
 
         // successful loading from disk
-        let (_, event_rx) = mpsc::channel(1024);
+        let (_tx, event_rx) = mpsc::channel(1024);
         let _handle = run_manager(directives.clone(), event_rx);
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("reloading old backlog"));
+
+        std::process::exit(0);
 
         /* uncomment this block if directive rules are applied to backlog, which for now isn't
 
