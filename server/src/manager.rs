@@ -12,7 +12,6 @@ use std::{fs::create_dir_all, sync::Arc, thread, time::Duration, vec};
 use tracing::{debug, error, info, info_span, warn, Instrument, Span};
 
 use parking_lot::RwLock as ParkingRwLock;
-use rayon::prelude::*;
 
 use anyhow::{anyhow, Result};
 use tokio::{
@@ -178,13 +177,13 @@ impl Manager {
                 let evt = match rx.blocking_recv() {
                     Some(evt) => evt,
                     None => {
-                        warn!("event receiver channel closed, exiting");
+                        info!("event receiver channel closed, exiting");
                         break;
                     }
                 };
                 // 99.99% of events should be filtered out here
                 let matched_dirs: Vec<&DirectiveParams> = dir_params
-                    .par_iter()
+                    .iter()
                     .filter(|p| !quick_discard(p, &evt))
                     .collect();
                 debug!(
@@ -194,7 +193,7 @@ impl Manager {
                 );
 
                 // overload = self.upstream_rx.len() > self.load_param.limit_cap;
-                matched_dirs.par_iter().for_each(|d| {
+                matched_dirs.iter().for_each(|d| {
                     if d.tx.try_send(evt.clone()).is_err() {
                         warn!(
                             directive.id = d.id,
@@ -221,7 +220,6 @@ impl Manager {
             let _h = span.entered();
             let span = Span::current();
             runtime::Builder::new_multi_thread()
-                .worker_threads(8)
                 .enable_time()
                 .build()
                 .unwrap()
