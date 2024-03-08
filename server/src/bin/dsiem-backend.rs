@@ -490,7 +490,7 @@ mod test {
             .create();
 
         let mut pty = rexpect::spawn(
-            "docker run --name nats-main -p 42223:42223 --rm -it nats -p 42223",
+            "docker run --name nats-main -p 42225:42225 --rm -it nats -p 42225",
             Some(5000),
         )
         .unwrap();
@@ -505,7 +505,7 @@ mod test {
             "-f",
             "http://127.0.0.1:19005",
             "--msq",
-            "nats://127.0.0.1:42223",
+            "nats://127.0.0.1:42225",
         ]);
         let res = serve(false, false, cli);
         assert!(res.is_ok())
