@@ -11,20 +11,24 @@ use crate::{
 use std::{fs::create_dir_all, sync::Arc, thread, time::Duration, vec};
 use tracing::{debug, error, info, info_span, warn, Instrument, Span};
 
-use parking_lot::RwLock as ParkingRwLock;
-
 use anyhow::{anyhow, Result};
 use tokio::{
     fs::{self, read_to_string, OpenOptions},
     io::{self, AsyncWriteExt},
     runtime,
-    sync::{broadcast, mpsc, RwLock},
+    sync::{
+        broadcast::{self, error::RecvError},
+        mpsc, RwLock,
+    },
     task,
     time::{interval, sleep, timeout},
 };
 
+use std::thread::available_parallelism;
+
 pub const UNBOUNDED_QUEUE_SIZE: usize = 1_000_000;
 const DEADLOCK_TIMEOUT_IN_SECONDS: u64 = 10;
+const MAX_CHECKS_PER_THREAD: usize = 3_000_000;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ManagerReport {
@@ -47,7 +51,7 @@ pub struct ManagerOpt {
     pub backpressure_tx: mpsc::Sender<()>,
     pub cancel_tx: broadcast::Sender<()>,
     pub resptime_tx: mpsc::Sender<f64>,
-    pub receiver: Arc<ParkingRwLock<mpsc::Receiver<NormalizedEvent>>>,
+    pub publisher: broadcast::Sender<NormalizedEvent>,
     pub default_status: String,
     pub default_tag: String,
     pub med_risk_min: u8,
@@ -107,7 +111,7 @@ impl Manager {
         Ok(())
     }
 
-    pub fn start(self, report_interval: u64) -> Result<()> {
+    pub fn start(&self, report_interval: u64) -> Result<()> {
         // use this for all directive managers, and run it on a dedicated thread
         let mut log_writer = LogWriter::new(self.option.test_env)?;
         let log_tx = log_writer.sender.clone();
@@ -126,14 +130,11 @@ impl Manager {
             },
         };
 
-        info!("backlog manager started with max single event processing time: {} ms, and queue limit of {} events", load_param.max_wait.as_millis(), load_param.limit_cap);
-
         let mut option = self.option.clone();
         option.directives = vec![];
 
-        let mut dir_params = vec![];
-
         let mut dir_managers = vec![];
+        let mut dir_params = vec![];
 
         for directive in self.option.directives.iter() {
             let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(load_param.limit_cap);
@@ -161,51 +162,94 @@ impl Manager {
             });
         }
 
-        let h_managers = self.spawner(dir_managers);
-
         let quick_discard = |p: &DirectiveParams, event: &NormalizedEvent| -> bool {
             (p.contains_pluginrule && !rule::quick_check_plugin_rule(&p.sid_pairs, event))
                 || (p.contains_taxorule && !rule::quick_check_taxo_rule(&p.taxo_pairs, event))
         };
 
-        let span = Span::current();
-        let h_matched_dirs = thread::spawn(move || {
-            let _h = span.entered();
-            let mut rx = self.option.receiver.write();
+        let mut dirs_per_thread = MAX_CHECKS_PER_THREAD / self.option.max_eps as usize;
+        if dirs_per_thread < 100 {
+            dirs_per_thread = 100;
+        }
+        let max_threads = available_parallelism()?.get() / 2;
+        let dir_len = dir_params.len();
 
-            loop {
-                let evt = match rx.blocking_recv() {
-                    Some(evt) => evt,
-                    None => {
-                        info!("event receiver channel closed, exiting");
+        if dir_len / dirs_per_thread > max_threads {
+            return Err(anyhow!("too many directives ({}) for available parallelism ({}), reduce the number of directives or max_eps and try again", dir_len, max_threads));
+        }
+
+        let r = dir_params.chunks(dirs_per_thread).collect::<Vec<_>>();
+        let mut chunks = vec![];
+        for c in r {
+            chunks.push(c.to_owned());
+        }
+
+        info!("backlog manager started with max single event processing time: {} ms, queue limit: {} events, quick check threads: {}, ttl directives: {}",
+            load_param.max_wait.as_millis(),
+            load_param.limit_cap,
+            chunks.len(),
+            dir_len
+        );
+
+        let dir_managers_threads = available_parallelism()?.get() - chunks.len() - 1;
+
+        let h_managers = self.spawner(dir_managers, dir_managers_threads);
+
+        let mut handles = vec![];
+        for (idx, c) in chunks.into_iter().enumerate() {
+            let cancel_tx = self.option.cancel_tx.clone();
+            let span = Span::current();
+            let mut rx = self.option.publisher.subscribe();
+            let handle = thread::spawn(move || {
+                let _h = span.entered();
+                let mut cancel_rx = cancel_tx.subscribe();
+
+                loop {
+                    if cancel_rx.try_recv().is_ok() {
                         break;
                     }
-                };
-                // 99.99% of events should be filtered out here
-                let matched_dirs: Vec<&DirectiveParams> = dir_params
-                    .iter()
-                    .filter(|p| !quick_discard(p, &evt))
-                    .collect();
-                debug!(
-                    event.id = evt.id,
-                    "event matched rules in {} directive(s)",
-                    matched_dirs.len()
-                );
+                    let evt = match rx.blocking_recv() {
+                        Ok(evt) => evt,
+                        Err(RecvError::Lagged(n)) => {
+                            // here's the main mechanism to allow lagged managers to catch up
+                            warn!(
+                                thread.id = idx,
+                                "event receiver lagged and skipped {} events", n
+                            );
+                            continue;
+                        }
+                        Err(RecvError::Closed) => {
+                            debug!(thread.id = idx, "event receiver closed");
+                            break;
+                        }
+                    };
+                    // 99.99% of events should be filtered out here
+                    let matched_dirs: Vec<&DirectiveParams> =
+                        c.iter().filter(|p| !quick_discard(p, &evt)).collect();
+                    debug!(
+                        thread.id = idx,
+                        event.id = evt.id,
+                        "event matched rules in {} directive(s)",
+                        matched_dirs.len()
+                    );
 
-                // overload = self.upstream_rx.len() > self.load_param.limit_cap;
-                matched_dirs.iter().for_each(|d| {
-                    if d.tx.try_send(evt.clone()).is_err() {
-                        warn!(
-                            directive.id = d.id,
-                            event.id = evt.id,
-                            "event receiver lagged, dropping event"
-                        );
-                    }
-                });
-            }
-        });
+                    // overload = self.upstream_rx.len() > self.load_param.limit_cap;
+                    matched_dirs.iter().for_each(|d| {
+                        if d.tx.try_send(evt.clone()).is_err() {
+                            warn!(
+                                thread.id = idx,
+                                directive.id = d.id,
+                                event.id = evt.id,
+                                "event receiver lagged, dropping event"
+                            );
+                        }
+                    });
+                }
+            });
+            handles.push(handle);
+        }
 
-        let handles = vec![h_managers, h_matched_dirs];
+        handles.push(h_managers);
         for h in handles {
             _ = h.join();
         }
@@ -214,13 +258,18 @@ impl Manager {
         Ok(())
     }
 
-    fn spawner(&self, dir_managers: Vec<DirectiveManager>) -> thread::JoinHandle<()> {
+    fn spawner(
+        &self,
+        dir_managers: Vec<DirectiveManager>,
+        num_of_threads: usize,
+    ) -> thread::JoinHandle<()> {
         let span = Span::current();
         let handle = thread::spawn(move || {
             let _h = span.entered();
             let span = Span::current();
             runtime::Builder::new_multi_thread()
-                .enable_time()
+                .worker_threads(num_of_threads)
+                .enable_all()
                 .build()
                 .unwrap()
                 .block_on(async move {
@@ -240,6 +289,7 @@ impl Manager {
     }
 }
 
+#[derive(Clone)]
 struct DirectiveParams {
     id: u64,
     tx: mpsc::Sender<NormalizedEvent>,
@@ -601,12 +651,12 @@ mod test {
             Some(vec!["directives".to_string(), "directive5".to_string()]),
         )
         .unwrap();
-        let (event_tx, event_rx) = mpsc::channel(1024);
+        let (event_tx, _) = broadcast::channel(1024);
         let (cancel_tx, _) = broadcast::channel::<()>(1);
         let (report_tx, mut report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
 
         let get_opt = move |c: Sender<()>,
-                            rcvd: mpsc::Receiver<NormalizedEvent>,
+                            publisher: broadcast::Sender<NormalizedEvent>,
                             r: mpsc::Sender<ManagerReport>,
                             directives: Vec<Directive>| {
             let (backpressure_tx, _) = mpsc::channel::<()>(8);
@@ -633,7 +683,7 @@ mod test {
                 backpressure_tx,
                 cancel_tx: c,
                 resptime_tx,
-                receiver: Arc::new(ParkingRwLock::new(rcvd)),
+                publisher,
                 default_status: "Open".to_string(),
                 default_tag: "Identified Threat".to_string(),
                 med_risk_min: 3,
@@ -644,8 +694,9 @@ mod test {
             }
         };
 
-        let run_manager = |directives: Vec<Directive>, rx: mpsc::Receiver<NormalizedEvent>| {
-            let opt = get_opt(cancel_tx.clone(), rx, report_tx.clone(), directives);
+        let run_manager = |directives: Vec<Directive>,
+                           event_tx: broadcast::Sender<NormalizedEvent>| {
+            let opt = get_opt(cancel_tx.clone(), event_tx, report_tx.clone(), directives);
             let span = Span::current();
             task::spawn(async {
                 let _h = span.entered();
@@ -654,7 +705,7 @@ mod test {
             })
         };
 
-        let _handle = run_manager(directives.clone(), event_rx);
+        let _handle = run_manager(directives.clone(), event_tx.clone());
 
         let span = Span::current();
         let _report_receiver = task::spawn(
@@ -693,27 +744,27 @@ mod test {
         sleep(Duration::from_millis(1000)).await;
 
         // unmatched event
-        event_tx.send(evt.clone()).await.unwrap();
+        event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(2000)).await;
         assert!(logs_contain("event matched rules in 0 directive"));
 
         // matched event but not on the first rule
         evt.id = "0b".to_string();
         evt.plugin_id = 1337;
-        event_tx.send(evt.clone()).await.unwrap();
+        event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(2000)).await;
         assert!(logs_contain("event doesn't match first rule"));
 
         // matched event 1
         evt.plugin_sid = 1;
         evt.id = "1".to_string();
-        event_tx.send(evt.clone()).await.unwrap();
+        event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("creating new backlog"));
 
         // matched event 2
         evt.id = "2".to_string();
-        event_tx.send(evt.clone()).await.unwrap();
+        event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("event sent downstream"));
         assert!(logs_contain(
@@ -722,11 +773,11 @@ mod test {
 
         // matched event 3 to 5
         evt.id = "3".to_string();
-        event_tx.send(evt.clone()).await.unwrap();
+        event_tx.send(evt.clone()).unwrap();
         evt.id = "4".to_string();
-        event_tx.send(evt.clone()).await.unwrap();
+        event_tx.send(evt.clone()).unwrap();
         evt.id = "5".to_string();
-        event_tx.send(evt.clone()).await.unwrap();
+        event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(3000)).await;
         assert!(logs_contain("cleaning deleted backlog"));
 
@@ -738,7 +789,7 @@ mod test {
         evt.plugin_sid = 1;
         evt.id = "6".to_string();
         evt.timestamp = chrono::Utc::now();
-        event_tx.send(evt.clone()).await.unwrap();
+        event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(500)).await;
         assert!(logs_contain("creating new backlog"));
 
@@ -755,14 +806,16 @@ mod test {
         // cancel signal, should also trigger saving to disk
         sleep(Duration::from_millis(500)).await;
         _ = cancel_tx.send(());
+        sleep(Duration::from_millis(500)).await;
+        event_tx.send(evt.clone()).unwrap();
         drop(event_tx);
         sleep(Duration::from_millis(4000)).await;
         assert!(logs_contain("1 backlogs saved"));
         assert!(logs_contain("backlog manager exiting"));
 
         // successful loading from disk
-        let (_tx, event_rx) = mpsc::channel(1024);
-        let _handle = run_manager(directives.clone(), event_rx);
+        let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1024);
+        let _handle = run_manager(directives.clone(), event_tx);
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("reloading old backlog"));
 

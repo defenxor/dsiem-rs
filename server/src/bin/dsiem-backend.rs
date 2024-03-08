@@ -19,8 +19,6 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info};
 
-use parking_lot::lock_api::RwLock;
-
 #[derive(Parser)]
 #[command(
     author("https://github.com/defenxor/dsiem-rs"),
@@ -294,7 +292,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         sargs.frontend, sargs.msq
     );
 
-    let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(max_queue);
+    let (event_tx, _) = broadcast::channel::<NormalizedEvent>(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<()>(8);
     let (cancel_tx, cancel_rx) = broadcast::channel::<()>(1);
 
@@ -363,9 +361,10 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let max_eps = sargs.max_eps;
 
     let cancel_tx_clone = cancel_tx.clone();
+    let event_tx_clone = event_tx.clone();
     let handle_watchdog = thread::spawn(move || {
         let opt = WatchdogOpt {
-            event_tx,
+            event_tx: event_tx_clone,
             resptime_rx,
             report_rx,
             cancel_tx: cancel_tx_clone,
@@ -390,7 +389,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         backpressure_tx: bp_tx,
         resptime_tx,
         cancel_tx: cancel_tx.clone(),
-        receiver: Arc::new(RwLock::new(event_rx)),
+        publisher: event_tx,
         med_risk_max: sargs.med_risk_max,
         med_risk_min: sargs.med_risk_min,
         default_status: sargs.status[0].clone(),
