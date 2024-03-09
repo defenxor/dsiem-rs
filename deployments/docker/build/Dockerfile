@@ -6,7 +6,7 @@ ENV NODE_ENV=production
 RUN npx -y tailwindcss -c ./tailwind.config.js -o ./tailwind.css --minify
 RUN npm init -y && npm install -y text-spinners@1.0.5
 
-FROM messense/rust-musl-cross:x86_64-musl AS ui_builder
+FROM mmta/rust-alpine-mimalloc AS ui_builder
 WORKDIR /
 
 # just for the workspace manifests
@@ -17,23 +17,24 @@ COPY ./ctx/web ./web
 WORKDIR /web
 COPY --from=css_builder /web/tailwind.css ./
 COPY --from=css_builder /web/node_modules ./node_modules
-RUN apt-get update && apt-get install -y wget
-RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.18.7/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf- -C /usr/local/bin
+# RUN apt-get update && apt-get install -y wget
+RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.19.0/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf- -C /usr/local/bin
 RUN rustup target add wasm32-unknown-unknown
 RUN trunk build --public-url /ui --release index.html
 
-FROM messense/rust-musl-cross:x86_64-musl AS dsiem_builder
+FROM mmta/rust-alpine-mimalloc AS dsiem_builder
 COPY . .
-WORKDIR /home/rust/src/ctx
+WORKDIR /ctx
+RUN apk add libressl-dev
+ENV OPENSSL_NO_VENDOR=Y
 RUN cd server && cargo fetch
-RUN cargo build -p dsiem --release --target x86_64-unknown-linux-musl
+RUN cargo build -p dsiem --release
 
 FROM alpine:edge
-
 RUN apk -U upgrade && apk add bash ca-certificates && rm -rf /var/cache/apk/*
 WORKDIR /dsiem
-COPY --from=dsiem_builder /home/rust/src/ctx/target/x86_64-unknown-linux-musl/release/dsiem-backend ./
-COPY --from=dsiem_builder /home/rust/src/ctx/target/x86_64-unknown-linux-musl/release/dsiem-frontend ./
+COPY --from=dsiem_builder /ctx/target/release/dsiem-backend ./
+COPY --from=dsiem_builder /ctx/target/release/dsiem-frontend ./
 COPY --from=ui_builder /web/dist ./web/dist
 
 # create dirs for configs and web/dist/assets/config, the later is accessed by UI to load esconfig.json

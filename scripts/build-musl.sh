@@ -11,4 +11,4 @@ dir=$(git rev-parse --show-toplevel) || { echo "not in a git repo" && exit 1; }
 
 cd $dir
 
-exec docker run --rm -v $(pwd):/home/rust/src messense/rust-musl-cross:x86_64-musl cargo build -p dsiem --release
+exec docker run --rm -v $(pwd):/dsiem-rs -w /dsiem-rs -e OPENSSL_NO_VENDOR=Y mmta/rust-alpine-mimalloc sh -c "apk add libressl-dev && cargo build -p dsiem --release"
