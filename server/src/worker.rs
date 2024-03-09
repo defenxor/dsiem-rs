@@ -58,7 +58,7 @@ async fn nats_client(nats_url: &str, capacity: &usize) -> Result<async_nats::Cli
 
 pub struct BackendOpt {
     pub nats_url: String,
-    pub event_tx: mpsc::Sender<NormalizedEvent>,
+    pub event_tx: broadcast::Sender<NormalizedEvent>,
     pub bp_rx: mpsc::Receiver<()>,
     pub cancel_rx: broadcast::Receiver<()>,
     pub hold_duration: u8,
@@ -201,7 +201,7 @@ impl Worker {
 
 async fn handle_event_message(
     assets: &Arc<NetworkAssets>,
-    event_tx: &mpsc::Sender<event::NormalizedEvent>,
+    event_tx: &broadcast::Sender<event::NormalizedEvent>,
     e: &NormalizedEvent,
 ) -> Result<()> {
     let id = &e.id;
@@ -222,7 +222,7 @@ async fn handle_event_message(
 
     if !e.carrier.is_empty() {
         // use remote as current span's parent
-        tracer::set_parent_from_event(&span, &e);
+        tracer::set_parent_from_event(&span, e);
     }
 
     let mut event = e.clone();
@@ -230,7 +230,7 @@ async fn handle_event_message(
     tracer::store_parent_into_event(&span, &mut event);
 
     let id = e.id.to_owned();
-    if let Err(err) = event_tx.try_send(event) {
+    if let Err(err) = event_tx.send(event) {
         warn!(event.id = id, "error sending event: {}", err);
         return Err(anyhow!(err.to_string()));
     }
@@ -256,7 +256,7 @@ mod test {
         let nats_url = "nats://127.0.0.1:42222";
 
         let assets = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let (event_tx, _) = mpsc::channel::<NormalizedEvent>(5);
+        let (event_tx, _) = broadcast::channel::<NormalizedEvent>(5);
         let (cancel_tx, cancel_rx) = broadcast::channel::<()>(5);
         let (bp_tx, bp_rx) = mpsc::channel::<()>(5);
 
@@ -373,7 +373,7 @@ mod test {
     #[traced_test]
     async fn test_handle_event_message() {
         let assets = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let (event_tx, mut event_rx) = mpsc::channel::<NormalizedEvent>(1);
+        let (event_tx, mut event_rx) = broadcast::channel::<NormalizedEvent>(1);
 
         let mut event = NormalizedEvent::default();
 
