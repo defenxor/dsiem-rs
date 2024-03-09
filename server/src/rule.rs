@@ -456,13 +456,13 @@ fn is_string_stickydiff(v: &str, s: &Arc<RwLock<StickyDiffData>>, add_new: bool)
 
 #[derive(Clone, Debug)]
 pub struct SIDPair {
-    plugin_id: u64,
-    plugin_sid: Vec<u64>,
+    pub plugin_id: u64,
+    pub plugin_sid: Vec<u64>,
 }
 #[derive(Clone, Debug)]
 pub struct TaxoPair {
-    product: Vec<String>,
-    category: String,
+    pub product: Vec<String>,
+    pub category: String,
 }
 
 // GetQuickCheckPairs returns SIDPairs and TaxoPairs for a given set of directive rules
