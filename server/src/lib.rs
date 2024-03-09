@@ -1,3 +1,4 @@
+pub mod allocator;
 pub mod asset;
 pub mod backlog;
 pub mod config;

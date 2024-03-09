@@ -1,4 +1,5 @@
 use std::{
+    process::ExitCode,
     sync::Arc,
     thread::{self, sleep},
 };
@@ -6,6 +7,7 @@ use std::{
 use anyhow::{anyhow, Error, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
+    allocator::calculate,
     asset::NetworkAssets,
     config, directive,
     event::NormalizedEvent,
@@ -18,8 +20,6 @@ use dsiem::{
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info};
-
-use parking_lot::lock_api::RwLock;
 
 #[derive(Parser)]
 #[command(
@@ -229,10 +229,21 @@ struct ServeArgs {
         default_value = "http://localhost:4317"
     )]
     otel_endpoint: String,
+    /// Number of threads to use for events filtering, 0 means auto
+    #[arg(
+        long = "filter-threads",
+        env = "DSIEM_FILTER_THREADS",
+        value_name = "number",
+        default_value_t = 0
+    )]
+    filter_threads: usize,
 }
 
-fn main() -> Result<()> {
-    serve(true, true, Cli::parse())
+fn main() -> ExitCode {
+    match serve(true, true, Cli::parse()).is_ok() {
+        true => ExitCode::SUCCESS,
+        false => ExitCode::FAILURE,
+    }
 }
 
 fn log_startup_err(context: &str, err: Error) -> Error {
@@ -294,7 +305,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         sargs.frontend, sargs.msq
     );
 
-    let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(max_queue);
+    let (event_tx, _) = broadcast::channel::<NormalizedEvent>(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<()>(8);
     let (cancel_tx, cancel_rx) = broadcast::channel::<()>(1);
 
@@ -346,6 +357,18 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     )
     .map_err(|e| log_startup_err("loading directives", e))?;
 
+    let thread_allocation = calculate(
+        directives.len(),
+        sargs.max_eps as usize,
+        if sargs.filter_threads == 0 {
+            None
+        } else {
+            Some(sargs.filter_threads)
+        },
+        None,
+    )
+    .map_err(|e| log_startup_err("allocating threads", e))?;
+
     let intels = Arc::new(
         intel::load_intel(test_env, Some(vec!["intel_vuln".to_string()]))
             .map_err(|e| log_startup_err("loading intels", e))?,
@@ -363,9 +386,10 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let max_eps = sargs.max_eps;
 
     let cancel_tx_clone = cancel_tx.clone();
+    let event_tx_clone = event_tx.clone();
     let handle_watchdog = thread::spawn(move || {
         let opt = WatchdogOpt {
-            event_tx,
+            event_tx: event_tx_clone,
             resptime_rx,
             report_rx,
             cancel_tx: cancel_tx_clone,
@@ -390,7 +414,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         backpressure_tx: bp_tx,
         resptime_tx,
         cancel_tx: cancel_tx.clone(),
-        receiver: Arc::new(RwLock::new(event_rx)),
+        publisher: event_tx,
         med_risk_max: sargs.med_risk_max,
         med_risk_min: sargs.med_risk_min,
         default_status: sargs.status[0].clone(),
@@ -399,6 +423,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         report_tx,
         max_eps,
         max_queue,
+        thread_allocation,
     };
     let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
     let handle_manager = thread::spawn(move || {
@@ -408,7 +433,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     });
 
     if listen {
-        let handles = vec![handle_worker, handle_watchdog, handle_manager];
+        let handles = vec![handle_manager, handle_worker, handle_watchdog]; // order is important
         for h in handles {
             if let Err(e) = h.join().unwrap() {
                 error!("error: {:?}", e);
