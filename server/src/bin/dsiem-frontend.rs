@@ -1,5 +1,6 @@
 use std::{
     net::{IpAddr, SocketAddr},
+    process::ExitCode,
     str::FromStr,
     sync::Arc,
     time::Duration,
@@ -183,8 +184,11 @@ struct ServeArgs {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    serve(true, true, Cli::parse()).await
+async fn main() -> ExitCode {
+    match serve(true, true, Cli::parse()).await.is_ok() {
+        true => ExitCode::SUCCESS,
+        false => ExitCode::FAILURE,
+    }
 }
 
 fn log_startup_err(context: &str, err: Error) -> Error {

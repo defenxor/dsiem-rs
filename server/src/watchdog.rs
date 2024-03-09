@@ -18,7 +18,7 @@ const UNIT_MULTIPLIER: f64 = 1000000.0; // nano to milli
 #[derive(Default)]
 pub struct Watchdog {}
 pub struct WatchdogOpt {
-    pub event_tx: mpsc::Sender<NormalizedEvent>,
+    pub event_tx: broadcast::Sender<NormalizedEvent>,
     pub resptime_rx: mpsc::Receiver<f64>,
     pub report_rx: mpsc::Receiver<ManagerReport>,
     pub cancel_tx: broadcast::Sender<()>,
@@ -71,7 +71,7 @@ impl Watchdog {
                 _ = report.tick() => {
 
                 let eps = round(opt.eps.metrics.count.throughput.histogram().mean(), 2);
-                let queue_length = opt.event_tx.max_capacity() - opt.event_tx.capacity();
+                let queue_length = opt.event_tx.len();
                 let avg_proc_time_ms = resp_histo.mean()/UNIT_MULTIPLIER;
                 let ttl_directives = report_map.len();
                 let active_directives =  report_map.iter().filter(|&(_, (x, _))|*x > 0).count();
@@ -128,7 +128,7 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[traced_test]
     async fn test_watchdog() {
-        let (event_tx, _event_rx) = mpsc::channel::<NormalizedEvent>(5);
+        let (event_tx, _event_rx) = broadcast::channel::<NormalizedEvent>(5);
         let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(1);
         let (report_tx, report_rx) = mpsc::channel::<ManagerReport>(1);
         let (cancel_tx, _) = broadcast::channel::<()>(5);
@@ -167,7 +167,7 @@ mod test {
         // this should trigger a clear() on the histogram
         let _handle = task::spawn(async move {
             for _ in 0..10000 {
-                event_tx.send(NormalizedEvent::default()).await.unwrap();
+                event_tx.send(NormalizedEvent::default()).unwrap();
             }
         });
         sleep(Duration::from_millis(3000)).await;
