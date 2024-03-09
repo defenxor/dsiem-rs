@@ -268,7 +268,6 @@ impl Manager {
             let _h = span.entered();
             let span = Span::current();
             runtime::Builder::new_multi_thread()
-                .worker_threads(num_of_threads)
                 .enable_all()
                 .build()
                 .unwrap()
