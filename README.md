@@ -22,6 +22,7 @@ Compared to Dsiem in the main repo, this repo currently:
 - Doesn't include any of the Dsiem tools (e.g. Dpluger, nesd, etc.), but there shouldn't be compatibility issue to use the ones from the main repo.
 - Support saving backlogs to disk before exiting, and reloading them after restart (controlled by `--reload-backlogs` flag, see below for more details).
 - Uses OpenTelemetry for tracing and metrics instead of Elastic APM. More details on the [telemetry](./docs/telemetry.md) page.
+- Perform initial event filtering in a central location using dedicated threads, thereby reducing the number of events that must be sent downstream to individual directive.
 - Requires all directives to be loaded without error during startup. The behaviour of the main repo binary which tries to fix minor errors, and skip loading (with a warning) directives that has major errors, is only practical during initial migration from OSSIM.
 - Doesn't default to use JSON-lines log output (enable through `-j` parameter or `DSIEM_JSON=true` env. variable).
 - Integrate `backlog` and `alarm` to one struct to reduce data duplication.
