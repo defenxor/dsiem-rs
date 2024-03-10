@@ -23,7 +23,7 @@ After setting the environment variables:
 - Execute one of the following command to start the server (release version is more performant):
 
   ```shell
-  cargo run -p filter-comparison`
+  cargo run -p filter-comparison
   cargo build --release -p filter-comparison && ./target/release/filter-comparison
   ```
 

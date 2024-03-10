@@ -6,25 +6,33 @@ In practice however, hardware and network resources are often limited, and we wi
 
 This page gives several suggestions on how to deploy Dsiem with performance consideration in mind. In addition, tips on how to detect performance issue are also given at [the end of this page](#Detecting-performance-issue).
 
+## Evaluate the most likely performance bottleneck
+
+The first thing to know is that for each incoming event, Dsiem will quickly compare several key fields (like `Plugin ID` and `Plugin SID`) against all directives to determine if there's a match. Only matching events will be sent to the associated directives for further processing. And because this initial quick comparison is done to for _all_ events against _all_ directives, it becomes a main spot for potential performance bottleneck and should therefore be allocated with enough CPU resources.
+
+In our tests, a single CPU thread was able to perform around 17 million quick filtering checks per second, so the rate of incoming events/sec times the number of directives should not exceed that number.
+
+$$ {17,000,000} × {n_{cpu}} = {n_{eps}} × {n_{directive}} $$
+
+For example suppose you dedicate 1 CPU thread to perform quick checks on a node that is hosting 10,000 directives. We can calculate the maximum events/sec rate before the system may start lagging behind:
+
+$$ {n_{eps}} = \frac{{17,000,000} × 1}{10,000} = 1,700$$
+
+> [!NOTE]
+> By default, Dsiem uses the above calculation to determine the number of CPU threads to allocate for quick checks. 
+> You can override this by specifying `DSIEM_FILTER_THREADS` environment variable or `--filter-threads` startup parameter.
+
+If that rate limit is persistently exceeded, the queue will start filling up and eventually events will be dropped. In such cases, first consider increasing the number of threads allocated so that directives are processed in parallel. If that's not feasible consider applying one of, or a combination of, reconfigurations outlined below.
+
 ## Selectively ingest logs from Logstash
 
 It makes no sense to send a log to Dsiem if you don't have correlation rules for it.
 
 You can avoid sending unnecessary logs by reconfiguring the Logstash filter that generates the normalized events. Similar effect can also be achieved by supplying an appropriate filter in `dplugin_config.json` before running `dpluger run` command to create the Logstash plugin.
 
-## Distribute directives to multiple nodes (and hardware whenever possible)
+## Distribute directives to multiple nodes located on different hardware
 
-The typical Logstash ingestion pipeline(s) will always process events faster than Dsiem that has to correlate those events against X number of directives. The more directives you have on a single node, the more pronounced this effect will be. 
-
-For instance, given the following backend nodes:
-- backend-A, 1000 directives defined, 10 active backlogs in memory 
-- backend-B, 100 directives defined, 1000 active backlogs in memory
-
-Backend-A will have a harder time keeping up with the rate of incoming events compared to backend-B, even though most of its 1000 directives never actually match any of those events (hence its low number of active backlogs).
-
-The above is true because in order to process things concurrently as much as possible, Dsiem copies each incoming event to an array of backlog managers, each of whom responsible for a single directive defined in the configuration files. So if you have 2000 directives defined, at runtime you will have 2000 backlog managers all waiting for the next event to process.
-
-Those backlog managers will then have to compete for the system's limited CPU cores when processing incoming events. In a system handling 2000 events/sec, individual backlog managers will have to process *each* event in less than 500μs to avoid introducing delays. Having fewer directives reduces competition for CPU time, and therefore allows each directive to complete its processing within the time duration limit.
+This is as straightforward horizontal scaling solution. By distributing the directives to multiple nodes each running on a different hardware, the system will have more processing power to execute the same workload in parallel.
 
 ## Prioritise directives and allocate resources accordingly
 
@@ -89,32 +97,41 @@ The following shows an example of a node with a fixed length queue having proble
 ```shell
 docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
 
-{"message":"watchdog report","eps":980.02,"queue_length":49231,"avg_proc_time_ms":2.145,"ttl_directives":1283,"active_directives":30,"backlogs":425}
-{"message":"watchdog report","eps":985.11,"queue_length":49973,"avg_proc_time_ms":0.116,"ttl_directives":1283,"active_directives":30,"backlogs":430}
-{"message":"avg. processing time maybe too long to sustain the target 1000 event/sec (or 1 ms/event)","avg_proc_time_ms":2.25}
-{"message":"avg. processing time maybe too long to sustain the target 1000 event/sec (or 1 ms/event)","avg_proc_time_ms":3.11}
-{"message":"event receiver lagged and skipped 2207 events","directive_id":1251}
+{"message":"watchdog report","eps":1636.36,"queue_length":8733,"avg_proc_time_ms":0.035,"ttl_directives":5001,"active_directives":70,"backlogs":284,"timedout_backlogs":0}
+{"message":"watchdog report","eps":1571.43,"queue_length":18530,"avg_proc_time_ms":0.037,"ttl_directives":5001,"active_directives":70,"backlogs":290,"timedout_backlogs":0}
+{"message":"watchdog report","eps":1548.39,"queue_length":28382,"avg_proc_time_ms":0.039,"ttl_directives":5001,"active_directives":70,"backlogs":295,"timedout_backlogs":0}
+{"message":"filtering lagged and skipped 2 events"}
+{"message":"filtering lagged and skipped 1 events"}
+{"message":"filtering lagged and skipped 1 events"}
+{"message":"filtering lagged and skipped 2 events"}
+
 ```
 
 Those log lines show the following:
-- There are around 49k events constantly in queue, and 2207 events have been skipped by directive 1251.
-- Average processing time fluctuates between 0.1 to 3 ms, and that upper range is too long for the configured `max_eps` parameter of 1000 events/sec (or 1ms max. processing time per event). This long processing time is what causing the queue to fill up and never had a chance to drain.
-- The system has > 400 active backlogs, all created from just 30 of the 1283 directives defined.
+- The queue length keeps rising until it's full, and events are skipped (not processed). This is the **_most important_** metric to evaluate Dsiem backend node performance issues.
+- Average processing time stays low around 0.03 ms for the configured `max_eps` parameter of 1000 events/sec (or 1ms max. processing time per event). This parameter is measuring backlog processing time, which for Dsiem in this repo, is _no longer the likely location for bottlenecks_.
+- The system has > 280 active backlogs, all created from just 70 of the 5001 directives defined.
 
-Based on the above we can try to relieve the performance bottleneck by moving the rarely used directives to other nodes running on a different hardware. This change will reduce the average processing time and thereby preventing the queue from constantly being filled to its maximum capacity.
+Based on the above we can try to relieve the performance bottleneck by:
+- Increasing the number of filtering threads;
+- Moving the rarely used directives to other nodes running on a different hardware.
+
+Both options essentially split the directives processing to more CPU threads, thereby preventing the queue from constantly being filled to its maximum capacity.
 
 As a comparison, here's an example log output from a node that isn't experiencing performance problem:
 
 ```shell
 docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
 
-{"message":"watchdog report","eps":750.02,"queue_length":0,"avg_proc_time_ms":0.21,"ttl_directives":77,"active_directives":9,"backlogs":1425}
-{"message":"watchdog report","eps":794.11,"queue_length":0,"avg_proc_time_ms":0.10,"ttl_directives":77,"active_directives":9,"backlogs":1427}
-{"message":"watchdog report","eps":771.45,"queue_length":0,"avg_proc_time_ms":0.07,"ttl_directives":77,"active_directives":9,"backlogs":1427}
+{"message":"watchdog report","eps":1615.38,"queue_length":5,"avg_proc_time_ms":0.023,"ttl_directives":5001,"active_directives":70,"backlogs":552,"timedout_backlogs":0}
+{"message":"watchdog report","eps":1565.22,"queue_length":11,"avg_proc_time_ms":0.025,"ttl_directives":5001,"active_directives":70,"backlogs":580,"timedout_backlogs":0}
+{"message":"watchdog report","eps":1545.45,"queue_length":1,"avg_proc_time_ms":0.028,"ttl_directives":5001,"active_directives":70,"backlogs":601,"timedout_backlogs":0}
+{"message":"watchdog report","eps":1535.07,"queue_length":1,"avg_proc_time_ms":0.03,"ttl_directives":5001,"active_directives":70,"backlogs":615,"timedout_backlogs":0}
+{"message":"watchdog report","eps":1531.58,"queue_length":0,"avg_proc_time_ms":0.031,"ttl_directives":5001,"active_directives":70,"backlogs":621,"timedout_backlogs":0}
 ```
 
 Those log lines show that:
-- The queue is never used at all. Single event processing time is around 0.1-0.2ms, still way faster than the configured limit of 1ms (or `max_eps` parameter of 1k/sec).
-- The node is tracking almost 1500 active backlogs created from 9 directives (out of the total 77 directives defined), and that doesn't negatively affect its performance.
+- The queue is almost never used at all. Single event processing time is around 0.02-0.03 ms, still way faster than the configured limit of 1ms (or `max_eps` parameter of 1k/sec).
+- The node is tracking >500 active backlogs created from 70 directives (out of the total 5001 directives defined), and that doesn't negatively affect its performance.
 
 So for this particular node, we can try to increase its utilisation by moving more directives to it, or by increasing its incoming event ingestion rate.
