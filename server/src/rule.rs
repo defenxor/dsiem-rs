@@ -523,9 +523,8 @@ fn is_csv(term: &str) -> bool {
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-
     use super::*;
+    use std::str::FromStr;
     use table_test::table_test;
 
     #[test]
