@@ -6,7 +6,7 @@ use std::{
 use axum::{extract::State, routing::post, Json, Router};
 use dsiem::{
     directive::load_directives,
-    manager::DirectiveParams,
+    manager::FilterTarget,
     rule::{SIDPair, TaxoPair},
 };
 use dsiem::{event::NormalizedEvent, rule};
@@ -31,6 +31,8 @@ fn main() {
 
     let mut handlers = vec![];
 
+    let targets = get_targets();
+
     let use_rayon = std::env::var("USE_RAYON")
         .unwrap_or(false.to_string())
         .parse::<bool>()
@@ -38,11 +40,11 @@ fn main() {
 
     let h = if use_rayon {
         thread::spawn(move || {
-            processor_rayon(processor_tx);
+            processor_rayon(processor_tx, targets);
         })
     } else {
         thread::spawn(move || {
-            processor(processor_tx);
+            processor(processor_tx, targets);
         })
     };
     handlers.push(h);
@@ -66,16 +68,16 @@ fn main() {
     }
 }
 
-fn get_params() -> Vec<DirectiveParams> {
+fn get_targets() -> Vec<FilterTarget> {
     let directives = load_directives(false, None).unwrap();
-    let mut params = vec![];
+    let mut targets = vec![];
 
     for d in directives {
         let (sid_pairs, taxo_pairs) = rule::get_quick_check_pairs(&d.rules);
         let contains_pluginrule = !sid_pairs.is_empty();
         let contains_taxorule = !taxo_pairs.is_empty();
         let (tx, _) = mpsc::channel::<NormalizedEvent>(1);
-        let p = DirectiveParams {
+        let t = FilterTarget {
             id: d.id,
             tx,
             sid_pairs,
@@ -83,9 +85,9 @@ fn get_params() -> Vec<DirectiveParams> {
             contains_pluginrule,
             contains_taxorule,
         };
-        params.push(p);
+        targets.push(t);
     }
-    params
+    targets
 }
 
 pub fn quick_check_taxo_rule(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
@@ -102,18 +104,17 @@ pub fn quick_check_plugin_rule(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
         .any(|v| v.plugin_sid.clone().into_iter().any(|x| x == e.plugin_sid))
 }
 
-fn quick_discard_rayon(p: &DirectiveParams, event: &NormalizedEvent) -> bool {
+fn quick_discard_rayon(p: &FilterTarget, event: &NormalizedEvent) -> bool {
     (p.contains_pluginrule && !quick_check_plugin_rule(&p.sid_pairs, event))
         || (p.contains_taxorule && !quick_check_taxo_rule(&p.taxo_pairs, event))
 }
 
-fn quick_discard(p: &DirectiveParams, event: &NormalizedEvent) -> bool {
+fn quick_discard(p: &FilterTarget, event: &NormalizedEvent) -> bool {
     (p.contains_pluginrule && !rule::quick_check_plugin_rule(&p.sid_pairs, event))
         || (p.contains_taxorule && !rule::quick_check_taxo_rule(&p.taxo_pairs, event))
 }
 
-fn processor_rayon(event_tx: Sender<NormalizedEvent>) {
-    let params = get_params();
+fn processor_rayon(event_tx: Sender<NormalizedEvent>, targets: Vec<FilterTarget>) {
 
     let pool_size = std::env::var("RAYON_THREAD_POOL_SIZE")
         .unwrap_or(RAYON_THREAD_POOL_SIZE.to_string())
@@ -127,7 +128,7 @@ fn processor_rayon(event_tx: Sender<NormalizedEvent>) {
 
     info!(
         "processing {} total directives with {} rayon threadpool",
-        params.len(),
+        targets.len(),
         pool_size
     );
 
@@ -142,7 +143,7 @@ fn processor_rayon(event_tx: Sender<NormalizedEvent>) {
                 }
             };
             debug!("processing event: {:?}", event);
-            let matched_dirs: Vec<&DirectiveParams> = params
+            let matched_dirs: Vec<&FilterTarget> = targets
                 .par_iter()
                 .filter(|p| !quick_discard_rayon(p, &event))
                 .collect();
@@ -157,22 +158,21 @@ fn processor_rayon(event_tx: Sender<NormalizedEvent>) {
     _ = handle.join();
 }
 
-fn processor(event_tx: Sender<NormalizedEvent>) {
-    let params = get_params();
+fn processor(event_tx: Sender<NormalizedEvent>, targets: Vec<FilterTarget>) {
 
     let chunk_size = std::env::var("DIRECTIVES_PER_THREAD")
         .unwrap_or(DIRECTIVES_PER_THREAD.to_string())
         .parse::<usize>()
         .unwrap();
 
-    let r = params.chunks(chunk_size).collect::<Vec<_>>();
+    let r = targets.chunks(chunk_size).collect::<Vec<_>>();
     let mut chunks = vec![];
     for c in r {
         chunks.push(c.to_owned());
     }
     info!(
         "processing {} total directives with {} threads (max {} directives per thread)",
-        params.len(),
+        targets.len(),
         chunks.len(),
         chunk_size
     );
@@ -188,7 +188,7 @@ fn processor(event_tx: Sender<NormalizedEvent>) {
                 }
             };
             debug!(thread.id = i, "processing event: {:?}", event);
-            let matched_dirs: Vec<&DirectiveParams> =
+            let matched_dirs: Vec<&FilterTarget> =
                 c.iter().filter(|p| !quick_discard(p, &event)).collect();
             debug!(
                 thread.id = i,

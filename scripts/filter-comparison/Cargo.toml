@@ -1,11 +1,9 @@
+[workspace]
+
 [package]
 name = "filter-comparison"
+version = "0.1.0"
 edition = "2021"
-
-version.workspace = true
-authors.workspace = true
-description.workspace = true
-documentation.workspace = true
 
 [[bin]]
 path = "src/main.rs"

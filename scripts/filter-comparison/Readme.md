@@ -17,7 +17,7 @@ After setting the environment variables:
 - Put a directive.json file with at least a thousand entries in /configs directory, i.e.:
   
   ```shell
-  mkdir -p ./target/debug/configs && ln -s path/to/directive.json ./target/debug/configs/directive.json
+  mkdir -p ./target/debug/configs && ln -s /absolute/path/to/directive.json ./target/debug/configs/directive.json
   ```
 
 - Execute one of the following command to start the server (release version is more performant):
