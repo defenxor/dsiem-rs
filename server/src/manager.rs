@@ -132,12 +132,12 @@ impl Manager {
         let mut option = self.option.clone();
         option.directives = vec![];
 
-        let mut dir_managers = vec![];
-        let mut dir_params = vec![];
+        let mut b_managers = vec![];
+        let mut targets = vec![];
 
         for directive in self.option.directives.iter() {
             let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(load_param.limit_cap);
-            let dir_manager = DirectiveManager::new(
+            let dir_manager = BacklogManager::new(
                 &option,
                 &load_param,
                 directive,
@@ -145,13 +145,13 @@ impl Manager {
                 &report_interval,
                 event_rx,
             ); // Remove reference
-            dir_managers.push(dir_manager);
+            b_managers.push(dir_manager);
 
             let (sid_pairs, taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
             let contains_pluginrule = !sid_pairs.is_empty();
             let contains_taxorule = !taxo_pairs.is_empty();
 
-            dir_params.push(DirectiveParams {
+            targets.push(FilterTarget {
                 id: directive.id,
                 tx: event_tx,
                 sid_pairs,
@@ -161,7 +161,7 @@ impl Manager {
             });
         }
 
-        let quick_discard = |p: &DirectiveParams, event: &NormalizedEvent| -> bool {
+        let quick_discard = |p: &FilterTarget, event: &NormalizedEvent| -> bool {
             (p.contains_pluginrule && !rule::quick_check_plugin_rule(&p.sid_pairs, event))
                 || (p.contains_taxorule && !rule::quick_check_taxo_rule(&p.taxo_pairs, event))
         };
@@ -169,13 +169,13 @@ impl Manager {
         let dir_len = self.option.directives.len();
         let chunk_size = dir_len / self.option.thread_allocation.filter_threads;
 
-        let r = dir_params.chunks(chunk_size).collect::<Vec<_>>();
+        let r = targets.chunks(chunk_size).collect::<Vec<_>>();
         let mut chunks = vec![];
         for c in r {
             chunks.push(c.to_owned());
         }
 
-        info!("backlog manager started with max single event processing time: {} ms, queue limit: {} events, quick check threads: {}, backlog threads: {}, ttl directives: {}",
+        info!("manager started with max single event processing time: {} ms, queue limit: {} events, quick check threads: {}, backlog threads: {}, ttl directives: {}",
             load_param.max_wait.as_millis(),
             load_param.limit_cap,
             chunks.len(),
@@ -183,53 +183,56 @@ impl Manager {
             dir_len
         );
 
-        let h_managers = self.spawner(dir_managers, self.option.thread_allocation.tokio_threads);
+        let h_managers = self.spawner(b_managers, self.option.thread_allocation.tokio_threads);
 
         let mut handles = vec![];
         for (idx, c) in chunks.into_iter().enumerate() {
-            let cancel_tx = self.option.cancel_tx.clone();
-            let span = Span::current();
+            let mut cancel_rx = self.option.cancel_tx.clone().subscribe();
             let mut rx = self.option.publisher.subscribe();
+            let span = Span::current();
             let handle = thread::spawn(move || {
                 let _h = span.entered();
-                let mut cancel_rx = cancel_tx.subscribe();
+                let filter_span = info_span!("filter thread", thread.id = idx);
+                let _h = filter_span.enter();
                 loop {
                     if cancel_rx.try_recv().is_ok() {
                         break;
                     }
-                    let evt = match rx.blocking_recv() {
-                        Ok(evt) => evt,
+                    let mut event = match rx.blocking_recv() {
+                        Ok(event) => event,
                         Err(RecvError::Lagged(n)) => {
                             // here's the main mechanism to allow lagged managers to catch up
-                            warn!(
-                                thread.id = idx,
-                                "event receiver lagged and skipped {} events", n
-                            );
+                            warn!("filtering lagged and skipped {} events", n);
                             continue;
                         }
                         Err(RecvError::Closed) => {
-                            debug!(thread.id = idx, "event receiver closed");
+                            info!("event receiver closed");
                             break;
                         }
                     };
                     // 99.99% of events should be filtered out here
-                    let matched_dirs: Vec<&DirectiveParams> =
-                        c.iter().filter(|p| !quick_discard(p, &evt)).collect();
+                    let matched_dirs: Vec<&FilterTarget> =
+                        c.iter().filter(|p| !quick_discard(p, &event)).collect();
                     debug!(
-                        thread.id = idx,
-                        event.id = evt.id,
+                        event.id,
                         "event matched rules in {} directive(s)",
                         matched_dirs.len()
                     );
 
+                    if matched_dirs.is_empty() {
+                        continue;
+                    };
+                    let distrib_span = info_span!("event distribution", event.id);
+                    tracer::set_parent_from_event(&distrib_span, &event);
+                    let _ = distrib_span.enter();
+                    tracer::store_parent_into_event(&distrib_span, &mut event);
+
                     // overload = self.upstream_rx.len() > self.load_param.limit_cap;
                     matched_dirs.iter().for_each(|d| {
-                        if d.tx.try_send(evt.clone()).is_err() {
+                        if d.tx.try_send(event.clone()).is_err() {
                             warn!(
-                                thread.id = idx,
                                 directive.id = d.id,
-                                event.id = evt.id,
-                                "event receiver lagged, dropping event"
+                                event.id, "backlog manager lagged, dropping event"
                             );
                         }
                     });
@@ -238,7 +241,9 @@ impl Manager {
             handles.push(handle);
         }
 
-        handles.push(h_managers);
+        let _ = h_managers.join();
+
+        _ = self.option.publisher.send(NormalizedEvent::default()); // ugly hack to exit the blocking recv()
         for h in handles {
             _ = h.join();
         }
@@ -249,7 +254,7 @@ impl Manager {
 
     fn spawner(
         &self,
-        dir_managers: Vec<DirectiveManager>,
+        dir_managers: Vec<BacklogManager>,
         num_of_threads: usize,
     ) -> thread::JoinHandle<()> {
         let span = Span::current();
@@ -279,7 +284,7 @@ impl Manager {
 }
 
 #[derive(Clone)]
-pub struct DirectiveParams {
+pub struct FilterTarget {
     pub id: u64,
     pub tx: mpsc::Sender<NormalizedEvent>,
     pub sid_pairs: Vec<rule::SIDPair>,
@@ -301,7 +306,7 @@ struct OpLoadParameter {
     queue_mode: QueueMode,
 }
 
-struct DirectiveManager {
+struct BacklogManager {
     option: ManagerOpt,
     load_param: OpLoadParameter,
     directive: Directive,
@@ -313,7 +318,7 @@ struct DirectiveManager {
     delete_tx: Option<mpsc::Sender<()>>,
 }
 
-impl DirectiveManager {
+impl BacklogManager {
     fn new(
         option: &ManagerOpt,
         load_param: &OpLoadParameter,
@@ -321,14 +326,14 @@ impl DirectiveManager {
         log_tx: &crossbeam_channel::Sender<LogWriterMessage>,
         report_interval: &u64,
         upstream_rx: mpsc::Receiver<NormalizedEvent>,
-    ) -> DirectiveManager {
+    ) -> BacklogManager {
         let (downstream_tx, _) = broadcast::channel(1024);
         let load_param = load_param.clone();
         let mut option = option.clone();
         option.directives = vec![];
         let log_tx = log_tx.clone();
         let directive = directive.clone();
-        DirectiveManager {
+        BacklogManager {
             option,
             load_param,
             downstream_tx,
@@ -505,10 +510,10 @@ impl DirectiveManager {
                 },
                 Some(mut event) = self.upstream_rx.recv() => {
 
-                    let manager_span = info_span!("manager processing", directive.id = self.directive.id, event.id);
-                    tracer::set_parent_from_event(&manager_span, &event);
+                    let backlog_mgr_span = info_span!("backlog manager processing", directive.id = self.directive.id, event.id);
+                    tracer::set_parent_from_event(&backlog_mgr_span, &event);
 
-                    let _ = manager_span.enter();
+                    let _ = backlog_mgr_span.enter();
                     debug!(directive.id = self.directive.id, event.id, "received event");
 
                     let mut match_found = false;
@@ -517,7 +522,7 @@ impl DirectiveManager {
 
                     debug!(directive.id = self.directive.id, event.id, "total backlogs {}", backlogs.len());
 
-                    tracer::store_parent_into_event(&manager_span, &mut event);
+                    tracer::store_parent_into_event(&backlog_mgr_span, &mut event);
 
                     if !backlogs.is_empty() && downstream_tx.send(event.clone()).is_ok() {
                         debug!(directive.id = self.directive.id, event.id, "event sent downstream");
@@ -739,6 +744,7 @@ mod test {
         // unmatched event
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(2000)).await;
+
         assert!(logs_contain("event matched rules in 0 directive"));
 
         // matched event but not on the first rule
@@ -799,9 +805,6 @@ mod test {
         // cancel signal, should also trigger saving to disk
         sleep(Duration::from_millis(500)).await;
         _ = cancel_tx.send(());
-        sleep(Duration::from_millis(500)).await;
-        event_tx.send(evt.clone()).unwrap();
-        drop(event_tx);
         sleep(Duration::from_millis(4000)).await;
         assert!(logs_contain("1 backlogs saved"));
         assert!(logs_contain("backlog manager exiting"));
