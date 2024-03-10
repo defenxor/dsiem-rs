@@ -34,7 +34,7 @@ tracing = { version = "0.1.37", features = [ "attributes" ], default-features = 
 tracing-subscriber = { version = "0.3.16", features = ["json", "ansi"], default-features = false }
 tracing-opentelemetry = { version = "0.22.0", default-features = false }
 opentelemetry = { version = "0.21.0", default-features = false }
-opentelemetry_sdk = { version = "0.21.2", features = ["rt-tokio" ], default-features = false }
+opentelemetry_sdk = { version = "0.21.2", features = ["rt-tokio-current-thread" ], default-features = false }
 opentelemetry-otlp =  { version = "0.14.0", features = [ "grpc-tonic", "metrics", "trace" ], default-features = false }
 
 # frontend specific

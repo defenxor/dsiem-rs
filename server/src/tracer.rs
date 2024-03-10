@@ -67,7 +67,7 @@ pub fn setup(
                 .with_trace_config(trace::config().with_resource(Resource::new(vec![
                     KeyValue::new("service.name", otel_config.service_name),
                 ])))
-                .install_batch(opentelemetry_sdk::runtime::Tokio)?;
+                .install_batch(opentelemetry_sdk::runtime::TokioCurrentThread)?;
 
         Some(tracing_opentelemetry::layer().with_tracer(tracer))
     } else {
