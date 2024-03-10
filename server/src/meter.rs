@@ -23,7 +23,7 @@ fn meter_provider(config: OtelConfig) -> Result<SdkMeterProvider> {
             Box::new(DefaultAggregationSelector::new()),
             Box::new(DefaultTemporalitySelector::new()),
         )?;
-    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
+    let reader = PeriodicReader::builder(exporter, runtime::TokioCurrentThread)
         .with_interval(Duration::from_secs(REPORT_INTERVAL_IN_SECONDS))
         .build();
     let provider = SdkMeterProvider::builder()

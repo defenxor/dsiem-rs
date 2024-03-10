@@ -10,7 +10,11 @@ use tracing::{info, warn};
 
 pub mod eps;
 
-use crate::{event::NormalizedEvent, manager::ManagerReport, tracer::OtelConfig};
+use crate::{
+    event::NormalizedEvent,
+    manager::ManagerReport,
+    tracer::{self, OtelConfig},
+};
 
 pub const REPORT_INTERVAL_IN_SECONDS: u64 = 10;
 const UNIT_MULTIPLIER: f64 = 1000000.0; // nano to milli
@@ -26,11 +30,20 @@ pub struct WatchdogOpt {
     pub max_eps: u32,
     pub otel_config: OtelConfig,
     pub eps: Arc<eps::Eps>,
+    pub log_verbosity: u8,
+    pub log_format: tracer::LogType,
+    pub require_logging: bool,
 }
 
 impl Watchdog {
     #[tokio::main(flavor = "current_thread")]
     pub async fn start(&mut self, opt: WatchdogOpt) -> Result<()> {
+        let subscriber = tracer::setup(opt.log_verbosity, opt.log_format, opt.otel_config.clone())?;
+        let setup_result = tracing::subscriber::set_global_default(subscriber);
+        if opt.require_logging {
+            setup_result?;
+        }
+
         let mut report = interval(Duration::from_secs(opt.report_interval));
         let mut cancel_rx = opt.cancel_tx.subscribe();
         let mut resp_histo = HdrHistogram::with_bound(60 * 60 * 1000 * UNIT_MULTIPLIER as u64); // max 1 hour
@@ -146,6 +159,9 @@ mod test {
             max_eps,
             otel_config: OtelConfig::default(),
             eps,
+            log_verbosity: 0,
+            log_format: tracer::LogType::Plain,
+            require_logging: false,
         };
 
         let span = Span::current();
