@@ -247,38 +247,15 @@ fn main() -> ExitCode {
 }
 
 fn log_startup_err(context: &str, err: Error) -> Error {
+    _ = tracing_subscriber::fmt().try_init();
     error!("error {}: {}", context, err);
     err
 }
 
 fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let test_env = args.test_env;
-    let verbosity = if args.debug {
-        1
-    } else if args.trace {
-        2
-    } else {
-        args.verbosity
-    };
-    let SubCommands::ServeCommand(sargs) = args.subcommand;
-    let log_format = if args.use_json {
-        tracer::LogType::Json
-    } else {
-        tracer::LogType::Plain
-    };
-    let otel_config = tracer::OtelConfig {
-        tracing_enabled: sargs.enable_tracing,
-        metrics_enabled: sargs.enable_metrics,
-        otlp_endpoint: sargs.otel_endpoint,
-        service_name: sargs.node.to_owned(),
-    };
 
-    let subscriber = tracer::setup(verbosity, log_format, otel_config.clone())
-        .map_err(|e| log_startup_err("setting up tracer", e))?;
-    let setup_result = tracing::subscriber::set_global_default(subscriber);
-    if require_logging {
-        setup_result?;
-    }
+    let SubCommands::ServeCommand(sargs) = args.subcommand;
 
     // we take in unsigned values from CLI to make sure there's no negative numbers, and convert them
     // to signed value required by timestamp related APIs.
@@ -300,10 +277,25 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         sargs.max_queue
     };
 
-    info!(
-        "starting dsiem backend server with frontend {} and message queue {}",
-        sargs.frontend, sargs.msq
-    );
+    let log_verbosity = if args.debug {
+        1
+    } else if args.trace {
+        2
+    } else {
+        args.verbosity
+    };
+
+    let log_format = if args.use_json {
+        tracer::LogType::Json
+    } else {
+        tracer::LogType::Plain
+    };
+    let otel_config = tracer::OtelConfig {
+        tracing_enabled: sargs.enable_tracing,
+        metrics_enabled: sargs.enable_metrics,
+        otlp_endpoint: sargs.otel_endpoint,
+        service_name: sargs.node.to_owned(),
+    };
 
     let (event_tx, _) = broadcast::channel::<NormalizedEvent>(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<()>(8);
@@ -317,45 +309,56 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     config::download_files(
         test_env,
         Some(vec!["dl_config".to_string()]),
-        sargs.frontend,
+        sargs.frontend.clone(),
         sargs.node,
     )
     .map_err(|e| log_startup_err("downloading config", e))?;
+
+    let directives = directive
+    // todo: maybe replace this kludgy way of loading test directive5
+    ::load_directives(
+        test_env,
+        Some(vec!["directives".to_string(), "directive5".to_string()]),
+    )
+    .map_err(|e| log_startup_err("loading directives", e))?;
+
+    let eps = Arc::new(Eps::default());
+
+    let n = directives.len();
+    let max_eps = sargs.max_eps;
+    let (report_tx, report_rx) = mpsc::channel::<manager::ManagerReport>(n);
+    let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(n);
+    let event_tx_clone = event_tx.clone();
+    let cancel_tx_clone = cancel_tx.clone();
+    let eps_clone = eps.clone();
+
+    let handle_watchdog = thread::spawn(move || {
+        let opt = WatchdogOpt {
+            event_tx: event_tx_clone,
+            resptime_rx,
+            report_rx,
+            cancel_tx: cancel_tx_clone,
+            report_interval: REPORT_INTERVAL_IN_SECONDS,
+            max_eps,
+            otel_config,
+            eps: eps_clone,
+            log_verbosity,
+            log_format,
+            require_logging,
+        };
+        let mut w = watchdog::Watchdog::default();
+        w.start(opt).map_err(|e| anyhow!("watchdog error: {:?}", e))
+    });
+
+    info!(
+        "starting dsiem backend server with frontend {} and message queue {}",
+        sargs.frontend, sargs.msq
+    );
 
     let assets = Arc::new(
         NetworkAssets::new(test_env, Some(vec!["assets".to_string()]))
             .map_err(|e| log_startup_err("loading assets", e))?,
     );
-
-    let backend_asset = assets.clone();
-    let backend_tx = event_tx.clone();
-
-    let eps = Arc::new(Eps::default());
-
-    let eps_clone = eps.clone();
-    let handle_worker = thread::spawn(move || {
-        let opt = worker::BackendOpt {
-            event_tx: backend_tx,
-            bp_rx,
-            cancel_rx,
-            assets: backend_asset,
-            nats_url: sargs.msq,
-            hold_duration: sargs.hold_duration,
-            nats_capacity: max_queue,
-            eps: eps_clone,
-        };
-        let w = worker::Worker {};
-        w.backend_start(opt)
-            .map_err(|e| anyhow!("worker error: {:?}", e))
-    });
-
-    let directives = directive
-        // todo: maybe replace this kludgy way of loading test directive5
-        ::load_directives(
-        test_env,
-        Some(vec!["directives".to_string(), "directive5".to_string()]),
-    )
-    .map_err(|e| log_startup_err("loading directives", e))?;
 
     let thread_allocation = calculate(
         directives.len(),
@@ -379,34 +382,14 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             .map_err(|e| log_startup_err("loading vulns", e))?,
     );
 
-    let n = directives.len();
-    let (report_tx, report_rx) = mpsc::channel::<manager::ManagerReport>(n);
-    let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(n);
-
-    let max_eps = sargs.max_eps;
-
-    let cancel_tx_clone = cancel_tx.clone();
-    let event_tx_clone = event_tx.clone();
-    let handle_watchdog = thread::spawn(move || {
-        let opt = WatchdogOpt {
-            event_tx: event_tx_clone,
-            resptime_rx,
-            report_rx,
-            cancel_tx: cancel_tx_clone,
-            report_interval: REPORT_INTERVAL_IN_SECONDS,
-            max_eps,
-            otel_config,
-            eps,
-        };
-        let mut w = watchdog::Watchdog::default();
-        w.start(opt).map_err(|e| anyhow!("watchdog error: {:?}", e))
-    });
+    let backend_asset = assets.clone();
+    let backend_tx = event_tx.clone();
 
     let opt = ManagerOpt {
         test_env,
         reload_backlogs: sargs.reload_backlogs,
         directives,
-        assets,
+        assets: backend_asset,
         intels,
         vulns,
         max_delay,
@@ -414,7 +397,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         backpressure_tx: bp_tx,
         resptime_tx,
         cancel_tx: cancel_tx.clone(),
-        publisher: event_tx,
+        publisher: backend_tx,
         med_risk_max: sargs.med_risk_max,
         med_risk_min: sargs.med_risk_min,
         default_status: sargs.status[0].clone(),
@@ -430,6 +413,22 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         manager
             .start(REPORT_INTERVAL_IN_SECONDS)
             .map_err(|e| anyhow!("manager error: {:?}", e))
+    });
+
+    let handle_worker = thread::spawn(move || {
+        let opt = worker::BackendOpt {
+            event_tx,
+            bp_rx,
+            cancel_rx,
+            assets,
+            nats_url: sargs.msq,
+            hold_duration: sargs.hold_duration,
+            nats_capacity: max_queue,
+            eps,
+        };
+        let w = worker::Worker {};
+        w.backend_start(opt)
+            .map_err(|e| anyhow!("worker error: {:?}", e))
     });
 
     if listen {
