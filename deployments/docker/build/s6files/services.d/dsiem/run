@@ -1,9 +1,9 @@
-#!/usr/bin/with-contenv sh
+#!/command/with-contenv sh
 
-if [ "$DSIEM_MODE" == "cluster-frontend" ]; then
+if [ "$DSIEM_MODE" = "cluster-frontend" ]; then
   exec /dsiem/dsiem-frontend serve 2>&1
 fi
-if [ "$DSIEM_MODE" == "cluster-backend" ]; then
+if [ "$DSIEM_MODE" = "cluster-backend" ]; then
   exec /dsiem/dsiem-backend serve 2>&1
 fi
 
