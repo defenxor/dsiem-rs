@@ -1,6 +1,7 @@
 use futures_lite::StreamExt;
 use std::str;
 use std::{sync::Arc, time::Duration};
+use tokio::sync::Notify;
 use tokio::{
     sync::{broadcast, mpsc},
     time::interval,
@@ -65,6 +66,7 @@ pub struct BackendOpt {
     pub assets: Arc<NetworkAssets>,
     pub nats_capacity: usize,
     pub eps: Arc<Eps>,
+    pub waiter: Arc<Notify>,
 }
 
 pub struct FrontendOpt {
@@ -129,8 +131,6 @@ impl Worker {
         Ok(())
     }
 
-    // run on its own tokio runtime to avoid NATS slow consumer issue
-    #[tokio::main(flavor = "current_thread")]
     pub async fn backend_start(&self, mut opt: BackendOpt) -> Result<()> {
         let client = nats_client(&opt.nats_url, &opt.nats_capacity)
             .await
@@ -144,6 +144,8 @@ impl Worker {
                 "cannot subscribe to dsiem_events from {}",
                 opt.nats_url
             ))?;
+
+        opt.waiter.notified().await;
 
         info!("listening for new events");
 
@@ -240,10 +242,10 @@ async fn handle_event_message(
 
 #[cfg(test)]
 mod test {
-    use std::thread;
 
     use super::*;
     use tokio::{task, time::sleep};
+    use tracing::Instrument;
     use tracing_test::traced_test;
 
     #[tokio::test]
@@ -260,6 +262,9 @@ mod test {
         let (cancel_tx, cancel_rx) = broadcast::channel::<()>(5);
         let (bp_tx, bp_rx) = mpsc::channel::<()>(5);
 
+        let notifier = Arc::new(Notify::new());
+        let waiter = notifier.clone();
+
         let eps = Arc::new(Eps::default());
         let opt = BackendOpt {
             nats_url: nats_url.to_string(),
@@ -270,14 +275,15 @@ mod test {
             hold_duration: 1,
             nats_capacity: 5,
             eps,
+            waiter,
         };
-
         let thread_span = tracing::debug_span!("thread").or_current();
-        let _detached = thread::spawn(move || {
-            let _entered = thread_span.entered();
+        task::spawn(async move {
             let w = Worker {};
-            _ = w.backend_start(opt);
+            _ = w.backend_start(opt).instrument(thread_span).await;
         });
+
+        notifier.notify_one();
 
         sleep(Duration::from_millis(3000)).await;
         assert!(logs_contain("listening for new events"));

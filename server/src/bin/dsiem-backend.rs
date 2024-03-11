@@ -18,7 +18,7 @@ use dsiem::{
     worker,
 };
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Notify};
 use tracing::{error, info};
 
 #[derive(Parser)]
@@ -248,7 +248,7 @@ fn main() -> ExitCode {
 
 fn log_startup_err(context: &str, err: Error) -> Error {
     _ = tracing_subscriber::fmt().try_init();
-    error!("error {}: {}", context, err);
+    error!("error {}: {:?}", context, err);
     err
 }
 
@@ -303,6 +303,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let c = cancel_tx.clone();
     ctrlc::set_handler(move || {
+        info!("ctrl-c received, shutting down ...");
         let _ = c.send(());
     })?;
 
@@ -323,16 +324,35 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     .map_err(|e| log_startup_err("loading directives", e))?;
 
     let eps = Arc::new(Eps::default());
-
     let n = directives.len();
-    let max_eps = sargs.max_eps;
+
+    let thread_allocation = calculate(
+        n,
+        sargs.max_eps as usize,
+        if sargs.filter_threads == 0 {
+            None
+        } else {
+            Some(sargs.filter_threads)
+        },
+        None,
+    )
+    .map_err(|e| log_startup_err("allocating threads", e))?;
+
     let (report_tx, report_rx) = mpsc::channel::<manager::ManagerReport>(n);
     let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(n);
+
+    let max_eps = sargs.max_eps;
     let event_tx_clone = event_tx.clone();
     let cancel_tx_clone = cancel_tx.clone();
     let eps_clone = eps.clone();
 
-    let handle_watchdog = thread::spawn(move || {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(thread_allocation.tokio_threads)
+        .enable_all()
+        .build()
+        .map_err(|e| log_startup_err("building tokio runtime", e.into()))?;
+
+    let _handle_watchdog = rt.spawn(async move {
         let opt = WatchdogOpt {
             event_tx: event_tx_clone,
             resptime_rx,
@@ -347,30 +367,44 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             require_logging,
         };
         let mut w = watchdog::Watchdog::default();
-        w.start(opt).map_err(|e| anyhow!("watchdog error: {:?}", e))
+        w.start(opt)
+            .await
+            .map_err(|e| anyhow!("watchdog error: {:?}", e))
     });
-
-    info!(
-        "starting dsiem backend server with frontend {} and message queue {}",
-        sargs.frontend, sargs.msq
-    );
 
     let assets = Arc::new(
         NetworkAssets::new(test_env, Some(vec!["assets".to_string()]))
             .map_err(|e| log_startup_err("loading assets", e))?,
     );
 
-    let thread_allocation = calculate(
-        directives.len(),
-        sargs.max_eps as usize,
-        if sargs.filter_threads == 0 {
-            None
-        } else {
-            Some(sargs.filter_threads)
-        },
-        None,
-    )
-    .map_err(|e| log_startup_err("allocating threads", e))?;
+    info!(
+        "starting dsiem backend server with frontend {} and message queue {}",
+        sargs.frontend, sargs.msq
+    );
+
+    let notifier = Arc::new(Notify::new());
+    let waiter = notifier.clone();
+
+    let backend_asset = assets.clone();
+    let backend_tx = event_tx.clone();
+
+    let _handle_worker = rt.spawn(async move {
+        let opt = worker::BackendOpt {
+            event_tx: backend_tx,
+            bp_rx,
+            cancel_rx,
+            assets: backend_asset,
+            nats_url: sargs.msq,
+            hold_duration: sargs.hold_duration,
+            nats_capacity: max_queue,
+            eps,
+            waiter,
+        };
+        let w = worker::Worker {};
+        w.backend_start(opt)
+            .await
+            .map_err(|e| anyhow!("worker error: {:?}", e))
+    });
 
     let intels = Arc::new(
         intel::load_intel(test_env, Some(vec!["intel_vuln".to_string()]))
@@ -382,14 +416,11 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             .map_err(|e| log_startup_err("loading vulns", e))?,
     );
 
-    let backend_asset = assets.clone();
-    let backend_tx = event_tx.clone();
-
     let opt = ManagerOpt {
         test_env,
         reload_backlogs: sargs.reload_backlogs,
         directives,
-        assets: backend_asset,
+        assets,
         intels,
         vulns,
         max_delay,
@@ -397,7 +428,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         backpressure_tx: bp_tx,
         resptime_tx,
         cancel_tx: cancel_tx.clone(),
-        publisher: backend_tx,
+        publisher: event_tx,
         med_risk_max: sargs.med_risk_max,
         med_risk_min: sargs.med_risk_min,
         default_status: sargs.status[0].clone(),
@@ -407,6 +438,8 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         max_eps,
         max_queue,
         thread_allocation,
+        tokio_handle: rt.handle().clone(),
+        notifier,
     };
     let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
     let handle_manager = thread::spawn(move || {
@@ -415,29 +448,9 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             .map_err(|e| anyhow!("manager error: {:?}", e))
     });
 
-    let handle_worker = thread::spawn(move || {
-        let opt = worker::BackendOpt {
-            event_tx,
-            bp_rx,
-            cancel_rx,
-            assets,
-            nats_url: sargs.msq,
-            hold_duration: sargs.hold_duration,
-            nats_capacity: max_queue,
-            eps,
-        };
-        let w = worker::Worker {};
-        w.backend_start(opt)
-            .map_err(|e| anyhow!("worker error: {:?}", e))
-    });
-
     if listen {
-        let handles = vec![handle_manager, handle_worker, handle_watchdog]; // order is important
-        for h in handles {
-            if let Err(e) = h.join().unwrap() {
-                error!("error: {:?}", e);
-                return Err(e);
-            }
+        if let Ok(Err(e)) = handle_manager.join() {
+            return Err(e);
         }
     } else {
         sleep(Duration::from_secs(1)); // gives time for all spawns to await
