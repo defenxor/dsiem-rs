@@ -120,11 +120,20 @@ Based on the above we can try to relieve the performance bottleneck by:
 
 Both options essentially split the directives processing to more CPU threads, thereby preventing the queue from constantly being filled to its maximum capacity.
 
-As a comparison, here's an example log output from a node that isn't experiencing performance problem:
+Next is an example of a different backend node that's still keeping up with the ingestion rate, but will not be able to if the rate goes up to the configured `max_eps`. Notice the warning message about long processing time.
 
-```shell
-docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
+```json
+{"message":"watchdog report","eps":578.84,"queue_length":132,"avg_proc_time_ms":12.222,"ttl_directives":12434,"active_directives":432,"backlogs":463,"timedout_backlogs":431}
+{"message":"avg. processing time maybe too long to sustain the target 1000 event/sec (or 1.000 ms/event)","avg_proc_time_ms":12.222},
+{"message":"watchdog report","eps":581.19,"queue_length":11,"avg_proc_time_ms":25.3,"ttl_directives":12434,"active_directives":438,"backlogs":469,"timedout_backlogs":437}
+{"message":"avg. processing time maybe too long to sustain the target 1000 event/sec (or 1.000 ms/event)","avg_proc_time_ms":25.3}
+```
 
+As mentioned in the prior example, slow backlog processing is not a likely cause for bottleneck in this dsiem version. Such occurrences are more likely due to configuration/environmental error rather than resource issues. In this particular example, the cause was an enabled-but-unreachable intel and vulnerability plugin API endpoints.
+
+Finally as a comparison, here's an example log output from a node that isn't experiencing performance problem:
+
+```json
 {"message":"watchdog report","eps":1615.38,"queue_length":5,"avg_proc_time_ms":0.023,"ttl_directives":5001,"active_directives":70,"backlogs":552,"timedout_backlogs":0}
 {"message":"watchdog report","eps":1565.22,"queue_length":11,"avg_proc_time_ms":0.025,"ttl_directives":5001,"active_directives":70,"backlogs":580,"timedout_backlogs":0}
 {"message":"watchdog report","eps":1545.45,"queue_length":1,"avg_proc_time_ms":0.028,"ttl_directives":5001,"active_directives":70,"backlogs":601,"timedout_backlogs":0}
