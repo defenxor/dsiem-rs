@@ -58,9 +58,7 @@ The above repeats until evaluation of the last rule completes — after which th
 
 Dsiem calculates a risk value for backlog when the current stage's rule condition has been matched by incoming events. An alarm will be triggered *when the backlog risk value is ≥ 1*. Risk value calculation is based on this formula:
 
-```rust
-Risk = (reliability * priority * asset value)/25
-```
+$$Risk = \frac{reliability × priority × asset\ value}{25}$$
 
 Where: 
 - Reliability (1 to 10): the active rule `reliability` value. Higher reliability means higher confidence on the likelihood that the (potential) alarm is a true positive.

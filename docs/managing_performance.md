@@ -8,7 +8,7 @@ This page gives several suggestions on how to deploy Dsiem with performance cons
 
 ## Evaluate the most likely performance bottleneck
 
-The first thing to know is that for each incoming event, Dsiem will quickly compare several key fields (like `Plugin ID` and `Plugin SID`) against all directives to determine if there's a match. Only matching events will be sent to the associated directives for further processing. And because this initial quick comparison is done to for _all_ events against _all_ directives, it becomes a main spot for potential performance bottleneck and should therefore be allocated with enough CPU resources.
+The first thing to know is that for each incoming event, Dsiem will quickly compare several key fields (like `Plugin ID` and `Plugin SID`) against all directives to determine if there's a match. Only matching events will be sent afterwards to the associated directives for further processing. Because this initial quick comparison is done to _all_ events against _all_ directives, it becomes a main spot for potential performance bottleneck and should therefore be allocated with enough CPU resources.
 
 In our tests, a single CPU thread was able to perform around 17 million quick filtering checks per second, so the rate of incoming events/sec times the number of directives should not exceed that number.
 
@@ -22,7 +22,7 @@ $$ {n_{eps}} = \frac{{17,000,000} × 1}{10,000} = 1,700$$
 > By default, Dsiem uses the above calculation to determine the number of CPU threads to allocate for quick checks. 
 > You can override this by specifying `DSIEM_FILTER_THREADS` environment variable or `--filter-threads` startup parameter.
 
-If that rate limit is persistently exceeded, the queue will start filling up and eventually events will be dropped. In such cases, first consider increasing the number of threads allocated so that directives are processed in parallel. If that's not feasible consider applying one of, or a combination of, reconfigurations outlined below.
+If that rate limit is persistently exceeded, the queue will start filling up and eventually events will be dropped. In such cases, first consider increasing the number of threads allocated so that directives are processed in parallel. If that's not feasible, then consider applying one of, or a combination of, reconfigurations outlined below.
 
 ## Selectively ingest logs from Logstash
 
@@ -33,6 +33,8 @@ You can avoid sending unnecessary logs by reconfiguring the Logstash filter that
 ## Distribute directives to multiple nodes located on different hardware
 
 This is as straightforward horizontal scaling solution. By distributing the directives to multiple nodes each running on a different hardware, the system will have more processing power to execute the same workload in parallel.
+
+Note that for Dsiem in this repo, distributing directives to multiple dsiem backend nodes running on the same hardware most likely _will not_ achieve higher performance compared to just hosting all of those directives in a single node. A single backend node is capable of utilizing all of the CPU cores assigned to it, so multiple nodes will only introduce extra overhead without significant gain.
 
 ## Prioritise directives and allocate resources accordingly
 
@@ -49,7 +51,7 @@ Dsiem offers two such strategies to select from:
    - Backend nodes will have a relatively constant and predictable resource usage.
    - NATS, Logstash, and frontend nodes do not have to adapt to backend nodes condition.
 
-   The obvious (and rather severe) disadvantage of this is Dsiem will skip processing events from time to time.
+   The obvious (and rather severe) disadvantage of this is Dsiem may skip processing events from time to time.
 
 > [!NOTE]
 > Use this strategy by setting `max_queue` to a number higher than 0, and `max_delay` to 0.
@@ -69,7 +71,7 @@ Dsiem offers two such strategies to select from:
     - Sustained reduction of delivery rate from Logstash to frontends will cause Logstash to overflow its queue capacity, and depending on how it's configured, Logstash may end up stop receiving incoming events from its input. Using Logstash persistent queue backed by a large amount of storage space will not help either — in fact that may only worsen the processing delay issue.
 
 > [!NOTE]
-> Use this strategy by setting `max_queue` to 0, and `max_delay` to a number higher than 0. The queue length will then be unbounded, and `max_delay` >(seconds) will be used by backend to detect processing delay and report this condition to frontend, which will then apply back-pressure to Logstash.
+> Use this strategy by setting `max_queue` to 0, and `max_delay` to a number higher than 0. The queue length will then be unbounded, and `max_delay` (seconds) will be used by backend to detect processing delay and report this condition to frontend, which will then apply back-pressure to Logstash.
 > 
 > _Processing delay_ occurs when the duration between the time that _an event was received by frontend_ to the time when _that event is processed by a directive_, is greater than `max_delay`.
 
