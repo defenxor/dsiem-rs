@@ -298,14 +298,16 @@ pub fn load_directives(test_env: bool, sub_path: Option<Vec<String>>) -> Result<
     let mut dirs = Directives { directives: vec![] };
     for file_path in glob(&glob_pattern)?.flatten() {
         info!("reading {:?}", file_path);
-        let s = fs::read_to_string(file_path)?;
-        let loaded: Directives = serde_json::from_str(&s)?;
+        let s = fs::read_to_string(file_path.clone())?;
+        let loaded: Directives =
+            serde_json::from_str(&s).map_err(|e| anyhow!("{:?}: {}", file_path, e.to_string()))?;
         for d in loaded.directives {
             if d.disabled {
                 warn!(directive.id = d.id, "skipping disabled directive");
                 continue;
             }
-            validate_directive(&d, &dirs.directives)?;
+            validate_directive(&d, &dirs.directives)
+                .map_err(|e| anyhow!("{:?}: {}", file_path, e.to_string()))?;
             dirs.directives.push(d);
         }
     }
@@ -327,7 +329,10 @@ mod test {
             Some(vec!["directives".to_owned(), "directive1".to_owned()]),
         );
         assert!(res.is_err());
-        assert_eq!(res.unwrap_err().to_string(), "directive ID 1 already exist");
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("directive ID 1 already exist"));
 
         let dir2_path = vec!["directives".to_owned(), "directive2".to_owned()];
 
