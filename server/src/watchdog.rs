@@ -36,7 +36,6 @@ pub struct WatchdogOpt {
 }
 
 impl Watchdog {
-    #[tokio::main(flavor = "current_thread")]
     pub async fn start(&mut self, opt: WatchdogOpt) -> Result<()> {
         let subscriber = tracer::setup(opt.log_verbosity, opt.log_format, opt.otel_config.clone())?;
         let setup_result = tracing::subscriber::set_global_default(subscriber);
@@ -131,11 +130,10 @@ fn round(x: f64, decimals: u32) -> f64 {
 
 #[cfg(test)]
 mod test {
-    use std::thread;
 
     use super::*;
     use tokio::{task, time::sleep};
-    use tracing::Span;
+    use tracing::{Instrument, Span};
     use tracing_test::traced_test;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -165,11 +163,11 @@ mod test {
         };
 
         let span = Span::current();
-        let _detached = thread::spawn(move || {
-            let _h = span.entered();
+        task::spawn(async {
             let mut w = Watchdog::default();
-            _ = w.start(opt);
+            _ = w.start(opt).instrument(span).await;
         });
+
         _ = resptime_tx.send(100.0 * UNIT_MULTIPLIER).await;
         _ = resptime_tx.send(100.0 * UNIT_MULTIPLIER).await;
         _ = resptime_tx.send(25.0 * UNIT_MULTIPLIER).await;

@@ -16,10 +16,9 @@ use anyhow::{anyhow, Result};
 use tokio::{
     fs::{self, read_to_string, OpenOptions},
     io::{self, AsyncWriteExt},
-    runtime,
     sync::{
         broadcast::{self, error::RecvError},
-        mpsc, RwLock,
+        mpsc, Notify, RwLock,
     },
     task,
     time::{interval, sleep, timeout},
@@ -27,6 +26,7 @@ use tokio::{
 
 pub const UNBOUNDED_QUEUE_SIZE: usize = 1_000_000;
 const DEADLOCK_TIMEOUT_IN_SECONDS: u64 = 10;
+const BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE: usize = 64;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ManagerReport {
@@ -58,6 +58,8 @@ pub struct ManagerOpt {
     pub max_eps: u32,
     pub max_queue: usize,
     pub thread_allocation: ThreadAllocation,
+    pub tokio_handle: tokio::runtime::Handle,
+    pub notifier: Arc<Notify>,
 }
 pub struct Manager {
     option: ManagerOpt,
@@ -136,6 +138,7 @@ impl Manager {
         let mut targets = vec![];
 
         for directive in self.option.directives.iter() {
+            // this is a one-to-one channel between manager filter thread and backlog managers
             let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(load_param.limit_cap);
             let dir_manager = BacklogManager::new(
                 &option,
@@ -183,7 +186,7 @@ impl Manager {
             dir_len
         );
 
-        let h_managers = self.spawner(b_managers, self.option.thread_allocation.tokio_threads);
+        let h_managers = self.spawner(b_managers);
 
         let mut handles = vec![];
         for (idx, c) in chunks.into_iter().enumerate() {
@@ -241,6 +244,8 @@ impl Manager {
             handles.push(handle);
         }
 
+        self.option.notifier.notify_one();
+
         let _ = h_managers.join();
 
         _ = self.option.publisher.send(NormalizedEvent::default()); // ugly hack to exit the blocking recv()
@@ -248,38 +253,29 @@ impl Manager {
             _ = h.join();
         }
 
-        info!("backlog manager exiting");
+        info!("manager exiting");
         Ok(())
     }
 
-    fn spawner(
-        &self,
-        dir_managers: Vec<BacklogManager>,
-        num_of_threads: usize,
-    ) -> thread::JoinHandle<()> {
+    fn spawner(&self, dir_managers: Vec<BacklogManager>) -> thread::JoinHandle<()> {
         let span = Span::current();
-        let handle = thread::spawn(move || {
+        let rt = self.option.tokio_handle.clone();
+        thread::spawn(move || {
             let _h = span.entered();
             let span = Span::current();
-            runtime::Builder::new_multi_thread()
-                .worker_threads(num_of_threads)
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async move {
-                    let _h = span.entered();
-                    let mut set: task::JoinSet<_> = tokio::task::JoinSet::new();
-                    for mut dir_manager in dir_managers {
-                        let span = Span::current();
-                        set.spawn(async move {
-                            let _ = dir_manager.start().instrument(span).await;
-                        });
-                    }
-                    while set.join_next().await.is_some() {}
-                    info!("exiting directive manager runtime");
-                });
-        });
-        handle
+            rt.block_on(async move {
+                let _h = span.entered();
+                let mut set: task::JoinSet<_> = tokio::task::JoinSet::new();
+                for mut dir_manager in dir_managers {
+                    let span = Span::current();
+                    set.spawn(async move {
+                        let _ = dir_manager.start().instrument(span).await;
+                    });
+                }
+                while set.join_next().await.is_some() {}
+                info!("exiting directive manager runtime");
+            });
+        })
     }
 }
 
@@ -327,7 +323,10 @@ impl BacklogManager {
         report_interval: &u64,
         upstream_rx: mpsc::Receiver<NormalizedEvent>,
     ) -> BacklogManager {
-        let (downstream_tx, _) = broadcast::channel(1024);
+        // this channel is a one-to-many channel between backlog manager and its backlogs
+        // there's no need for large capacity since there's already a configurable queue in upstream
+        // the size of this channel also linearly affects the number of directives that can be load given the same memory resources
+        let (downstream_tx, _) = broadcast::channel(BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE);
         let load_param = load_param.clone();
         let mut option = option.clone();
         option.directives = vec![];
@@ -664,6 +663,8 @@ mod test {
             let vulns = Arc::new(
                 crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
             );
+
+            let rt_handle = tokio::runtime::Handle::current();
             ManagerOpt {
                 test_env: true,
                 reload_backlogs: true,
@@ -689,6 +690,8 @@ mod test {
                     filter_threads: 1,
                     tokio_threads: 1,
                 },
+                tokio_handle: rt_handle,
+                notifier: Arc::new(Notify::new()),
             }
         };
 
@@ -807,7 +810,7 @@ mod test {
         _ = cancel_tx.send(());
         sleep(Duration::from_millis(4000)).await;
         assert!(logs_contain("1 backlogs saved"));
-        assert!(logs_contain("backlog manager exiting"));
+        assert!(logs_contain("manager exiting"));
 
         // successful loading from disk
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1024);
