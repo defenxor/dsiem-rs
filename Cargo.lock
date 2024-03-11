@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "dsiem"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -790,7 +790,7 @@ dependencies = [
 
 [[package]]
 name = "dsiem-ui"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "chrono",
  "gloo-console",
