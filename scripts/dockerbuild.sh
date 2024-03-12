@@ -18,7 +18,7 @@ image_name=$1
 
 tmpctx=$dir/ctx
 mkdir -p $tmpctx
-rsync -vhra --delete ./ $tmpctx/ --include='**.gitignore' --exclude='/.git' --exclude-from=<(git -C ./ ls-files --exclude-standard -oi --directory)
+rsync -vhra --delete ./ $tmpctx/ --include='**.gitignore' --exclude='/.git' --exclude='Dockerfile' --exclude-from=<(git -C ./ ls-files --exclude-standard -oi --directory)
 
 pkg="$tmpctx/Cargo.toml"
 [ ! -f "$pkg" ] && echo $pkg isnt available && exit 1
