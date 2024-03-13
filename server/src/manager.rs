@@ -473,6 +473,7 @@ impl BacklogManager {
 
         loop {
             tokio::select! {
+                biased;
                 _ = cancel_rx.recv() => {
                     debug!(directive.id = self.directive.id, "cancel signal received, exiting manager thread");
                     self.upstream_rx.close();
@@ -493,18 +494,6 @@ impl BacklogManager {
                         }
                     }
                     break;
-                }
-                _ = report.tick() => {
-                    let length = {
-                        let r = self.backlogs.read().await;
-                        r.len()
-                    };
-                    let prev = mgr_report.active_backlogs;
-                    mgr_report.active_backlogs = length;
-
-                    if mgr_report.active_backlogs != prev {
-                        let _ = report_sender.try_send(mgr_report.clone());
-                    }
                 },
                 _ = delete_rx.recv() => {
                     clean_deleted().await;
@@ -583,6 +572,18 @@ impl BacklogManager {
                         let clone = Arc::clone(&arced);
                         backlogs.push(arced);
                         let _detached = self.start_backlog(Some(event.clone()), clone).await;
+                    }
+                },
+                _ = report.tick() => {
+                    let length = {
+                        let r = self.backlogs.read().await;
+                        r.len()
+                    };
+                    let prev = mgr_report.active_backlogs;
+                    mgr_report.active_backlogs = length;
+
+                    if mgr_report.active_backlogs != prev {
+                        let _ = report_sender.try_send(mgr_report.clone());
                     }
                 }
             }
