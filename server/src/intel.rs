@@ -110,8 +110,8 @@ pub fn load_intel(test_env: bool, subdir: Option<Vec<String>>) -> Result<IntelPl
             }
         }
     }
-
     checkers.retain(|c| c.enabled);
+
     let len = checkers.len();
     if len > 0 {
         info!("loaded {} intel plugins", len);
@@ -125,6 +125,7 @@ pub fn load_intel(test_env: bool, subdir: Option<Vec<String>>) -> Result<IntelPl
         // Create the cache.
         .build();
 
+    checkers.shrink_to_fit();
     let res = IntelPlugin {
         intel_sources: intels,
         checkers: Arc::new(checkers),

@@ -114,6 +114,7 @@ pub fn load_vuln(test_env: bool, subdir: Option<Vec<String>>) -> Result<VulnPlug
         // Create the cache.
         .build();
 
+    checkers.shrink_to_fit();
     let res = VulnPlugin {
         vuln_sources: vulns,
         checkers: Arc::new(checkers),

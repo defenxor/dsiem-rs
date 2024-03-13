@@ -123,6 +123,7 @@ impl Directive {
             }
             result.push(r);
         }
+        result.shrink_to_fit();
         result
     }
 }
@@ -315,6 +316,7 @@ pub fn load_directives(test_env: bool, sub_path: Option<Vec<String>>) -> Result<
         return Err(anyhow!("cannot load any directive"));
     }
     info!("{} directives found and loaded", dirs.directives.len());
+    dirs.directives.shrink_to_fit();
     Ok(dirs.directives)
 }
 

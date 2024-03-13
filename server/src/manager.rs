@@ -150,9 +150,11 @@ impl Manager {
             ); // Remove reference
             b_managers.push(dir_manager);
 
-            let (sid_pairs, taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
+            let (mut sid_pairs, mut taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
             let contains_pluginrule = !sid_pairs.is_empty();
             let contains_taxorule = !taxo_pairs.is_empty();
+            sid_pairs.shrink_to_fit();
+            taxo_pairs.shrink_to_fit();
 
             targets.push(FilterTarget {
                 id: directive.id,
