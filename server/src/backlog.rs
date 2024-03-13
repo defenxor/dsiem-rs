@@ -10,14 +10,16 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr},
-    ops::Deref,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicI64, AtomicU16, AtomicU8, Ordering::Relaxed},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::{
@@ -60,41 +62,41 @@ pub struct Backlog {
     pub tag: String,
     pub kingdom: String,
     pub category: String,
-    pub created_time: RwLock<i64>,
-    pub update_time: RwLock<i64>,
-    pub risk: RwLock<u8>,
-    pub risk_class: RwLock<String>,
+    pub created_time: AtomicI64,
+    pub update_time: AtomicI64,
+    pub risk: AtomicU8,
+    pub risk_class: Mutex<String>,
     pub rules: Vec<DirectiveRule>,
-    pub src_ips: RwLock<HashSet<IpAddr>>,
-    pub dst_ips: RwLock<HashSet<IpAddr>>,
-    pub networks: RwLock<HashSet<String>>,
+    pub src_ips: Mutex<HashSet<IpAddr>>,
+    pub dst_ips: Mutex<HashSet<IpAddr>>,
+    pub networks: Mutex<HashSet<String>>,
     #[serde(skip_serializing_if = "is_locked_data_empty")]
     #[serde(default)]
-    pub intel_hits: RwLock<HashSet<IntelResult>>,
+    pub intel_hits: Mutex<HashSet<IntelResult>>,
     #[serde(skip_serializing_if = "is_locked_data_empty")]
     #[serde(default)]
-    pub vulnerabilities: RwLock<HashSet<VulnResult>>,
+    pub vulnerabilities: Mutex<HashSet<VulnResult>>,
     #[serde(skip_serializing_if = "is_locked_data_empty")]
     #[serde(default)]
-    pub custom_data: RwLock<HashSet<CustomData>>,
+    pub custom_data: Mutex<HashSet<CustomData>>,
 
     #[serde(skip)]
-    pub last_srcport: RwLock<u16>, // copied from event for vuln check
+    pub last_srcport: AtomicU16, // copied from event for vuln check
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saved_last_srcport: Option<u16>, // saveable version of last_srcport
     #[serde(skip)]
-    pub last_dstport: RwLock<u16>, // copied from event for vuln check
+    pub last_dstport: AtomicU16, // copied from event for vuln check
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saved_last_dstport: Option<u16>, // saveable version of last_dstport
 
     #[serde(skip)]
     pub all_rules_always_active: bool, // copied from directive
     #[serde(skip)]
-    pub priority: u8, // copied from directive
+    pub priority: u8, // copied from directive, never updated
     #[serde(skip)]
-    pub current_stage: RwLock<u8>,
+    pub current_stage: AtomicU8,
     #[serde(skip)]
-    pub highest_stage: u8,
+    pub highest_stage: u8, // never updated
     #[serde(skip)]
     pub assets: Arc<NetworkAssets>,
     #[serde(skip)]
@@ -104,28 +106,28 @@ pub struct Backlog {
     #[serde(skip)]
     pub found_channel: FoundChannel,
     #[serde(skip)]
-    pub state: RwLock<BacklogState>,
+    pub state: Mutex<BacklogState>,
     #[serde(skip)]
-    pub min_alarm_lifetime: i64,
+    pub min_alarm_lifetime: i64, // never updated
     #[serde(skip)]
-    pub med_risk_min: u8,
+    pub med_risk_min: u8, // never updated
     #[serde(skip)]
-    pub med_risk_max: u8,
+    pub med_risk_max: u8, // never updated
     #[serde(skip)]
     pub intels: Option<Arc<IntelPlugin>>,
     #[serde(skip)]
     pub vulns: Option<Arc<VulnPlugin>>,
     #[serde(skip)]
-    pub intel_private_ip: bool,
+    pub intel_private_ip: bool, // never updated
     #[serde(skip)]
-    directive_id: u64,
+    directive_id: u64, // never updated
     #[serde(skip)]
     log_tx: Option<crossbeam_channel::Sender<LogWriterMessage>>,
 }
 
 // This is only used for serialize
-fn is_locked_data_empty<T>(s: &RwLock<HashSet<T>>) -> bool {
-    let r = s.read();
+fn is_locked_data_empty<T>(s: &Mutex<HashSet<T>>) -> bool {
+    let r = s.lock();
     r.is_empty()
 }
 
@@ -197,7 +199,7 @@ impl Backlog {
             status: o.default_status.to_owned(),
             tag: o.default_tag.to_owned(),
             intel_private_ip: o.intel_private_ip,
-            current_stage: RwLock::new(1),
+            current_stage: AtomicU8::new(1),
             priority: o.directive.priority,
             all_rules_always_active: o.directive.all_rules_always_active,
             backpressure_tx: Some(o.bp_tx.clone()),
@@ -209,7 +211,7 @@ impl Backlog {
             min_alarm_lifetime: o.min_alarm_lifetime,
             med_risk_min: o.med_risk_min,
             med_risk_max: o.med_risk_max,
-            state: RwLock::new(BacklogState::Created),
+            state: Mutex::new(BacklogState::Created),
             ..Default::default()
         };
         if let Some(v) = o.event {
@@ -286,18 +288,18 @@ impl Backlog {
         backlog.rules = loaded.rules.clone();
 
         if let Some(v) = loaded.saved_last_srcport {
-            backlog.last_srcport = RwLock::new(v);
+            backlog.last_srcport = AtomicU16::new(v);
         }
         if let Some(v) = loaded.saved_last_dstport {
-            backlog.last_dstport = RwLock::new(v);
+            backlog.last_dstport = AtomicU16::new(v);
         }
 
         for r in backlog.rules.iter_mut() {
             if let Some(v) = r.saved_sticky_diffdata.clone() {
-                r.sticky_diffdata = Arc::new(RwLock::new(v));
+                r.sticky_diffdata = Arc::new(Mutex::new(v));
             }
             if let Some(v) = r.saved_event_ids.clone() {
-                r.event_ids = Arc::new(RwLock::new(v));
+                r.event_ids = Arc::new(Mutex::new(v));
             }
         }
         backlog.highest_stage = backlog
@@ -310,7 +312,7 @@ impl Backlog {
             .rules
             .iter()
             .filter(|v| {
-                let r = v.status.read();
+                let r = v.status.lock();
                 r.is_empty()
             })
             .map(|x| x.stage)
@@ -331,7 +333,7 @@ impl Backlog {
                 backlog.id,
                 "loaded with current_stage: {}, highest_stage: {}", v, backlog.highest_stage
             );
-            backlog.current_stage = RwLock::new(v);
+            backlog.current_stage = AtomicU8::new(v);
         } else {
             let e = anyhow!("cannot determine the current stage, skipping this backlog");
             error!(backlog.id, "{}", e.to_string());
@@ -351,35 +353,35 @@ impl Backlog {
             kingdom: (*running.kingdom).to_string(),
             category: (*running.category).to_string(),
             tag: (*running.tag).to_string(),
-            created_time: (*running.created_time.read()).into(),
-            update_time: (*running.update_time.read()).into(),
-            risk: (*running.risk.read()).into(),
-            risk_class: (*running.risk_class.read()).to_string().into(),
+            created_time: AtomicI64::new(running.created_time.load(Relaxed)),
+            update_time: AtomicI64::new(running.update_time.load(Relaxed)),
+            risk: AtomicU8::new(running.risk.load(Relaxed)),
+            risk_class: (*running.risk_class.lock()).to_string().into(),
             rules: running.rules.clone(),
-            src_ips: (*running.src_ips.read()).clone().into(),
-            dst_ips: (*running.dst_ips.read()).clone().into(),
-            networks: (*running.networks.read()).clone().into(),
-            custom_data: (*running.custom_data.read()).clone().into(),
-            intel_hits: (*running.intel_hits.read()).clone().into(),
-            vulnerabilities: (*running.vulnerabilities.read()).clone().into(),
+            src_ips: (*running.src_ips.lock()).clone().into(),
+            dst_ips: (*running.dst_ips.lock()).clone().into(),
+            networks: (*running.networks.lock()).clone().into(),
+            custom_data: (*running.custom_data.lock()).clone().into(),
+            intel_hits: (*running.intel_hits.lock()).clone().into(),
+            vulnerabilities: (*running.vulnerabilities.lock()).clone().into(),
             ..Default::default()
         };
 
-        let r = running.last_dstport.read();
-        if *r != 0 {
-            backlog.saved_last_dstport = Some(*r);
+        let r = running.last_dstport.load(Relaxed);
+        if r != 0 {
+            backlog.saved_last_dstport = Some(r);
         }
-        let r = running.last_srcport.read();
-        if *r != 0 {
-            backlog.saved_last_srcport = Some(*r);
+        let r = running.last_srcport.load(Relaxed);
+        if r != 0 {
+            backlog.saved_last_srcport = Some(r);
         }
         for rule in backlog.rules.iter_mut() {
-            let r = rule.sticky_diffdata.read();
+            let r = rule.sticky_diffdata.lock();
             if !r.sdiff_int.is_empty() || !r.sdiff_string.is_empty() {
                 let v = (*r).clone();
                 rule.saved_sticky_diffdata = Some(v);
             }
-            let r = rule.event_ids.read();
+            let r = rule.event_ids.lock();
             if !r.is_empty() {
                 let v = (*r).clone();
                 rule.saved_event_ids = Some(v);
@@ -457,7 +459,7 @@ impl Backlog {
                     // note that Lagged is silently ignored
                     {
 
-                        let r = self.state.read();
+                        let r = self.state.lock();
                         if *r != BacklogState::Running {
                             warn!(backlog.id = self.id, event.id, "event received, but backlog state is not running");
                             _ = self.report_to_manager(false);
@@ -487,24 +489,24 @@ impl Backlog {
         // this calculates in seconds
         let limit = Utc::now().timestamp() - self.min_alarm_lifetime;
         let curr_rule = self.current_rule()?;
-        let start = curr_rule.start_time.read();
+        let start = curr_rule.start_time.lock();
         let timeout = curr_rule.timeout;
         let max_time = *start + (timeout as i64);
         Ok((max_time < limit, max_time - limit))
     }
     fn set_state(&self, s: BacklogState) {
-        let mut w = self.state.write();
+        let mut w = self.state.lock();
         *w = s;
     }
 
     fn is_time_in_order(&self, ts: &DateTime<Utc>) -> bool {
-        let reader = self.current_stage.read();
+        let reader = self.current_stage.load(Relaxed);
         let prev_stage_ts = self
             .rules
             .iter()
-            .filter(|v| v.stage < *reader)
+            .filter(|v| v.stage < reader)
             .map(|v| {
-                let r = v.end_time.read();
+                let r = v.end_time.lock();
                 *r
             })
             .max()
@@ -520,8 +522,7 @@ impl Backlog {
         let s = if let Some(v) = stage {
             v
         } else {
-            let reader = self.current_stage.read();
-            *reader
+            self.current_stage.load(Relaxed)
         };
         self.rules
             .iter()
@@ -541,7 +542,7 @@ impl Backlog {
         let n_string: usize;
         let n_int: usize;
         {
-            let reader = curr_rule.sticky_diffdata.read();
+            let reader = curr_rule.sticky_diffdata.lock();
             n_string = reader.sdiff_string.len();
             n_int = reader.sdiff_int.len();
         }
@@ -582,7 +583,7 @@ impl Backlog {
 
         // if stickydiff is set, there must be added member to sdiff_string or sdiff_int
         if !curr_rule.sticky_different.is_empty() {
-            let reader = curr_rule.sticky_diffdata.read();
+            let reader = curr_rule.sticky_diffdata.lock();
             if n_string == reader.sdiff_string.len() && n_int == reader.sdiff_int.len() {
                 debug!(
                     "backlog can't find new unique value in stickydiff field {}",
@@ -618,7 +619,7 @@ impl Backlog {
 
     fn is_stage_reach_max_event_count(&self) -> Result<bool> {
         let curr_rule = self.current_rule()?;
-        let reader = curr_rule.event_ids.read();
+        let reader = curr_rule.event_ids.lock();
         let len = reader.len();
         debug!(
             backlog.id = self.id,
@@ -629,43 +630,38 @@ impl Backlog {
 
     fn set_rule_status(&self, status: &str) -> Result<()> {
         let curr_rule = self.current_rule()?;
-        let mut w = curr_rule.status.write();
+        let mut w = curr_rule.status.lock();
         *w = status.to_owned();
         Ok(())
     }
     fn set_rule_endtime(&self, t: DateTime<Utc>) -> Result<()> {
         let curr_rule = self.current_rule()?;
-        let mut w = curr_rule.end_time.write();
+        let mut w = curr_rule.end_time.lock();
         *w = t.timestamp();
         Ok(())
     }
     fn set_rule_starttime(&self, ts: DateTime<Utc>) -> Result<()> {
         let curr_rule = self.current_rule()?;
-        let mut w = curr_rule.start_time.write();
+        let mut w = curr_rule.start_time.lock();
         *w = ts.timestamp();
         Ok(())
     }
 
     fn update_risk(&self) -> Result<bool> {
-        let reader = self.src_ips.read();
+        let reader = self.src_ips.lock();
         let src_value = reader
             .iter()
             .map(|v| self.assets.get_value(v))
             .max()
             .unwrap_or_default();
-        let reader = self.dst_ips.read();
+        let reader = self.dst_ips.lock();
         let dst_value = reader
             .iter()
             .map(|v| self.assets.get_value(v))
             .max()
             .unwrap_or_default();
 
-        let prior_risk: u8;
-        {
-            let reader = self.risk.read();
-            prior_risk = *reader.deref();
-        }
-
+        let prior_risk = self.risk.load(Relaxed);
         let value = std::cmp::max(src_value, dst_value);
         let priority = self.priority;
         let reliability = self.current_rule()?.reliability;
@@ -675,8 +671,7 @@ impl Backlog {
                 backlog.id = self.id,
                 "risk changed from {} to {}", prior_risk, risk
             );
-            let mut writer = self.risk.write();
-            *writer = risk;
+            self.risk.swap(risk, Relaxed);
             Ok(true)
         } else {
             Ok(false)
@@ -684,9 +679,8 @@ impl Backlog {
     }
 
     fn update_risk_class(&self) {
-        let mut w = self.risk_class.write();
-        let r = self.risk.read();
-        let risk = *r;
+        let mut w = self.risk_class.lock();
+        let risk = self.risk.load(Relaxed);
         *w = if risk < self.med_risk_min {
             "Low".to_string()
         } else if risk >= self.med_risk_min && risk <= self.med_risk_max {
@@ -697,8 +691,7 @@ impl Backlog {
     }
 
     fn is_last_stage(&self) -> bool {
-        let reader = self.current_stage.read();
-        *reader == self.highest_stage
+        self.current_stage.load(Relaxed) == self.highest_stage
     }
 
     async fn process_matched_event(&self, event: &NormalizedEvent) -> Result<()> {
@@ -748,10 +741,11 @@ impl Backlog {
     }
 
     fn increase_stage(&self) -> bool {
-        let mut w = self.current_stage.write();
-        if *w < self.highest_stage {
-            *w += 1;
-            info!("stage increased to {}", *w);
+        let mut stage = self.current_stage.load(Relaxed);
+        if stage < self.highest_stage {
+            stage += 1;
+            self.current_stage.swap(stage, Relaxed);
+            info!("stage increased to {}", stage);
             true
         } else {
             info!("stage is at the highest level");
@@ -762,7 +756,7 @@ impl Backlog {
     fn append_and_write_event(&self, event: &NormalizedEvent, stage: Option<u8>) -> Result<()> {
         let target_rule = self.get_rule(stage)?;
         {
-            let mut w = target_rule.event_ids.write();
+            let mut w = target_rule.event_ids.lock();
             w.insert(event.id.clone());
             let ttl_events = w.len();
             debug!(
@@ -773,14 +767,14 @@ impl Backlog {
 
         const DEFAULT_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
         {
-            let mut w = self.src_ips.write();
+            let mut w = self.src_ips.lock();
             w.insert(event.src_ip);
             if w.len() > 1 && w.contains(&DEFAULT_IP) {
                 w.remove(&DEFAULT_IP);
             }
         }
         {
-            let mut w = self.dst_ips.write();
+            let mut w = self.dst_ips.lock();
             w.insert(event.dst_ip);
             if w.len() > 1 && w.contains(&DEFAULT_IP) {
                 w.remove(&DEFAULT_IP);
@@ -788,7 +782,7 @@ impl Backlog {
         }
 
         {
-            let mut w = self.custom_data.write();
+            let mut w = self.custom_data.lock();
             if !event.custom_data1.is_empty() {
                 w.insert(CustomData {
                     label: event.custom_label1.clone(),
@@ -817,28 +811,20 @@ impl Backlog {
 
     fn set_ports(&self, e: &NormalizedEvent) {
         if e.src_port != 0 {
-            let mut w = self.last_srcport.write();
-            *w = e.src_port;
+            self.last_srcport.swap(e.src_port, Relaxed);
         }
         if e.dst_port != 0 {
-            let mut w = self.last_dstport.write();
-            *w = e.dst_port;
+            self.last_dstport.swap(e.dst_port, Relaxed);
         }
     }
     fn set_update_time(&self) {
-        let mut w = self.update_time.write();
-        *w = Utc::now().timestamp();
+        self.update_time.swap(Utc::now().timestamp(), Relaxed);
     }
 
     fn set_created_time(&self) {
-        let is_empty = {
-            let r = self.created_time.read();
-            *r == 0
-        };
-        if is_empty {
-            let r = self.update_time.read();
-            let mut w = self.created_time.write();
-            *w = *r;
+        let created_time = self.created_time.load(Relaxed);
+        if created_time == 0 {
+            self.created_time.swap(created_time, Relaxed);
         }
     }
 
@@ -855,9 +841,9 @@ impl Backlog {
     }
 
     fn update_networks(&self) {
-        let mut w = self.networks.write();
+        let mut w = self.networks.lock();
         for v in [&self.src_ips, &self.dst_ips] {
-            let r = v.read();
+            let r = v.lock();
             for ip in r.iter() {
                 if let Some(v) = self.assets.get_asset_networks(ip) {
                     for x in v {
@@ -872,8 +858,7 @@ impl Backlog {
         let s = if let Some(v) = stage {
             v
         } else {
-            let reader = self.current_stage.read();
-            *reader
+            self.current_stage.load(Relaxed)
         };
         let sae = SiemAlarmEvent {
             id: self.id.clone(),
@@ -896,7 +881,8 @@ impl Backlog {
     }
 
     async fn update_alarm(&self, check_intvuln: bool) -> Result<()> {
-        if *self.risk.read() == 0 {
+        let risk = self.risk.load(Relaxed);
+        if risk == 0 {
             trace!("risk is zero, skip updating alarm");
             return Ok(());
         }
@@ -941,11 +927,11 @@ impl Backlog {
             .ok_or_else(|| anyhow!("intels is none"))?;
         let mut targets = HashSet::new();
         for s in [&self.src_ips, &self.dst_ips] {
-            let r = s.read();
+            let r = s.lock();
             targets.extend(r.clone());
         }
         let res = intels.run_checkers(self.intel_private_ip, targets).await?;
-        let mut w = self.intel_hits.write();
+        let mut w = self.intel_hits.lock();
         if res == *w {
             debug!("no new intel match found");
             return Ok(());
@@ -966,11 +952,11 @@ impl Backlog {
         for r in self.rules.iter() {
             let ips: HashSet<&str> = r.from.split(',').collect();
             let ports: HashSet<&str> = r.port_from.split(',').collect();
-            let port = *self.last_srcport.read();
+            let port = self.last_srcport.load(Relaxed);
             vs.add(ips, ports, port);
             let ips: HashSet<&str> = r.to.split(',').collect();
             let ports: HashSet<&str> = r.port_to.split(',').collect();
-            let port = *self.last_dstport.read();
+            let port = self.last_dstport.load(Relaxed);
             vs.add(ips, ports, port);
         }
 
@@ -981,7 +967,7 @@ impl Backlog {
             debug!("vulnerability check for {}:{}", ip, port);
             let s = ip.to_string() + ":" + &port.to_string();
             {
-                let r = self.vulnerabilities.read();
+                let r = self.vulnerabilities.lock();
                 let found = r.iter().filter(|v| v.term == s).last();
                 if found.is_some() {
                     continue;
@@ -991,7 +977,7 @@ impl Backlog {
             combined.extend(res);
         }
 
-        let mut w = self.vulnerabilities.write();
+        let mut w = self.vulnerabilities.lock();
         if combined == *w {
             debug!("no new vulnerability match found");
             return Ok(());
@@ -1115,14 +1101,12 @@ mod test {
 
         let mut b = Backlog::new(&get_opt()).unwrap();
         {
-            let mut w = b.last_srcport.write();
-            *w = last_srcport;
-            let mut w = b.last_dstport.write();
-            *w = last_dstport;
+            b.last_srcport.swap(last_srcport, Relaxed);
+            b.last_dstport.swap(last_dstport, Relaxed);
             for rule in b.rules.iter_mut() {
-                let mut w = rule.sticky_diffdata.write();
+                let mut w = rule.sticky_diffdata.lock();
                 *w = stickydiff_data.clone();
-                let mut w = rule.event_ids.write();
+                let mut w = rule.event_ids.lock();
                 *w = event_ids.clone();
             }
         }
@@ -1138,11 +1122,11 @@ mod test {
 
         // runable test, reverses saveable
         let runnable = Backlog::runnable_version(get_opt(), saveable).unwrap();
-        assert_eq!(*runnable.last_srcport.read(), last_srcport);
-        assert_eq!(*runnable.last_dstport.read(), last_dstport);
+        assert_eq!(runnable.last_srcport.load(Relaxed), last_srcport);
+        assert_eq!(runnable.last_dstport.load(Relaxed), last_dstport);
         for rule in runnable.rules.iter() {
-            assert_eq!(*rule.event_ids.read(), event_ids);
-            assert_eq!(*rule.sticky_diffdata.read(), stickydiff_data);
+            assert_eq!(*rule.event_ids.lock(), event_ids);
+            assert_eq!(*rule.sticky_diffdata.lock(), stickydiff_data);
         }
 
         // should throw error if the saved backlog and the directive have the same ID but different title
@@ -1159,7 +1143,7 @@ mod test {
         let b = Backlog::new(&get_opt()).unwrap();
         let mut saveable = Backlog::saveable_version(Arc::new(b));
         for rule in saveable.rules.iter_mut() {
-            rule.status = Arc::new(RwLock::new("finished".to_string()));
+            rule.status = Arc::new(Mutex::new("finished".to_string()));
         }
         let res = Backlog::runnable_version(get_opt(), saveable);
         assert!(res

@@ -1,5 +1,5 @@
 use cidr::IpCidr;
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
 use std::{collections::HashSet, net::IpAddr, sync::Arc};
@@ -74,13 +74,13 @@ pub struct DirectiveRule {
     pub timeout: u32,
     #[serde(skip_serializing_if = "is_locked_zero_or_less")]
     #[serde(default)]
-    pub start_time: Arc<RwLock<i64>>,
+    pub start_time: Arc<Mutex<i64>>,
     #[serde(skip_serializing_if = "is_locked_zero_or_less")]
     #[serde(default)]
-    pub end_time: Arc<RwLock<i64>>,
+    pub end_time: Arc<Mutex<i64>>,
     #[serde(skip_serializing_if = "is_locked_string_empty")]
     #[serde(default)]
-    pub status: Arc<RwLock<String>>,
+    pub status: Arc<Mutex<String>>,
     #[serde(skip_serializing_if = "String::is_empty")]
     #[serde(default)]
     pub sticky_different: String,
@@ -103,23 +103,23 @@ pub struct DirectiveRule {
     #[serde(default)]
     pub custom_label3: String,
     #[serde(skip)]
-    pub sticky_diffdata: Arc<RwLock<StickyDiffData>>,
+    pub sticky_diffdata: Arc<Mutex<StickyDiffData>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saved_sticky_diffdata: Option<StickyDiffData>, // saveable version of sticky_diffdata
     #[serde(skip)]
-    pub event_ids: Arc<RwLock<HashSet<String>>>,
+    pub event_ids: Arc<Mutex<HashSet<String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saved_event_ids: Option<HashSet<String>>, // saveable version of event_ids
 }
 
 // This is only used for serialize
-fn is_locked_zero_or_less(num: &Arc<RwLock<i64>>) -> bool {
-    let r = num.read();
+fn is_locked_zero_or_less(num: &Arc<Mutex<i64>>) -> bool {
+    let r = num.lock();
     *r <= 0
 }
 // This is only used for serialize
-fn is_locked_string_empty(s: &Arc<RwLock<String>>) -> bool {
-    let r = s.read();
+fn is_locked_string_empty(s: &Arc<Mutex<String>>) -> bool {
+    let r = s.lock();
     r.is_empty()
 }
 
@@ -421,9 +421,9 @@ pub struct StickyDiffData {
 }
 
 // is_int_stickydiff checks if v fulfill stickydiff condition
-fn is_int_stickydiff(v: u64, s: &Arc<RwLock<StickyDiffData>>, add_new: bool) -> Result<bool> {
+fn is_int_stickydiff(v: u64, s: &Arc<Mutex<StickyDiffData>>, add_new: bool) -> Result<bool> {
     {
-        let r_guard = s.read();
+        let r_guard = s.lock();
         for n in r_guard.sdiff_int.iter() {
             if *n == v {
                 return Ok(false);
@@ -431,16 +431,16 @@ fn is_int_stickydiff(v: u64, s: &Arc<RwLock<StickyDiffData>>, add_new: bool) -> 
         }
     }
     if add_new {
-        let mut w_guard = s.write();
+        let mut w_guard = s.lock();
         w_guard.sdiff_int.push(v); // add it to the collection
     }
     Ok(true)
 }
 
 // is_string_stickydiff checks if v fulfill stickydiff condition
-fn is_string_stickydiff(v: &str, s: &Arc<RwLock<StickyDiffData>>, add_new: bool) -> Result<bool> {
+fn is_string_stickydiff(v: &str, s: &Arc<Mutex<StickyDiffData>>, add_new: bool) -> Result<bool> {
     {
-        let r_guard = s.read();
+        let r_guard = s.lock();
         for s in r_guard.sdiff_string.iter() {
             if *s == v {
                 return Ok(false);
@@ -448,7 +448,7 @@ fn is_string_stickydiff(v: &str, s: &Arc<RwLock<StickyDiffData>>, add_new: bool)
         }
     }
     if add_new {
-        let mut w_guard = s.write();
+        let mut w_guard = s.lock();
         w_guard.sdiff_string.push(v.to_string());
     }
     Ok(true)
@@ -1040,7 +1040,7 @@ mod test {
             let actual = rule.does_event_match(&a, &event, true);
             let sticky_diff_actual: StickyDiffData;
             {
-                let r = rule.sticky_diffdata.read();
+                let r = rule.sticky_diffdata.lock();
                 sticky_diff_actual = r.to_owned();
             }
 

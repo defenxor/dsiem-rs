@@ -456,7 +456,7 @@ impl BacklogManager {
                 "cleaning deleted backlog if any"
             );
             backlogs.retain(|x| {
-                let s = x.state.read();
+                let s = x.state.lock();
                 *s == BacklogState::Created || *s == BacklogState::Running
             });
         };
