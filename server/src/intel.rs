@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use glob::glob;
-use moka::sync::Cache;
+use mini_moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
 use tracing::{debug, info, instrument};
