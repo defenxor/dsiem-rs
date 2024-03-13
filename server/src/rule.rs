@@ -486,6 +486,7 @@ pub fn get_quick_check_pairs(rules: &Vec<DirectiveRule>) -> (Vec<SIDPair>, Vec<T
     (sid_pairs, taxo_pairs)
 }
 
+#[inline(always)]
 pub fn quick_check_taxo_rule(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
     pairs
         .iter()
@@ -494,6 +495,7 @@ pub fn quick_check_taxo_rule(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
 }
 
 // QuickCheckPluginRule checks event against the key fields in a directive plugin rules
+#[inline(always)]
 pub fn quick_check_plugin_rule(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
     pairs
         .iter()
