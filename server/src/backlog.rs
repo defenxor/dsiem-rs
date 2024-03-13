@@ -741,10 +741,9 @@ impl Backlog {
     }
 
     fn increase_stage(&self) -> bool {
-        let mut stage = self.current_stage.load(Relaxed);
+        let stage = self.current_stage.load(Relaxed);
         if stage < self.highest_stage {
-            stage += 1;
-            self.current_stage.swap(stage, Relaxed);
+            self.current_stage.fetch_add(1, Relaxed);
             info!("stage increased to {}", stage);
             true
         } else {
