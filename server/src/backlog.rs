@@ -744,7 +744,7 @@ impl Backlog {
         let stage = self.current_stage.load(Relaxed);
         if stage < self.highest_stage {
             self.current_stage.fetch_add(1, Relaxed);
-            info!("stage increased to {}", stage);
+            info!("stage increased to {}", stage + 1);
             true
         } else {
             info!("stage is at the highest level");
