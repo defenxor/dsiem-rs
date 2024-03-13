@@ -206,7 +206,6 @@ impl Manager {
                     let mut event = match rx.blocking_recv() {
                         Ok(event) => event,
                         Err(RecvError::Lagged(n)) => {
-                            // here's the main mechanism to allow lagged managers to catch up
                             warn!("filtering lagged and skipped {} events", n);
                             continue;
                         }
