@@ -306,9 +306,8 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     });
 
     if listen {
-        while let Some(res) = set.join_next().await {
-            let inner_res = res.unwrap();
-            if let Err(e) = inner_res {
+        while let Some(Ok(res)) = set.join_next().await {
+            if let Err(e) = res {
                 error!("{:?}", e);
                 _ = cancel_tx.send(());
                 return Err(e);
