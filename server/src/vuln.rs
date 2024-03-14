@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use glob::glob;
-use moka::sync::Cache;
+use mini_moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
 use tracing::{debug, info, instrument};
@@ -114,6 +114,7 @@ pub fn load_vuln(test_env: bool, subdir: Option<Vec<String>>) -> Result<VulnPlug
         // Create the cache.
         .build();
 
+    checkers.shrink_to_fit();
     let res = VulnPlugin {
         vuln_sources: vulns,
         checkers: Arc::new(checkers),
@@ -147,7 +148,11 @@ mod test {
         let str_err = res.unwrap_err().to_string();
         assert!(str_err == "get request error" || str_err == "deadline has elapsed");
 
-        let mut server = mockito::Server::new_with_port_async(18082).await;
+        let mut server = mockito::Server::new_with_opts_async(mockito::ServerOpts {
+            port: 18082,
+            ..Default::default()
+        })
+        .await;
         let _m1 = server
             .mock("GET", "/?ip=1.0.0.1&port=25")
             .with_status(200)

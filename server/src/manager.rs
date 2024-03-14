@@ -150,9 +150,11 @@ impl Manager {
             ); // Remove reference
             b_managers.push(dir_manager);
 
-            let (sid_pairs, taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
+            let (mut sid_pairs, mut taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
             let contains_pluginrule = !sid_pairs.is_empty();
             let contains_taxorule = !taxo_pairs.is_empty();
+            sid_pairs.shrink_to_fit();
+            taxo_pairs.shrink_to_fit();
 
             targets.push(FilterTarget {
                 id: directive.id,
@@ -204,7 +206,6 @@ impl Manager {
                     let mut event = match rx.blocking_recv() {
                         Ok(event) => event,
                         Err(RecvError::Lagged(n)) => {
-                            // here's the main mechanism to allow lagged managers to catch up
                             warn!("filtering lagged and skipped {} events", n);
                             continue;
                         }
@@ -454,7 +455,7 @@ impl BacklogManager {
                 "cleaning deleted backlog if any"
             );
             backlogs.retain(|x| {
-                let s = x.state.read();
+                let s = x.state.lock();
                 *s == BacklogState::Created || *s == BacklogState::Running
             });
         };
@@ -471,6 +472,7 @@ impl BacklogManager {
 
         loop {
             tokio::select! {
+                biased;
                 _ = cancel_rx.recv() => {
                     debug!(directive.id = self.directive.id, "cancel signal received, exiting manager thread");
                     self.upstream_rx.close();
@@ -491,18 +493,6 @@ impl BacklogManager {
                         }
                     }
                     break;
-                }
-                _ = report.tick() => {
-                    let length = {
-                        let r = self.backlogs.read().await;
-                        r.len()
-                    };
-                    let prev = mgr_report.active_backlogs;
-                    mgr_report.active_backlogs = length;
-
-                    if mgr_report.active_backlogs != prev {
-                        let _ = report_sender.try_send(mgr_report.clone());
-                    }
                 },
                 _ = delete_rx.recv() => {
                     clean_deleted().await;
@@ -581,6 +571,18 @@ impl BacklogManager {
                         let clone = Arc::clone(&arced);
                         backlogs.push(arced);
                         let _detached = self.start_backlog(Some(event.clone()), clone).await;
+                    }
+                },
+                _ = report.tick() => {
+                    let length = {
+                        let r = self.backlogs.read().await;
+                        r.len()
+                    };
+                    let prev = mgr_report.active_backlogs;
+                    mgr_report.active_backlogs = length;
+
+                    if mgr_report.active_backlogs != prev {
+                        let _ = report_sender.try_send(mgr_report.clone());
                     }
                 }
             }

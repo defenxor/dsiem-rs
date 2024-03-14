@@ -69,6 +69,7 @@ impl NetworkAssets {
             return Err(anyhow!("cannot load any asset"));
         }
         info!("{} assets found and loaded", result.assets.len());
+        result.assets.shrink_to_fit();
         Ok(result)
     }
     pub fn is_in_homenet(&self, ip: &IpAddr) -> bool {

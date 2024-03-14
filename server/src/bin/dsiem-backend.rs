@@ -259,11 +259,19 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     // we take in unsigned values from CLI to make sure there's no negative numbers, and convert them
     // to signed value required by timestamp related APIs.
-    let max_delay = chrono::Duration::seconds(sargs.max_delay.into())
-        .num_nanoseconds()
+    let max_delay = chrono::Duration::try_seconds(sargs.max_delay.into())
+        .and_then(|d| d.num_nanoseconds())
         .ok_or_else(|| log_startup_err("reading max_delay", anyhow!("invalid value provided")))?;
-    let min_alarm_lifetime =
-        chrono::Duration::minutes(sargs.min_alarm_lifetime.into()).num_seconds();
+
+    let min_alarm_lifetime = chrono::Duration::try_minutes(sargs.min_alarm_lifetime.into())
+        .ok_or_else(|| {
+            log_startup_err(
+                "reading min_alarm_lifetime",
+                anyhow!("invalid value provided"),
+            )
+        })?
+        .num_seconds();
+
     if sargs.med_risk_min < 2 || sargs.med_risk_max > 9 || sargs.med_risk_min == sargs.med_risk_max
     {
         return Err(log_startup_err(
@@ -517,7 +525,10 @@ mod test {
                 "files" : [] 
             }"#;
 
-        let mut server = mockito::Server::new_with_port(19005);
+        let mut server = mockito::Server::new_with_opts(mockito::ServerOpts {
+            port: 19005,
+            ..Default::default()
+        });
         let url = server.url();
         debug!("using url: {}", url.clone());
         server

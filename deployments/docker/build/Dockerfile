@@ -24,21 +24,14 @@ RUN rustup target add wasm32-unknown-unknown
 RUN trunk build --public-url /ui --release index.html
 
 FROM rust AS dsiem_builder
-RUN apt-get update && apt-get install -y pkg-config libssl-dev
 COPY . .
 WORKDIR /ctx
 RUN cd server && cargo fetch
 RUN cargo build -p dsiem --release
 
-FROM ubuntu:rolling as base
+FROM mmta/alpine-glibc AS base
 
 ARG S6_OVERLAY_VERSION=3.1.6.2
-
-RUN apt-get update && \
-  apt-get install xz-utils wget ca-certificates --no-install-recommends -y && \
-  update-ca-certificates && \
-  apt-get clean && \
-  rm -rf /var/lib/apt/lists/*
 
 # s6-overlay using legacy mode
 RUN wget https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz -O- | tar -C / -Jxp
@@ -49,7 +42,7 @@ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS 2
 # expose all container env to the target app
 ENV S6_KEEP_ENV 1
 
-FROM base as final
+FROM base AS final
 WORKDIR /dsiem
 
 # create dirs for configs and web/dist/assets/config, the later is accessed by UI to load esconfig.json

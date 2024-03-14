@@ -25,8 +25,6 @@ RUN trunk build --public-url /ui --release index.html
 FROM mmta/rust-alpine-mimalloc AS dsiem_builder
 COPY . .
 WORKDIR /ctx
-RUN apk add libressl-dev
-ENV OPENSSL_NO_VENDOR=Y
 RUN cd server && cargo fetch
 RUN cargo build -p dsiem --release
 

@@ -98,9 +98,11 @@ impl Worker {
         info!("listening for new back pressure signal");
         loop {
             tokio::select! {
-
-                // ...
-
+                biased;
+                _ = opt.cancel_rx.recv() => {
+                    info!("cancel signal received, exiting frontend-worker thread");
+                    break;
+                },
                 Some(message) = subscription.next() => {
                     if let Ok(v) = str::from_utf8(&message.payload) {
                         if v == "true" || v == "false" {
@@ -121,10 +123,6 @@ impl Worker {
                     } else {
                         debug!("event {} sent to nats", event.id);
                     }
-                },
-                _ = opt.cancel_rx.recv() => {
-                    info!("cancel signal received, exiting frontend-worker thread");
-                    break;
                 },
             }
         }

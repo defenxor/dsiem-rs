@@ -1,4 +1,4 @@
-use parking_lot::RwLock;
+use parking_lot::Mutex;
 use regex::Regex;
 use serde_derive::Deserialize;
 use std::{fs, str::FromStr, sync::Arc};
@@ -45,7 +45,7 @@ impl Directive {
             let mut r = rule.clone().reset_arc_fields();
 
             if i == 0 {
-                r.start_time = Arc::new(RwLock::new(e.timestamp.timestamp()));
+                r.start_time = Arc::new(Mutex::new(e.timestamp.timestamp()));
 
                 // if flag is active, replace ANY and HOME_NET on the first rule with specific addresses from event
                 if self.all_rules_always_active {
@@ -123,6 +123,7 @@ impl Directive {
             }
             result.push(r);
         }
+        result.shrink_to_fit();
         result
     }
 }
@@ -315,6 +316,7 @@ pub fn load_directives(test_env: bool, sub_path: Option<Vec<String>>) -> Result<
         return Err(anyhow!("cannot load any directive"));
     }
     info!("{} directives found and loaded", dirs.directives.len());
+    dirs.directives.shrink_to_fit();
     Ok(dirs.directives)
 }
 

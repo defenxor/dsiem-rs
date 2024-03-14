@@ -70,6 +70,8 @@ impl Watchdog {
 
         loop {
             tokio::select! {
+                biased;
+                
                 _ = cancel_rx.recv() => {
                   info!("cancel signal received, exiting watchdog thread");
                   break;
