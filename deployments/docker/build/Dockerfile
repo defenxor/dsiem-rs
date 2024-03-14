@@ -24,7 +24,6 @@ RUN rustup target add wasm32-unknown-unknown
 RUN trunk build --public-url /ui --release index.html
 
 FROM rust AS dsiem_builder
-RUN apt-get update && apt-get install -y pkg-config libssl-dev
 COPY . .
 WORKDIR /ctx
 RUN cd server && cargo fetch
