@@ -158,7 +158,11 @@ mod test {
         let str_err = res.unwrap_err().to_string();
         assert!(str_err == "get request error" || str_err == "deadline has elapsed");
 
-        let mut server = mockito::Server::new_with_port_async(18081).await;
+        let mut server = mockito::Server::new_with_opts_async(mockito::ServerOpts {
+            port: 18081,
+            ..Default::default()
+        })
+        .await;
         let _m1 = server
             .mock("GET", "/ip/1.0.0.1")
             .with_status(200)
