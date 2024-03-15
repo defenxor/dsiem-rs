@@ -82,5 +82,5 @@ build_image Dockerfile ${this_image}
 
 if [ "$push_image" == "true" ]; then
   docker push ${this_image}
-  [ "$latest_tag" == "true" ] && docker push $image_name:$version $image_name:latest
+  [ "$latest_tag" == "true" ] && docker push $image_name:$version && docker push $image_name:latest
 fi
