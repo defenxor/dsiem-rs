@@ -1,2 +1,5 @@
 FROM cgr.dev/chainguard/wolfi-base
+# replace with full busybox to add wget
 RUN apk del busybox && apk add --no-cache busybox-full
+# ensure /var/run is a symlink to /run, required in some systems
+RUN [ ! -L "/var/run" ] && rm -rf /var/run && ln -s /run /var/run || true
