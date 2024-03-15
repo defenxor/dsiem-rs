@@ -1,0 +1,29 @@
+ARG trunk_version=0.19.1
+ARG text_spinners_version=1.0.5
+
+FROM node:current-slim as css_builder
+ARG text_spinners_version
+WORKDIR /
+COPY ./ctx/web ./web
+WORKDIR /web
+ENV NODE_ENV=production
+RUN npx -y tailwindcss -c ./tailwind.config.js -o ./tailwind.css --minify
+RUN npm init -y && npm install -y text-spinners@${text_spinners_version}
+
+FROM rust:slim
+ARG trunk_version
+WORKDIR /
+
+# just for the workspace manifests
+COPY ./ctx/Cargo.toml ./
+RUN cargo init server
+
+COPY ./ctx/web ./web
+WORKDIR /web
+COPY --from=css_builder /web/tailwind.css ./
+COPY --from=css_builder /web/node_modules ./node_modules
+RUN apt-get update && apt-get install -y wget
+ADD https://github.com/trunk-rs/trunk/releases/download/v${trunk_version}/trunk-x86_64-unknown-linux-gnu.tar.gz /tmp/
+RUN tar -xzf /tmp/trunk-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin
+RUN rustup target add wasm32-unknown-unknown
+RUN trunk build --public-url /ui --release index.html

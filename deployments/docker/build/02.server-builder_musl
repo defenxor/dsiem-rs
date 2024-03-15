@@ -1,0 +1,5 @@
+FROM mmta/rust-alpine-mimalloc AS dsiem_builder
+COPY . .
+WORKDIR /ctx
+RUN cd server && cargo fetch
+RUN cargo build -p dsiem --release
