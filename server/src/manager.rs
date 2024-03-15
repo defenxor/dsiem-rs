@@ -18,7 +18,7 @@ use tokio::{
     io::{self, AsyncWriteExt},
     sync::{
         broadcast::{self, error::RecvError},
-        mpsc, Notify, RwLock,
+        mpsc, Mutex, Notify, RwLock,
     },
     task,
     time::{interval, sleep, timeout},
@@ -267,7 +267,7 @@ impl Manager {
             rt.block_on(async move {
                 let _h = span.entered();
                 let mut set: task::JoinSet<_> = tokio::task::JoinSet::new();
-                for mut dir_manager in dir_managers {
+                for dir_manager in dir_managers {
                     let span = Span::current();
                     set.spawn(async move {
                         let _ = dir_manager.start().instrument(span).await;
@@ -311,8 +311,9 @@ struct BacklogManager {
     report_interval: u64,
     backlogs: RwLock<Vec<Arc<Backlog>>>,
     downstream_tx: broadcast::Sender<NormalizedEvent>,
-    upstream_rx: mpsc::Receiver<NormalizedEvent>,
-    delete_tx: Option<mpsc::Sender<()>>,
+    upstream_rx: Mutex<mpsc::Receiver<NormalizedEvent>>,
+    delete_tx: mpsc::Sender<()>,
+    delete_rx: Mutex<mpsc::Receiver<()>>,
 }
 
 impl BacklogManager {
@@ -328,6 +329,8 @@ impl BacklogManager {
         // there's no need for large capacity since there's already a configurable queue in upstream
         // the size of this channel also linearly affects the number of directives that can be load given the same memory resources
         let (downstream_tx, _) = broadcast::channel(BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE);
+        let (delete_tx, delete_rx) = mpsc::channel::<()>(128);
+
         let load_param = load_param.clone();
         let mut option = option.clone();
         option.directives = vec![];
@@ -338,11 +341,12 @@ impl BacklogManager {
             load_param,
             downstream_tx,
             backlogs: RwLock::new(vec![]),
-            delete_tx: None,
+            delete_tx,
+            delete_rx: Mutex::new(delete_rx),
             log_tx,
             directive,
             report_interval: *report_interval,
-            upstream_rx,
+            upstream_rx: Mutex::new(upstream_rx),
         }
     }
 
@@ -385,7 +389,7 @@ impl BacklogManager {
                 for b in load_result.into_iter() {
                     // perform all steps in backlog::new here
                     let id = &b.id.clone();
-                    let opt = self.get_backlog_opt()?;
+                    let opt = self.get_backlog_opt();
                     let res = Backlog::runnable_version(opt, b);
                     match res {
                         Err(e) => {
@@ -410,34 +414,28 @@ impl BacklogManager {
         Ok(())
     }
 
-    fn get_backlog_opt(&self) -> Result<backlog::BacklogOpt> {
-        if let Some(tx) = self.delete_tx.clone() {
-            return Ok(backlog::BacklogOpt {
-                asset: self.option.assets.clone(),
-                bp_tx: self.option.backpressure_tx.clone(),
-                delete_tx: tx.clone(),
-                log_tx: self.log_tx.clone(),
-                intels: self.option.intels.clone(),
-                vulns: self.option.vulns.clone(),
-                min_alarm_lifetime: self.option.min_alarm_lifetime,
-                default_status: self.option.default_status.clone(),
-                default_tag: self.option.default_tag.clone(),
-                med_risk_min: self.option.med_risk_min,
-                med_risk_max: self.option.med_risk_max,
-                intel_private_ip: self.option.intel_private_ip,
-                directive: &self.directive,
-                event: None,
-            });
+    fn get_backlog_opt(&self) -> backlog::BacklogOpt {
+        backlog::BacklogOpt {
+            asset: self.option.assets.clone(),
+            bp_tx: self.option.backpressure_tx.clone(),
+            delete_tx: self.delete_tx.clone(),
+            log_tx: self.log_tx.clone(),
+            intels: self.option.intels.clone(),
+            vulns: self.option.vulns.clone(),
+            min_alarm_lifetime: self.option.min_alarm_lifetime,
+            default_status: self.option.default_status.clone(),
+            default_tag: self.option.default_tag.clone(),
+            med_risk_min: self.option.med_risk_min,
+            med_risk_max: self.option.med_risk_max,
+            intel_private_ip: self.option.intel_private_ip,
+            directive: &self.directive,
+            event: None,
         }
-        Err(anyhow!("delete_tx is not set"))
     }
 
-    async fn start(&mut self) -> Result<()> {
+    async fn start(&self) -> Result<()> {
         let mut cancel_rx = self.option.cancel_tx.subscribe();
         let downstream_tx = self.downstream_tx.clone();
-        let (delete_tx, mut delete_rx) = mpsc::channel::<()>(128);
-
-        self.delete_tx = Some(delete_tx);
 
         let report_sender = self.option.report_tx.clone();
         let mut report = interval(Duration::from_secs(self.report_interval));
@@ -468,14 +466,16 @@ impl BacklogManager {
         // initial report
         _ = report_sender.send(mgr_report.clone()).await;
 
-        debug!(self.directive.id, "listening for event");
+        let mut upstream_rx = self.upstream_rx.lock().await;
+        let mut delete_rx = self.delete_rx.lock().await;
 
+        debug!(self.directive.id, "listening for event");
         loop {
             tokio::select! {
                 biased;
                 _ = cancel_rx.recv() => {
                     debug!(directive.id = self.directive.id, "cancel signal received, exiting manager thread");
-                    self.upstream_rx.close();
+                    upstream_rx.close();
                     drop(report);
                     sleep(Duration::from_secs(3)).await; // give time for inflight event to be processed
                     drop(delete_rx);
@@ -497,7 +497,7 @@ impl BacklogManager {
                 _ = delete_rx.recv() => {
                     clean_deleted().await;
                 },
-                Some(mut event) = self.upstream_rx.recv() => {
+                Some(mut event) = upstream_rx.recv() => {
 
                     let backlog_mgr_span = info_span!("backlog manager processing", directive.id = self.directive.id, event.id);
                     tracer::set_parent_from_event(&backlog_mgr_span, &event);
@@ -613,7 +613,7 @@ impl BacklogManager {
             event.id, "creating new backlog"
         );
 
-        let mut opt = self.get_backlog_opt()?;
+        let mut opt = self.get_backlog_opt();
         opt.event = Some(event);
         let res = backlog::Backlog::new(&opt);
         match res {
