@@ -81,7 +81,7 @@ impl LogWriter {
 #[cfg(test)]
 
 mod tests {
-    use std::{io::Read, thread};
+    use std::{io::Read, thread, time};
 
     use tracing_test::traced_test;
 
@@ -105,6 +105,8 @@ mod tests {
             .unwrap();
 
         let log_dir = utils::log_dir(true).unwrap();
+        info!("using log dir: {:?}", log_dir);
+        std::thread::sleep(time::Duration::from_secs(1));
         let mut alarm_file = OpenOptions::new()
             .read(true)
             .open(log_dir.join(ALARM_LOG))
