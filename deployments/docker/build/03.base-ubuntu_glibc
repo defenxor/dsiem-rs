@@ -1,0 +1,2 @@
+FROM ubuntu:rolling
+RUN apt-get update && apt-get install xz-utils wget -y && rm -rf /var/lib/apt/lists/*

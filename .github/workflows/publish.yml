@@ -39,13 +39,16 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: build and push image
+      - name: build and push default image
         run: |
-          ./scripts/dockerbuild.sh defenxor/dsiem-rs push
+          ./scripts/dockerbuild.sh defenxor/dsiem-rs alpine_glibc push
+      - name: build and push musl image
+        run: |
+          ./scripts/dockerbuild.sh defenxor/dsiem-rs alpine_musl push
       - name: extract binaries
         uses: shrink/actions-docker-extract@v3
         with:
-          image: defenxor/dsiem-rs:latest
+          image: defenxor/dsiem-rs:${{ needs.check-versions.outputs.current_version }}-alpine_musl
           path: /dsiem/.
           destination: dsiem
       - name: zip binaries

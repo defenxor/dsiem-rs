@@ -1,35 +1,8 @@
-FROM node:current-slim as css_builder
-WORKDIR /
-COPY ./ctx/web ./web
-WORKDIR /web
-ENV NODE_ENV=production
-RUN npx -y tailwindcss -c ./tailwind.config.js -o ./tailwind.css --minify
-RUN npm init -y && npm install -y text-spinners@1.0.5
+FROM dsiem-dev/webui-builder AS ui_builder
 
-FROM rust AS ui_builder
-WORKDIR /
+FROM dsiem-dev/server-builder AS dsiem_builder
 
-# just for the workspace manifests
-COPY ./ctx/Cargo.toml ./
-RUN cargo init server
-
-COPY ./ctx/web ./web
-WORKDIR /web
-COPY --from=css_builder /web/tailwind.css ./
-COPY --from=css_builder /web/node_modules ./node_modules
-RUN apt-get update && apt-get install -y wget
-ADD https://github.com/trunk-rs/trunk/releases/download/v0.19.0/trunk-x86_64-unknown-linux-gnu.tar.gz /tmp/
-RUN tar -xzf /tmp/trunk-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin
-RUN rustup target add wasm32-unknown-unknown
-RUN trunk build --public-url /ui --release index.html
-
-FROM rust AS dsiem_builder
-COPY . .
-WORKDIR /ctx
-RUN cd server && cargo fetch
-RUN cargo build -p dsiem --release
-
-FROM mmta/alpine-glibc AS base
+FROM dsiem-dev/base-image
 
 ARG S6_OVERLAY_VERSION=3.1.6.2
 
@@ -42,7 +15,6 @@ ENV S6_BEHAVIOUR_IF_STAGE2_FAILS 2
 # expose all container env to the target app
 ENV S6_KEEP_ENV 1
 
-FROM base AS final
 WORKDIR /dsiem
 
 # create dirs for configs and web/dist/assets/config, the later is accessed by UI to load esconfig.json

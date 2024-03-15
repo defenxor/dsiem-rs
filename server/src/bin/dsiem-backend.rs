@@ -538,7 +538,7 @@ mod test {
             .create();
 
         let mut pty = rexpect::spawn(
-            "docker run --name nats-main -p 42225:42225 --rm -it nats -p 42225",
+            "docker run --name nats-main-be -p 42225:42225 --rm -it nats -p 42225",
             Some(5000),
         )
         .unwrap();
