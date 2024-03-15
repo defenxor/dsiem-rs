@@ -50,7 +50,7 @@ impl LogWriter {
             receiver: log_rx,
         })
     }
-    pub fn write(&self, message: LogWriterMessage) -> Result<()> {
+    fn write(&self, message: LogWriterMessage) -> Result<()> {
         let mut lock = match message.file_type {
             FileType::Alarm => self.alarm_file.lock(),
             FileType::AlarmEvent => self.alarm_event_file.lock(),
@@ -75,5 +75,44 @@ impl LogWriter {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+
+mod tests {
+    use std::{io::Read, thread, time};
+
+    use tracing_test::traced_test;
+
+    use super::*;
+
+    #[test]
+    #[traced_test]
+    fn test_log_writer() {
+        let data = "meivosh8aThua2aefiu5ci3Nohkeew".to_string();
+        let mut writer = LogWriter::new(true).unwrap();
+        let sender = writer.sender.clone();
+        _ = thread::spawn(move || {
+            _ = writer.listener();
+        });
+
+        sender
+            .send(LogWriterMessage {
+                file_type: FileType::Alarm,
+                data: data.clone(),
+            })
+            .unwrap();
+
+        let log_dir = utils::log_dir(true).unwrap();
+        info!("using log dir: {:?}", log_dir);
+        std::thread::sleep(time::Duration::from_secs(1));
+        let mut alarm_file = OpenOptions::new()
+            .read(true)
+            .open(log_dir.join(ALARM_LOG))
+            .unwrap();
+        let mut res = String::new();
+        alarm_file.read_to_string(&mut res).unwrap();
+        assert!(res.contains(&data));
     }
 }

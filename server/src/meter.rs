@@ -97,7 +97,7 @@ impl Meter {
                                 observer.observe_f64(&gauge, *v, &[]);
                             }
                         }
-                    }
+                    };
                 })?;
         }
         let g = self
@@ -115,9 +115,47 @@ impl Meter {
                                 observer.observe_u64(&gauge, *v, &[]);
                             }
                         }
-                    }
+                    };
                 })?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn test_meter() {
+        let mut config = OtelConfig {
+            otlp_endpoint: "bar".to_string(),
+            service_name: "test".to_string(),
+            tracing_enabled: false,
+            metrics_enabled: false,
+        };
+        let m = Meter::new(config.clone());
+        assert!(m.is_none());
+
+        config.metrics_enabled = true;
+        let m = Meter::new(config.clone());
+        assert!(m.is_none());
+
+        config.otlp_endpoint = "http://localhost:4317".to_string();
+
+        let mut meter = Meter::new(config).unwrap();
+        meter.upsert_f64("counter_f64", None).unwrap();
+        meter.upsert_u64("counter_u64", None).unwrap();
+        let res = meter.start();
+        assert!(res.is_ok());
+        meter.upsert_u64("counter_u64", Some(9002)).unwrap();
+        meter.upsert_f64("counter_f64", Some(9001.0)).unwrap();
+
+        sleep(Duration::from_secs(1)).await;
+        let v = *meter.gauges_f64.read().unwrap().get("counter_f64").unwrap();
+        assert_eq!(v, 9001.0);
+        let v = *meter.gauges_u64.read().unwrap().get("counter_u64").unwrap();
+        assert_eq!(v, 9002);
     }
 }
