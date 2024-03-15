@@ -263,13 +263,9 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         .and_then(|d| d.num_nanoseconds())
         .ok_or_else(|| log_startup_err("reading max_delay", anyhow!("invalid value provided")))?;
 
+    // this cannot fail, clap already ensures the value is within the range of u16 (0-65535)
     let min_alarm_lifetime = chrono::Duration::try_minutes(sargs.min_alarm_lifetime.into())
-        .ok_or_else(|| {
-            log_startup_err(
-                "reading min_alarm_lifetime",
-                anyhow!("invalid value provided"),
-            )
-        })?
+        .unwrap_or_default()
         .num_seconds();
 
     if sargs.med_risk_min < 2 || sargs.med_risk_max > 9 || sargs.med_risk_min == sargs.med_risk_max
@@ -468,6 +464,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
 #[cfg(test)]
 mod test {
+
     use super::*;
     use tracing::debug;
     use tracing_test::traced_test;
@@ -506,7 +503,7 @@ mod test {
 
     #[test]
     #[traced_test]
-    fn test_serve() {
+    fn test_server_failure() {
         let cli = Cli::parse_from([
             "dsiem-backend",
             "--test-env",
@@ -521,9 +518,30 @@ mod test {
         assert!(logs_contain("error reading med_risk_min and med_risk_max"));
         assert!(res.is_err());
 
+        /* this somehow conflicts with test_server_success
+        let cli = Cli::parse_from([
+            "dsiem-backend",
+            "--test-env",
+            "--json",
+            "serve",
+            "-n",
+            "dsiem-backend-0",
+            "-f",
+            "http://localhost:6666",
+            "--max_queue",
+            "0",
+        ]);
+        let res = serve(false, false, cli);
+        assert!(logs_contain("error downloading config"));
+        assert!(res.is_err());
+        */
+    }
+
+    #[test]
+    fn test_serve_success() {
         let file_list = r#"{ 
-                "files" : [] 
-            }"#;
+            "files" : [] 
+        }"#;
 
         let mut server = mockito::Server::new_with_opts(mockito::ServerOpts {
             port: 19005,
@@ -556,6 +574,7 @@ mod test {
             "nats://127.0.0.1:42225",
         ]);
         let res = serve(false, false, cli);
-        assert!(res.is_ok())
+
+        assert!(res.is_ok());
     }
 }
