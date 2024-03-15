@@ -1,26 +1,30 @@
 #!/bin/bash
 
 # usage:
-# 1st argument: image name
-# 2nd argument: must be one of "alpine_glibc", "alpine_musl", "ubuntu_glibc"
-# 3rd argument: if equals to "push", the image will be pushed to the registry
+
+# 1st argument: image name, e.g. defenxor/dsiem-rs
+# 2nd argument: must be one of "alpine", "alpine_musl", "ubuntu", "wolfi"
+# 3rd argument: optional, if equals to "push" the image will be pushed to the registry
 
 # if 2nd argument is the same as env variable DEFAULT_BASE_IMAGE, the image will be tagged as "latest"
+# the default for DEFAULT_BASE_IMAGE for now is "wolfi"
 
 dir="./deployments/docker/build"
 [ ! -e $dir ] && echo must be executed from the repo root directory. && exit 1
 
-DEFAULT_BASE_IMAGE=${DEFAULT_BASE_IMAGE:-alpine_glibc}
+DEFAULT_BASE_IMAGE=${DEFAULT_BASE_IMAGE:-wolfi}
 
 image_name=$1
 base_image=$2
 
-([ "$2" == "alpine_glibc" ] || [ "$2" == "ubuntu_glibc" ]) && dsiem_lib="glibc"
-[ "$2" == "alpine_musl" ] && dsiem_lib="musl"
+([ "$2" == "alpine" ] || [ "$2" == "ubuntu" ] || [ "$2" == "wolfi" ]) && musl="false"
+[ "$2" == "alpine_musl" ] && musl="true"
 [ "$3" == "push" ] && push_image=true
 
-[ -z "$image_name" ] && echo "1st argument must be the image name, e.g dsiem-dev/dsiem-rs" && exit 1
-[ -z "$dsiem_lib" ] && echo "2nd argument must be one of 'alpine_glibc', 'alpine_musl', 'ubuntu_glibc'" && exit 1
+[ -z "$image_name" ] && echo "1st argument must be the image name, e.g defenxor/dsiem-rs" && exit 1
+[ -z "$musl" ] && echo "2nd argument must be one of 'alpine', 'alpine_musl', 'ubuntu', 'wolfi'" && exit 1
+
+[ "$musl" == "true" ] && dsiem_lib="_musl"
 
 [ "$DEFAULT_BASE_IMAGE" == "$base_image" ] && latest_tag=true
 
@@ -61,7 +65,7 @@ cd $dir/
 build_image 01.webui-builder dsiem-dev/webui-builder
 
 # dsiem-dev/server-builder
-build_image 02.server-builder_${dsiem_lib} dsiem-dev/server-builder
+build_image 02.server-builder${dsiem_lib} dsiem-dev/server-builder
 
 # dsiem-dev/base-image
 build_image 03.base-${base_image} dsiem-dev/base-image
