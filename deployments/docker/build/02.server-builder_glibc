@@ -1,5 +1,0 @@
-FROM rust:slim
-COPY . .
-WORKDIR /ctx
-RUN cd server && cargo fetch
-RUN cargo build -p dsiem --release
