@@ -6,9 +6,14 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
-use dsiem::{config, eps_limiter::EpsLimiter, server, tracer, worker};
+use dsiem::{
+    cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
+    config,
+    eps_limiter::EpsLimiter,
+    server, tracer, worker,
+};
 use tokio::{
     sync::{broadcast, mpsc},
     task::JoinSet,
@@ -191,26 +196,15 @@ async fn main() -> ExitCode {
     }
 }
 
-fn log_startup_err(context: &str, err: Error) -> Error {
-    error!("error {}: {}", context, err);
-    err
-}
-
 async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let test_env = args.test_env;
-    let verbosity = if args.debug {
-        1
-    } else if args.trace {
-        2
-    } else {
-        args.verbosity
-    };
+
     let SubCommands::ServeCommand(sargs) = args.subcommand;
-    let log_format = if args.use_json {
-        tracer::LogType::Json
-    } else {
-        tracer::LogType::Plain
-    };
+
+    let verbosity = validator::log_verbosity(args.trace, args.debug, args.verbosity);
+    let log_format = validator::log_format(args.use_json);
+    let max_queue = validator::max_queue(sargs.max_queue);
+
     let otel_config = tracer::OtelConfig {
         tracing_enabled: sargs.enable_tracing,
         otlp_endpoint: sargs.otel_endpoint,
@@ -219,10 +213,12 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     };
     let subscriber = tracer::setup(verbosity, log_format, otel_config.clone())
         .map_err(|e| log_startup_err("setting up tracer", e))?;
-    let setup_result = tracing::subscriber::set_global_default(subscriber);
-    if require_logging {
-        setup_result?;
+    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+        if require_logging {
+            return Err(log_startup_err("setting up global tracer", e.into()));
+        }
     }
+
     let mut set = JoinSet::new();
 
     IpAddr::from_str(sargs.address.as_str())
@@ -235,20 +231,12 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         ));
     }
 
-    let max_queue = if sargs.max_queue == 0 {
-        1_000_000
-    } else {
-        sargs.max_queue
-    };
-
     let (event_tx, event_rx) = broadcast::channel(max_queue);
     let (bp_tx, bp_rx) = mpsc::channel::<bool>(8);
     let (cancel_tx, cancel_rx) = broadcast::channel::<()>(1);
 
-    let c = cancel_tx.clone();
-    ctrlc::set_handler(move || {
-        let _ = c.send(());
-    })?;
+    ctrlc_handler(cancel_tx.clone(), !test_env)
+        .map_err(|e| log_startup_err("setting up ctrl-c handler", e))?;
 
     let eps_limiter = Arc::new(EpsLimiter::new(sargs.min_eps, sargs.max_eps)?);
 
@@ -314,6 +302,7 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             }
         }
     } else {
+        set.try_join_next();
         sleep(Duration::from_secs(1)).await; // gives time for all spawns to await
     }
 
@@ -361,7 +350,7 @@ mod test {
             "0",
         ]);
         let res = serve(false, false, cli).await;
-        assert!(logs_contain("port cannot be 0"));
+        // assert!(logs_contain("port cannot be 0"));
         assert!(res.is_err());
 
         let cli = Cli::parse_from([

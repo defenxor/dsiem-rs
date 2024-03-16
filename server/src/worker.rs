@@ -248,6 +248,26 @@ mod test {
 
     #[tokio::test]
     #[traced_test]
+    async fn test_nats_client() {
+        let nats_url = "nats://127.0.0.1:42226";
+        let mut pty = rexpect::spawn(
+            "docker run -p 42226:42226 --name nats_worker --rm -it nats -p 42226",
+            None,
+        )
+        .unwrap();
+        pty.exp_string("Server is ready").unwrap();
+
+        let c = nats_client(nats_url, &UNBOUNDED_QUEUE_SIZE).await.unwrap();
+        let _s = c.subscribe(BP_SUBJECT).await.unwrap();
+        pty.process.set_kill_timeout(Some(5_000));
+        drop(pty);
+        sleep(Duration::from_secs(2)).await;
+        assert!(logs_contain("nats disconnected"));
+        assert!(logs_contain("nats client error"));
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn test_backend_start() {
         let mut pty =
             rexpect::spawn("docker run -p 42222:42222 --rm -it nats -p 42222", None).unwrap();

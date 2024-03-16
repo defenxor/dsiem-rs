@@ -7,7 +7,7 @@ use std::{
 use crate::utils;
 use anyhow::Result;
 use parking_lot::Mutex;
-use tracing::{error, info};
+use tracing::error;
 
 const ALARM_EVENT_LOG: &str = "siem_alarm_events.json";
 const ALARM_LOG: &str = "siem_alarms.json";
@@ -61,34 +61,23 @@ impl LogWriter {
 
     pub fn listener(&mut self) -> Result<()> {
         loop {
-            match self.receiver.recv() {
-                Ok(msg) => {
-                    // dont fail on log write error
-                    self.write(msg)
-                        .map_err(|e| error!("log writer error: {}", e))
-                        .ok();
-                }
-                Err(_) => {
-                    info!("exiting log writer listener");
-                    break;
-                }
-            }
+            self.receiver.recv().map(|msg| {
+                self.write(msg)
+                    .map_err(|e| error!("log writer error: {}", e))
+                    .ok();
+            })?;
         }
-        Ok(())
     }
 }
 
 #[cfg(test)]
 
 mod tests {
-    use std::{io::Read, thread, time};
-
-    use tracing_test::traced_test;
-
     use super::*;
 
+    use std::{io::Read, thread, time::Duration};
+
     #[test]
-    #[traced_test]
     fn test_log_writer() {
         let data = "meivosh8aThua2aefiu5ci3Nohkeew".to_string();
         let mut writer = LogWriter::new(true).unwrap();
@@ -104,9 +93,8 @@ mod tests {
             })
             .unwrap();
 
+        thread::sleep(Duration::from_secs(1));
         let log_dir = utils::log_dir(true).unwrap();
-        info!("using log dir: {:?}", log_dir);
-        std::thread::sleep(time::Duration::from_secs(1));
         let mut alarm_file = OpenOptions::new()
             .read(true)
             .open(log_dir.join(ALARM_LOG))

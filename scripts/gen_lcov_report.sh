@@ -12,7 +12,7 @@ for cmd in lcov genhtml; do
 done
 
 mkdir -p $dir
-genhtml -o $dir $dir/lcov.info
+genhtml -o $dir $dir/*.info
 
 [ "$1" == "serve" ] && {
   cd $dir

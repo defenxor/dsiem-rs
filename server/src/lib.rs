@@ -1,6 +1,7 @@
 pub mod allocator;
 pub mod asset;
 pub mod backlog;
+pub mod cmd_utils;
 pub mod config;
 pub mod directive;
 pub mod eps_limiter;
