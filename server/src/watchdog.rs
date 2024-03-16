@@ -38,9 +38,10 @@ pub struct WatchdogOpt {
 impl Watchdog {
     pub async fn start(&mut self, opt: WatchdogOpt) -> Result<()> {
         let subscriber = tracer::setup(opt.log_verbosity, opt.log_format, opt.otel_config.clone())?;
-        let setup_result = tracing::subscriber::set_global_default(subscriber);
-        if opt.require_logging {
-            setup_result?;
+        if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+            if opt.require_logging {
+                return Err(e.into());
+            }
         }
 
         let mut report = interval(Duration::from_secs(opt.report_interval));
@@ -71,7 +72,6 @@ impl Watchdog {
         loop {
             tokio::select! {
                 biased;
-                
                 _ = cancel_rx.recv() => {
                   info!("cancel signal received, exiting watchdog thread");
                   break;
@@ -150,6 +150,11 @@ mod test {
 
         let eps = Arc::new(eps::Eps::default());
 
+        let otel_config = OtelConfig {
+            metrics_enabled: true,
+            ..Default::default()
+        };
+
         let opt = WatchdogOpt {
             event_tx: event_tx.clone(),
             resptime_rx,
@@ -157,7 +162,7 @@ mod test {
             cancel_tx: cancel_tx.clone(),
             report_interval,
             max_eps,
-            otel_config: OtelConfig::default(),
+            otel_config,
             eps,
             log_verbosity: 0,
             log_format: tracer::LogType::Plain,
