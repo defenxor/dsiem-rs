@@ -93,7 +93,7 @@ mod tests {
             })
             .unwrap();
 
-        sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(1));
         let log_dir = utils::log_dir(true).unwrap();
         let mut alarm_file = OpenOptions::new()
             .read(true)
