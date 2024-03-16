@@ -24,9 +24,12 @@ use tokio::{
     time::{interval, sleep, timeout},
 };
 
+use parking_lot::Mutex as ParkMutex;
+
 pub const UNBOUNDED_QUEUE_SIZE: usize = 1_000_000;
 const DEADLOCK_TIMEOUT_IN_SECONDS: u64 = 10;
 const BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE: usize = 64;
+const DIRECTIVE_ID_CHAN_QUEUE_SIZE: usize = 64;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ManagerReport {
@@ -137,13 +140,14 @@ impl Manager {
         let mut option = self.option.clone();
         option.directives = vec![];
 
-        let mut b_managers = vec![];
         let mut targets = vec![];
+        let mut b_managers = vec![];
 
         for directive in self.option.directives.iter() {
             // this is a one-to-one channel between manager filter thread and backlog managers
             let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(load_param.limit_cap);
-            let dir_manager = BacklogManager::new(
+
+            let backlog_manager = BacklogManager::new(
                 &option,
                 &load_param,
                 directive,
@@ -151,7 +155,7 @@ impl Manager {
                 &report_interval,
                 event_rx,
             ); // Remove reference
-            b_managers.push(dir_manager);
+            b_managers.push(Arc::new(backlog_manager));
 
             let (mut sid_pairs, mut taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
             let contains_pluginrule = !sid_pairs.is_empty();
@@ -191,16 +195,20 @@ impl Manager {
             dir_len
         );
 
-        let h_managers = self.spawner(b_managers);
+        let (id_tx, id_rx) = mpsc::channel::<u64>(DIRECTIVE_ID_CHAN_QUEUE_SIZE);
+        let cancel_rx = self.option.cancel_tx.subscribe();
+        let h_managers = self.spawner(b_managers, id_rx, cancel_rx);
 
         let mut handles = vec![];
         for (idx, c) in chunks.into_iter().enumerate() {
             let mut rx = publisher.subscribe();
             let span = Span::current();
+            let id_tx = id_tx.clone();
             let handle = thread::spawn(move || {
                 let _h = span.entered();
                 let filter_span = info_span!("filter thread", thread.id = idx);
                 let _h = filter_span.enter();
+
                 loop {
                     let mut event = match rx.blocking_recv() {
                         Ok(event) => event,
@@ -232,6 +240,14 @@ impl Manager {
 
                     // overload = self.upstream_rx.len() > self.load_param.limit_cap;
                     matched_dirs.iter().for_each(|d| {
+                        let id_tx = id_tx.clone();
+                        if let Err(e) = id_tx.blocking_send(d.id) {
+                            warn!(
+                                directive.id = d.id,
+                                event.id, "skipping, filter can't send id to spawner: {}", e
+                            );
+                            return;
+                        }
                         if d.tx.try_send(event.clone()).is_err() {
                             warn!(
                                 directive.id = d.id,
@@ -258,20 +274,47 @@ impl Manager {
         Ok(())
     }
 
-    fn spawner(&self, dir_managers: Vec<BacklogManager>) -> thread::JoinHandle<()> {
+    fn spawner(
+        &self,
+        b_managers: Vec<Arc<BacklogManager>>,
+        mut id_rx: mpsc::Receiver<u64>,
+        mut cancel_rx: broadcast::Receiver<()>,
+    ) -> thread::JoinHandle<()> {
         let span = Span::current();
         let rt = self.option.tokio_handle.clone();
+        // let b_managers = Arc::new(b_managers);
         thread::spawn(move || {
             let _h = span.entered();
             let span = Span::current();
             rt.block_on(async move {
                 let _h = span.entered();
                 let mut set: task::JoinSet<_> = tokio::task::JoinSet::new();
-                for dir_manager in dir_managers {
-                    let span = Span::current();
-                    set.spawn(async move {
-                        let _ = dir_manager.start().instrument(span).await;
-                    });
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = cancel_rx.recv() => {
+                            break;
+                        }
+                        Some(id) = id_rx.recv() => {
+                            let span = Span::current();
+                            let _h = span.entered();
+                            for b in b_managers.iter() {
+                                if b.directive.id == id {
+                                    let started = b.started.lock();
+                                    if *started {
+                                        continue;
+                                    }
+                                    drop(started);
+                                    // arc ensures that this is the same instance of backlog manager
+                                    let span = Span::current();
+                                    let mgr = b.clone();
+                                    set.spawn(async move {
+                                        _ = mgr.start().instrument(span).await;
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
                 while set.join_next().await.is_some() {}
                 info!("exiting directive manager runtime");
@@ -303,17 +346,19 @@ struct OpLoadParameter {
     queue_mode: QueueMode,
 }
 
+#[derive(Clone)]
 struct BacklogManager {
     option: ManagerOpt,
     load_param: OpLoadParameter,
     directive: Directive,
     log_tx: crossbeam_channel::Sender<LogWriterMessage>,
     report_interval: u64,
-    backlogs: RwLock<Vec<Arc<Backlog>>>,
+    backlogs: Arc<RwLock<Vec<Arc<Backlog>>>>,
     downstream_tx: broadcast::Sender<NormalizedEvent>,
-    upstream_rx: Mutex<mpsc::Receiver<NormalizedEvent>>,
+    upstream_rx: Arc<Mutex<mpsc::Receiver<NormalizedEvent>>>,
     delete_tx: mpsc::Sender<()>,
-    delete_rx: Mutex<mpsc::Receiver<()>>,
+    delete_rx: Arc<Mutex<mpsc::Receiver<()>>>,
+    started: Arc<ParkMutex<bool>>,
 }
 
 impl BacklogManager {
@@ -340,13 +385,14 @@ impl BacklogManager {
             option,
             load_param,
             downstream_tx,
-            backlogs: RwLock::new(vec![]),
+            backlogs: Arc::new(RwLock::new(vec![])),
             delete_tx,
-            delete_rx: Mutex::new(delete_rx),
+            delete_rx: Arc::new(Mutex::new(delete_rx)),
             log_tx,
             directive,
             report_interval: *report_interval,
-            upstream_rx: Mutex::new(upstream_rx),
+            upstream_rx: Arc::new(Mutex::new(upstream_rx)),
+            started: Arc::new(ParkMutex::new(false)),
         }
     }
 
@@ -434,6 +480,11 @@ impl BacklogManager {
     }
 
     async fn start(&self) -> Result<()> {
+        {
+            let mut started = self.started.lock();
+            *started = true;
+        }
+
         let mut cancel_rx = self.option.cancel_tx.subscribe();
         let downstream_tx = self.downstream_tx.clone();
 
