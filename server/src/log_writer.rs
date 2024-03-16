@@ -74,7 +74,8 @@ impl LogWriter {
 
 mod tests {
     use super::*;
-    use std::{io::Read, thread};
+
+    use std::{io::Read, thread, time::Duration};
 
     #[test]
     fn test_log_writer() {
@@ -92,6 +93,7 @@ mod tests {
             })
             .unwrap();
 
+        sleep(Duration::from_secs(1));
         let log_dir = utils::log_dir(true).unwrap();
         let mut alarm_file = OpenOptions::new()
             .read(true)
