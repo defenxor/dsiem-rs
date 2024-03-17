@@ -820,7 +820,7 @@ mod test {
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("reloading old backlog"));
 
-        std::process::exit(0);
+        _ = cancel_tx.send(());
 
         /* uncomment this block if directive rules are applied to backlog, which for now isn't
 
