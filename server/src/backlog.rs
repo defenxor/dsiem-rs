@@ -823,7 +823,8 @@ impl Backlog {
     fn set_created_time(&self) {
         let created_time = self.created_time.load(Relaxed);
         if created_time == 0 {
-            self.created_time.swap(created_time, Relaxed);
+            let updated_time = self.update_time.load(Relaxed);
+            self.created_time.swap(updated_time, Relaxed);
         }
     }
 
@@ -1223,8 +1224,11 @@ mod test {
         assert!(backlog.title.contains(&src_host));
         assert!(backlog.title.contains(&dst_host));
 
+        let arc_backlog = Arc::new(backlog);
+        let cloned = arc_backlog.clone();
+
         let _detached = task::spawn(async move {
-            _ = backlog
+            _ = cloned
                 .start(event_rx, Some(evt_cloned), resptime_tx, 1)
                 .await;
         });
@@ -1241,6 +1245,10 @@ mod test {
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("risk changed"));
         assert!(logs_contain("stage increased to 4"));
+
+        // make sure created_time is set
+        let created_time = arc_backlog.created_time.load(Relaxed);
+        assert!(created_time != 0);
 
         // event with out of order timestamp
         sleep(Duration::from_millis(500)).await;
