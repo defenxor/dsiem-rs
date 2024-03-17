@@ -384,7 +384,6 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         backpressure_tx: bp_tx,
         resptime_tx,
         cancel_tx: cancel_tx.clone(),
-        publisher: event_tx,
         med_risk_max: sargs.med_risk_max,
         med_risk_min: sargs.med_risk_min,
         default_status: sargs.status[0].clone(),
@@ -400,7 +399,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
     let handle_manager = thread::spawn(move || {
         manager
-            .start(REPORT_INTERVAL_IN_SECONDS)
+            .start(event_tx, REPORT_INTERVAL_IN_SECONDS)
             .map_err(|e| anyhow!("manager error: {:?}", e))
     });
 

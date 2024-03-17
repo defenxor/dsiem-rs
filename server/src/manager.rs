@@ -49,7 +49,6 @@ pub struct ManagerOpt {
     pub backpressure_tx: mpsc::Sender<()>,
     pub cancel_tx: broadcast::Sender<()>,
     pub resptime_tx: mpsc::Sender<f64>,
-    pub publisher: broadcast::Sender<NormalizedEvent>,
     pub default_status: String,
     pub default_tag: String,
     pub med_risk_min: u8,
@@ -112,7 +111,11 @@ impl Manager {
         Ok(())
     }
 
-    pub fn start(&self, report_interval: u64) -> Result<()> {
+    pub fn start(
+        &self,
+        publisher: broadcast::Sender<NormalizedEvent>,
+        report_interval: u64,
+    ) -> Result<()> {
         // use this for all directive managers, and run it on a dedicated thread
         let mut log_writer = LogWriter::new(self.option.test_env)?;
         let log_tx = log_writer.sender.clone();
@@ -192,17 +195,13 @@ impl Manager {
 
         let mut handles = vec![];
         for (idx, c) in chunks.into_iter().enumerate() {
-            let mut cancel_rx = self.option.cancel_tx.clone().subscribe();
-            let mut rx = self.option.publisher.subscribe();
+            let mut rx = publisher.subscribe();
             let span = Span::current();
             let handle = thread::spawn(move || {
                 let _h = span.entered();
                 let filter_span = info_span!("filter thread", thread.id = idx);
                 let _h = filter_span.enter();
                 loop {
-                    if cancel_rx.try_recv().is_ok() {
-                        break;
-                    }
                     let mut event = match rx.blocking_recv() {
                         Ok(event) => event,
                         Err(RecvError::Lagged(n)) => {
@@ -244,12 +243,13 @@ impl Manager {
             });
             handles.push(handle);
         }
-
         self.option.notifier.notify_one();
 
-        let _ = h_managers.join();
+        // wait for all backlog managers to exit
+        _ = h_managers.join();
 
-        _ = self.option.publisher.send(NormalizedEvent::default()); // ugly hack to exit the blocking recv()
+        // drop publisher to signal all filter threads to exit
+        drop(publisher);
         for h in handles {
             _ = h.join();
         }
@@ -650,61 +650,59 @@ mod test {
         let (cancel_tx, _) = broadcast::channel::<()>(1);
         let (report_tx, mut report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
 
-        let get_opt = move |c: Sender<()>,
-                            publisher: broadcast::Sender<NormalizedEvent>,
-                            r: mpsc::Sender<ManagerReport>,
-                            directives: Vec<Directive>| {
-            let (backpressure_tx, _) = mpsc::channel::<()>(8);
-            let (resptime_tx, _) = mpsc::channel::<f64>(128);
+        let get_opt =
+            move |c: Sender<()>, r: mpsc::Sender<ManagerReport>, directives: Vec<Directive>| {
+                let (backpressure_tx, _) = mpsc::channel::<()>(8);
+                let (resptime_tx, _) = mpsc::channel::<f64>(128);
 
-            let assets =
-                Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-            let intels = Arc::new(
-                crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
-            );
-            let vulns = Arc::new(
-                crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
-            );
+                let assets =
+                    Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
+                let intels = Arc::new(
+                    crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
+                );
+                let vulns = Arc::new(
+                    crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
+                );
 
-            let rt_handle = tokio::runtime::Handle::current();
-            ManagerOpt {
-                test_env: true,
-                reload_backlogs: true,
-                directives,
-                assets,
-                intels,
-                vulns,
-                intel_private_ip: false,
-                max_delay: 0,
-                min_alarm_lifetime: 0,
-                backpressure_tx,
-                cancel_tx: c,
-                resptime_tx,
-                publisher,
-                default_status: "Open".to_string(),
-                default_tag: "Identified Threat".to_string(),
-                med_risk_min: 3,
-                med_risk_max: 6,
-                report_tx: r,
-                max_eps: 1000,
-                max_queue: 100,
-                thread_allocation: ThreadAllocation {
-                    filter_threads: 1,
-                    tokio_threads: 1,
-                },
-                tokio_handle: rt_handle,
-                notifier: Arc::new(Notify::new()),
-            }
-        };
+                let rt_handle = tokio::runtime::Handle::current();
+                ManagerOpt {
+                    test_env: true,
+                    reload_backlogs: true,
+                    directives,
+                    assets,
+                    intels,
+                    vulns,
+                    intel_private_ip: false,
+                    max_delay: 0,
+                    min_alarm_lifetime: 0,
+                    backpressure_tx,
+                    cancel_tx: c,
+                    resptime_tx,
+                    default_status: "Open".to_string(),
+                    default_tag: "Identified Threat".to_string(),
+                    med_risk_min: 3,
+                    med_risk_max: 6,
+                    report_tx: r,
+                    max_eps: 1000,
+                    max_queue: 100,
+                    thread_allocation: ThreadAllocation {
+                        filter_threads: 1,
+                        tokio_threads: 1,
+                    },
+                    tokio_handle: rt_handle,
+                    notifier: Arc::new(Notify::new()),
+                }
+            };
 
         let run_manager = |directives: Vec<Directive>,
                            event_tx: broadcast::Sender<NormalizedEvent>| {
-            let opt = get_opt(cancel_tx.clone(), event_tx, report_tx.clone(), directives);
+            let opt = get_opt(cancel_tx.clone(), report_tx.clone(), directives);
             let span = Span::current();
+            let tx_clone = event_tx.clone();
             task::spawn(async {
                 let _h = span.entered();
                 let m = Manager::new(opt).unwrap();
-                _ = m.start(1);
+                _ = m.start(tx_clone, 1);
             })
         };
 
@@ -812,15 +810,18 @@ mod test {
         _ = cancel_tx.send(());
         sleep(Duration::from_millis(4000)).await;
         assert!(logs_contain("1 backlogs saved"));
+        drop(event_tx);
+        sleep(Duration::from_millis(500)).await;
         assert!(logs_contain("manager exiting"));
 
         // successful loading from disk
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1024);
-        let _handle = run_manager(directives.clone(), event_tx);
+        let _handle = run_manager(directives.clone(), event_tx.clone());
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("reloading old backlog"));
 
         _ = cancel_tx.send(());
+        drop(event_tx);
 
         /* uncomment this block if directive rules are applied to backlog, which for now isn't
 
