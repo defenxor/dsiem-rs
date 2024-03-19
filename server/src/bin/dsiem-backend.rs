@@ -165,13 +165,16 @@ struct ServeArgs {
     /// For example, setting this to 1000 will mean 1024 events queue length,
     /// 12000 will mean 16384 events queue length, and so on.
     ///
-    /// Setting this to 0 will use 1,048,576 events to emulate unbounded queue.
+    /// Setting this to 0 will use 524,288 events to emulate unbounded queue for
+    /// compatibility with dsiem-go behavior, which is no longer recommended.
+    ///
+    /// Instead, this should be set to a reasonable value to avoid unnecessary memory allocation.
     #[arg(
         short('q'),
         long = "max_queue",
         env = "DSIEM_MAXQUEUE",
         value_name = "events",
-        default_value_t = 8192
+        default_value_t = 32768
     )]
     max_queue: usize,
     /// Duration in seconds before resetting overload condition state
@@ -246,7 +249,11 @@ struct ServeArgs {
         default_value_t = false
     )]
     preload_directives: bool,
-    /// Duration in minutes to wait for idle directives before unloading them
+    /// Duration in minutes to wait for idle directives before unloading them.
+    ///
+    /// Idle directives are those that have 0 backlogs for the specified duration.
+    ///
+    /// This is only applicable when preload-all-directives is false
     #[arg(
         long = "idle-directives-timeout",
         env = "DSIEM_DIRECTIVES_IDLE_TIMEOUT_MINUTES",
@@ -474,7 +481,7 @@ mod test {
         assert_eq!(sargs.hold_duration, 10);
         assert_eq!(sargs.cache_duration, 10);
         assert_eq!(sargs.max_delay, 180);
-        assert_eq!(sargs.max_queue, 8192);
+        assert_eq!(sargs.max_queue, 32768);
         assert_eq!(sargs.max_eps, 1000);
         assert_eq!(sargs.med_risk_max, 6);
         assert_eq!(sargs.med_risk_min, 3);
