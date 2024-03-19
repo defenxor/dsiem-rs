@@ -307,8 +307,8 @@ impl BacklogManager {
                         if self.lazy_loader.is_none() {
                             continue;
                         }
+                        // note: the upstream_rx should NOT be closed here, so it can still be reuse by future instances
                         info!(directive.id = self.directive.id, "idle timeout reached, exiting backlog manager thread");
-                        upstream_rx.close();
                         if let Some(v) = self.lazy_loader.as_ref() {
                             v.cache.invalidate(&self.directive.id);
                         }
