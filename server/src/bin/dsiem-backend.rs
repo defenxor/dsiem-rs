@@ -481,7 +481,7 @@ mod test {
         assert_eq!(sargs.hold_duration, 10);
         assert_eq!(sargs.cache_duration, 10);
         assert_eq!(sargs.max_delay, 180);
-        assert_eq!(sargs.max_queue, 8192);
+        assert_eq!(sargs.max_queue, 32768);
         assert_eq!(sargs.max_eps, 1000);
         assert_eq!(sargs.med_risk_max, 6);
         assert_eq!(sargs.med_risk_min, 3);
