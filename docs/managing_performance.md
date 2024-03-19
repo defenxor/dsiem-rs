@@ -24,6 +24,22 @@ $$ {n_{eps}} = \frac{{17,000,000} × 1}{10,000} = 1,700$$
 
 If that rate limit is persistently exceeded, the queue will start filling up and eventually events will be dropped. In such cases, first consider increasing the number of threads allocated so that directives are processed in parallel. If that's not feasible, then consider applying one of, or a combination of, reconfigurations outlined below.
 
+## Preload all directives at startup if necessary
+
+By default, Dsiem will only load backlog manager for a directive whenever there's a matching event for its rules. Backlog managers without active backlog will also be unloaded after a period of time controlled by `--idle-directives-timeout` option. This allows us to assign many more directives to a node without allocating more memory unless there's an actual need for it.
+
+That dynamic loading/unloading of backlog managers however, adds variability to their reaction time, and requires more complexity (hence CPU time) than just pre-loading all of them at startup. Pre-loading at startup should ensure stable reaction time and maybe able to sustain constant high EPS environment better than the dynamic alternative, at the cost of more memory allocation.
+
+Dsiem backend node supports both mode of operation controlled through `--preload-all-directives` startup flag. In most cases the default mode should be used, unless there's evidence like unstable queue condition, or a business requirement like an SLA, that justifies the extra memory allocations of preloading all backlog managers at startup.
+
+For concrete example, here's resident memory usage of two backend nodes both serving identical 23,500 directives. The node on the second line uses `--preload-all-directives true` and is using more than double the memory used by the first node.
+
+```shell
+ps -axo rss,cmd | grep -v grep | grep dsiem-backend
+400736 /dsiem/dsiem-backend serve
+1196992 /dsiem/dsiem-backend serve
+```
+
 ## Selectively ingest logs from Logstash
 
 It makes no sense to send a log to Dsiem if you don't have correlation rules for it.
@@ -44,11 +60,11 @@ You can treat directives differently by using a separate set of nodes (both fron
 
 Dsiem offers two such strategies to select from:
 
-1. Use a fixed length queue and discard new events when that queue is full
+1. Use a short queue length and discard new events when that queue is full
 
    The advantages of this strategy are:
    - Events that *do* get processed will have a recent timestamp.
-   - Backend nodes will have a relatively constant and predictable resource usage.
+   - Backend nodes will have a relatively constant and lower resource usage.
    - NATS, Logstash, and frontend nodes do not have to adapt to backend nodes condition.
 
    The obvious (and rather severe) disadvantage of this is Dsiem may skip processing events from time to time.
@@ -59,7 +75,7 @@ Dsiem offers two such strategies to select from:
 > The fixed queue length then will be set to `max_queue`, and `max_delay` = 0 will prevent frontend from throttling incoming events.
 
 
-2. Use an unbounded queue and auto-adjust frontend ingestion rate (events/sec) to apply back-pressure to Logstash
+2. Use a long queue and auto-adjust frontend ingestion rate (events/sec) to apply back-pressure to Logstash
 
    In this case whenever Dsiem backend nodes detect an event that has a timestamp older than the configured threshold, they will instruct frontends to reduce the rate of incoming events from Logstash. Frontends will gradually increase its ingestion rate again once the backends no longer report overload condition.
 
@@ -71,7 +87,7 @@ Dsiem offers two such strategies to select from:
     - Sustained reduction of delivery rate from Logstash to frontends will cause Logstash to overflow its queue capacity, and depending on how it's configured, Logstash may end up stop receiving incoming events from its input. Using Logstash persistent queue backed by a large amount of storage space will not help either — in fact that may only worsen the processing delay issue.
 
 > [!NOTE]
-> Use this strategy by setting `max_queue` to 0, and `max_delay` to a number higher than 0. The queue length will then be unbounded, and `max_delay` (seconds) will be used by backend to detect processing delay and report this condition to frontend, which will then apply back-pressure to Logstash.
+> Use this strategy by setting `max_queue` to 0, and `max_delay` to a number higher than 0. The queue length will  then be set to 512k events, and `max_delay` (seconds) will be used by backend to detect processing delay and report this condition to frontend, which will then apply back-pressure to Logstash.
 > 
 > _Processing delay_ occurs when the duration between the time that _an event was received by frontend_ to the time when _that event is processed by a directive_, is greater than `max_delay`.
 
@@ -82,7 +98,7 @@ Given that scenario, you can use the following strategy to make the best out of 
 - Use unbounded queue and Dsiem EPS rate auto-adjustment (with threshold set to 5 minutes delay) on a set of nodes that host the 100 critical directives. Make sure that the nodes have enough hardware resources allocated to cope with normal ingestion rate, so that the auto-adjustment will only be triggered sparingly during a temporary spike and will not last for long. 
 At Logstash end, use persistent queue on the pipeline with enough capacity to prevent it from blocking its input during reduced output rate to Dsiem frontend. This last bit isn't necessary if the input is Filebeat, or similar producer that doesn't discard events when they can't send to Logstash.
 
-- Use fixed length queue on a set of nodes that host the lower priority directives. They can run on the hardware that aren't being used by the nodes hosting critical directives.
+- Use a short length queue on a set of nodes that host the lower priority directives. They can run on the hardware that aren't being used by the nodes hosting critical directives.
 
 ## Shield the main Logstash ingestion pipeline
 
