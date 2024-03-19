@@ -318,7 +318,17 @@ impl BacklogManager {
                         // note: the upstream_rx should NOT be closed here, so it can still be reuse by future instances
                         info!(directive.id = self.directive.id, "idle timeout reached, exiting backlog manager thread");
                         if let Some(v) = self.lazy_loader.as_ref() {
+                            // note: the upstream_rx should NOT be closed here, so it can still be reuse by future instances
+                            // so instead we'll just drop the lock
+                            //
+                            // the order between cache invalidation and dropping the lock here doesn't matter that much
+                            // it will just move the location of potential event loss during the transition from this instance to the next.
+                            // that's only applicable if there's incoming event while we're exiting this one.
+
                             v.cache.invalidate(&self.directive.id);
+                            // events that are in-flight here could potentially create a new backlog manager,
+                            // which may not be able to lock the upstream_rx yet before this next line is executed.
+                            drop(upstream_rx);
                         }
                         break;
                 },
