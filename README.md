@@ -23,6 +23,7 @@ Compared to Dsiem in the main repo, this repo currently:
 - Support saving backlogs to disk before exiting, and reloading them after restart (controlled by `--reload-backlogs` flag, see below for more details).
 - Uses OpenTelemetry for tracing and metrics instead of Elastic APM. More details on the [telemetry](./docs/telemetry.md) page.
 - Perform initial event filtering in a central location using dedicated threads, thereby reducing the number of events that must be sent downstream to individual directive.
+- Has option to dynamically load backlog managers based on matching events to reduce memory usage, or preload them all at startup to maximise performance. More on this in [managing performance](./docs/managing_performance.md).
 - Requires all directives to be loaded without error during startup. The behaviour of the main repo binary which tries to fix minor errors, and skip loading (with a warning) directives that has major errors, is only practical during initial migration from OSSIM.
 - Doesn't default to use JSON-lines log output (enable through `-j` parameter or `DSIEM_JSON=true` env. variable).
 - Integrate `backlog` and `alarm` to one struct to reduce data duplication.
@@ -36,7 +37,7 @@ will be saved to `/logs/backlogs/{directive_id}.json` when dsiem-backend shuts d
 
 A couple of notes on this feature:
 
-- A saved backlog that has a different title than the directive will be discarded. This is to prevent manager from loading a wrong backlog for a directive, which could happen if there's a change in directive ID assignment during down time.
+- A saved backlog that has a different title than the directive will be discarded. This is to prevent manager from loading a wrong backlog for a directive, which could happen if there's a change in directive ID assignment during down time. Note that this means backlogs generated of legacy OSSIM directives that have `SRC_IP` and `DST_IP` in title will always be discarded.
 
 - Backlogs loaded from disk will continue to use their previous rules, so any changes made to the directive rules during down time will only apply to new backlogs.
   Modify `/logs/backlogs/{directive_id}.json` during down time if there is a need to immediately apply updated rules to saved backlogs on next run, or just delete the file to discard all saved backlogs.
