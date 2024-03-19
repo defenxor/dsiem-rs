@@ -16,7 +16,7 @@ pub fn log_startup_err(context: &str, err: Error) -> Error {
 
 pub fn ctrlc_handler(cancel_tx: broadcast::Sender<()>, report_err: bool) -> Result<()> {
     let res = ctrlc::set_handler(move || {
-        info!("ctrl-c received, shutting down ...");
+        info!("termination signal received, shutting down ...");
         let _ = cancel_tx.send(());
     });
     if let Err(e) = res {
@@ -72,6 +72,12 @@ impl Validator {
     pub fn verify_risk_boundaries(min: u8, max: u8) -> Result<()> {
         if min < 2 || max > 9 || min == max {
             return Err(anyhow!("invalid value provided"));
+        }
+        Ok(())
+    }
+    pub fn verify_dirs_idle_timeout_minutes(t: u16) -> Result<()> {
+        if t < 5 {
+            return Err(anyhow!("invalid value provided, minimum is 5 minutes"));
         }
         Ok(())
     }

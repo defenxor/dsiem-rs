@@ -160,13 +160,18 @@ struct ServeArgs {
         default_value_t = 10
     )]
     cache_duration: u8,
-    /// Length of queue for unprocessed events, setting this to 0 will use 1,000,000 events to emulate unbounded queue
+    /// Length of queue for unprocessed events, rounded to the next power of 2.
+    ///
+    /// For example, setting this to 1000 will mean 1024 events queue length,
+    /// 12000 will mean 16384 events queue length, and so on.
+    ///
+    /// Setting this to 0 will use 1,048,576 events to emulate unbounded queue.
     #[arg(
         short('q'),
         long = "max_queue",
         env = "DSIEM_MAXQUEUE",
         value_name = "events",
-        default_value_t = 25000
+        default_value_t = 8192
     )]
     max_queue: usize,
     /// Duration in seconds before resetting overload condition state
@@ -233,6 +238,22 @@ struct ServeArgs {
         default_value_t = 0
     )]
     filter_threads: usize,
+    /// Preload all directives on startup to increase performance
+    #[arg(
+        long = "preload-all-directives",
+        env = "DSIEM_PRELOAD_DIRECTIVES",
+        value_name = "bool",
+        default_value_t = false
+    )]
+    preload_directives: bool,
+    /// Duration in minutes to wait for idle directives before unloading them
+    #[arg(
+        long = "idle-directives-timeout",
+        env = "DSIEM_DIRECTIVES_IDLE_TIMEOUT_MINUTES",
+        value_name = "minutes",
+        default_value_t = 10
+    )]
+    dir_idle_timeout: u16,
 }
 
 fn main() -> ExitCode {
@@ -252,6 +273,9 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     validator::verify_risk_boundaries(sargs.med_risk_min, sargs.med_risk_max)
         .map_err(|e| log_startup_err("reading med_risk_min and med_risk_max", e))?;
+
+    validator::verify_dirs_idle_timeout_minutes(sargs.dir_idle_timeout)
+        .map_err(|e| log_startup_err("reading dir_idle_timeout", e))?;
 
     let min_alarm_lifetime = validator::min_alarm_lifetime(sargs.min_alarm_lifetime);
     let max_queue = validator::max_queue(sargs.max_queue);
@@ -313,6 +337,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             event_tx: event_tx_clone,
             resptime_rx,
             report_rx,
+            ttl_directives: n,
             cancel_tx: cancel_tx_clone,
             report_interval: REPORT_INTERVAL_IN_SECONDS,
             max_eps,
@@ -372,9 +397,18 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             .map_err(|e| log_startup_err("loading vulns", e))?,
     );
 
+    let lazy_loader = match sargs.preload_directives {
+        true => None,
+        false => Some(manager::LazyLoaderConfig::new(
+            n,
+            (sargs.dir_idle_timeout * 60) as u64,
+        )),
+    };
+
     let opt = ManagerOpt {
         test_env,
         reload_backlogs: sargs.reload_backlogs,
+        lazy_loader,
         directives,
         assets,
         intels,
@@ -440,7 +474,7 @@ mod test {
         assert_eq!(sargs.hold_duration, 10);
         assert_eq!(sargs.cache_duration, 10);
         assert_eq!(sargs.max_delay, 180);
-        assert_eq!(sargs.max_queue, 25000);
+        assert_eq!(sargs.max_queue, 8192);
         assert_eq!(sargs.max_eps, 1000);
         assert_eq!(sargs.med_risk_max, 6);
         assert_eq!(sargs.med_risk_min, 3);

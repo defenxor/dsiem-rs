@@ -27,6 +27,7 @@ pub struct WatchdogOpt {
     pub report_rx: mpsc::Receiver<ManagerReport>,
     pub cancel_tx: broadcast::Sender<()>,
     pub report_interval: u64,
+    pub ttl_directives: usize,
     pub max_eps: u32,
     pub otel_config: OtelConfig,
     pub eps: Arc<eps::Eps>,
@@ -87,7 +88,10 @@ impl Watchdog {
                 let eps = round(opt.eps.metrics.count.throughput.histogram().mean(), 2);
                 let queue_length = opt.event_tx.len();
                 let avg_proc_time_ms = resp_histo.mean()/UNIT_MULTIPLIER;
-                let ttl_directives = report_map.len();
+
+                // irrelevant for non preload_directives mode
+                // let ttl_directives = report_map.len();
+
                 let active_directives =  report_map.iter().filter(|&(_, (x, _))|*x > 0).count();
                 let (backlogs, timedout_backlogs) = report_map.values().fold((0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1));
 
@@ -95,7 +99,7 @@ impl Watchdog {
                   meter.upsert_f64("dsiem_eps", Some(eps))?;
                   meter.upsert_f64("dsiem_avg_proc_time_ms", Some(avg_proc_time_ms))?;
                   meter.upsert_u64("dsiem_queue_length", Some(queue_length as u64))?;
-                  meter.upsert_u64("dsiem_ttl_directives", Some(ttl_directives as u64))?;
+                  meter.upsert_u64("dsiem_ttl_directives", Some(opt.ttl_directives as u64))?;
                   meter.upsert_u64("dsiem_active_directives", Some(active_directives as u64))?;
                   meter.upsert_u64("dsiem_backlogs", Some(backlogs as u64))?;
                 }
@@ -106,7 +110,7 @@ impl Watchdog {
                   eps,
                   queue_length,
                   avg_proc_time_ms =  rounded_avg_proc_time_ms,
-                  ttl_directives,
+                  ttl_directives = opt.ttl_directives,
                   active_directives,
                   backlogs,
                   timedout_backlogs,
@@ -161,6 +165,7 @@ mod test {
             report_rx,
             cancel_tx: cancel_tx.clone(),
             report_interval,
+            ttl_directives: 1,
             max_eps,
             otel_config,
             eps,
