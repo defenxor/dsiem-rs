@@ -14,13 +14,11 @@ use tokio::{sync::{
     mpsc, oneshot, Mutex,
 }, task};
 
-// use parking_lot::Mutex as ParkMutex;
-
 // re-export
 pub use self::option::ManagerOpt;
 pub use crate::backlog::manager::ManagerReport;
 
-pub const UNBOUNDED_QUEUE_SIZE: usize = 1_000_000;
+pub const UNBOUNDED_QUEUE_SIZE: usize = 524_288;
 const DEADLOCK_TIMEOUT_IN_SECONDS: u64 = 10;
 const DIRECTIVE_ID_CHAN_QUEUE_SIZE: usize = 64;
 
@@ -82,7 +80,7 @@ impl Manager {
             ManagerLoader::OnDemand(vec![])
         };
 
-        // the cacge us for on-demand backlog manager creation mode
+        // this cache is for on-demand backlog manager creation mode
         // and is used to keep track of active backlog managers
         // each backlog managers are expected to:
         // 1. send their directive id to this cache when they start
@@ -241,7 +239,7 @@ impl Manager {
                         if d.tx.try_send(event.clone()).is_err() {
                             warn!(
                                 directive.id = d.id,
-                                event.id, "backlog manager lagged, dropping event"
+                                event.id, "backlog manager lagged or no longer active, dropping event"
                             );
                         }
                     });
@@ -337,7 +335,7 @@ impl Manager {
                             // ids contains all directives and never change, so this should always succeed
                             let res = ids.iter().filter(|i| i.id == id).take(1).last().map(|i| {
                                 let span = Span::current();
-                                debug!(directive.id = id, section="spawner", "creating new backlog manager");
+                                debug!(directive.id = id, "spawner creating new backlog manager");
                                 
                                 let directive = directives.iter().filter(|d| d.id == id).take(1).last().unwrap().to_owned();
                                 let rx = Arc::clone(&i.upstream_rx);
@@ -403,7 +401,7 @@ mod test {
     };
 
     use super::*;
-    use test::option::LazyLoaderConfig;
+    use option::LazyLoaderConfig;
     use tokio::{
         sync::{broadcast::Sender, Notify},
         task,
@@ -413,7 +411,7 @@ mod test {
     use tracing_test::traced_test;
 
 
-    fn get_opt (c: Sender<()>, r: mpsc::Sender<ManagerReport>, directives: Vec<Directive>, preload_directives: bool, reload_backlogs: bool, dirs_idle_timeout: u64) -> ManagerOpt {
+    fn get_opt (c: Sender<()>, r: mpsc::Sender<ManagerReport>, directives: Vec<Directive>, preload_directives: bool, reload_backlogs: bool, lazy_loader: Option<LazyLoaderConfig>) -> ManagerOpt {
         let (backpressure_tx, _) = mpsc::channel::<()>(8);
         let (resptime_tx, _) = mpsc::channel::<f64>(128);
 
@@ -426,15 +424,15 @@ mod test {
             crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
         );
 
-        let lazy_loader = match preload_directives {
+        let l = match preload_directives {
             true => None,
-            false => Some(LazyLoaderConfig::new(directives.len(), dirs_idle_timeout)),
+            false => lazy_loader,
         };
 
         let rt_handle = tokio::runtime::Handle::current();
         ManagerOpt {
             test_env: true,
-            lazy_loader,
+            lazy_loader: l,
             reload_backlogs,
             directives,
             assets,
@@ -468,8 +466,9 @@ mod test {
                     report_tx: mpsc::Sender<ManagerReport>,
                     preload_directives: bool,
                     reload_backlogs: bool,
-                    timeout_sec: u64) -> task::JoinHandle<()>{
-        let opt = get_opt(cancel_tx.clone(), report_tx.clone(), directives, preload_directives, reload_backlogs, timeout_sec);
+                    lazy_loader: Option<LazyLoaderConfig>
+                    ) -> task::JoinHandle<()>{
+        let opt = get_opt(cancel_tx.clone(), report_tx.clone(), directives, preload_directives, reload_backlogs, lazy_loader);
         let span = Span::current();
         let tx_clone = event_tx.clone();
         task::spawn(async move {
@@ -517,7 +516,7 @@ mod test {
 
         let (event_tx, _) = broadcast::channel(1024);
 
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, true, 60).await;
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, true, None).await;
 
         let mut evt = NormalizedEvent {
             id: "0a".to_string(),
@@ -597,7 +596,7 @@ mod test {
 
         // attempt to load from disk, this fails because of difference in title
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1024);
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, true, 0).await;
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, true, None).await;
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("reloading old backlog"));
         _ = cancel_tx.send(());
@@ -606,7 +605,7 @@ mod test {
 
         // ensure deletion of saved backlogs
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1024);
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, false, 0).await;
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, false, None).await;
         sleep(Duration::from_millis(1000)).await;
         _ = cancel_tx.send(());
         drop(event_tx);
@@ -630,20 +629,6 @@ mod test {
         let span = Span::current();
         let _report_receiver = task::spawn(
             async move {
-                // test comparing report
-                let rpt1 = ManagerReport {
-                    id: 1,
-                    active_backlogs: 1,
-                    timedout_backlogs: 0,
-                };
-                let mut rpt2 = ManagerReport {
-                    id: 1,
-                    active_backlogs: 1,
-                    timedout_backlogs: 0,
-                };
-                assert!(rpt1 == rpt2);
-                rpt2.active_backlogs = 2;
-                assert!(rpt1 != rpt2);                
                 while report_rx.recv().await.is_some() {
                     debug!("report received");
                 }
@@ -653,7 +638,7 @@ mod test {
 
         let (event_tx, _) = broadcast::channel(1024);
 
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, false, 60).await;
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, false, None).await;
 
         let mut evt = NormalizedEvent {
             id: "0a".to_string(),
@@ -770,5 +755,76 @@ mod test {
         assert!(logs_contain("lower than backlog's current stage"));
 
         */
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+    #[traced_test]
+    async fn test_manager_directives_timeout() {
+        
+        let directives = directive::load_directives(
+            true,
+            Some(vec!["directives".to_string(), "directive5".to_string()]),
+        )
+        .unwrap();
+        let (cancel_tx, _) = broadcast::channel::<()>(1);
+        let (report_tx, mut report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
+
+        let span = Span::current();
+        let _report_receiver = task::spawn(
+            async move {
+                while report_rx.recv().await.is_some() {
+                    debug!("report received");
+                }
+            }
+            .instrument(span),
+        );
+
+        let (event_tx, _) = broadcast::channel(1024);
+
+        let loader = LazyLoaderConfig::new(directives.len(), 3).with_dirs_idle_timeout_checker_interval_sec(1);
+
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, false, Some(loader)).await;
+
+        let mut evt = NormalizedEvent {
+            id: "0a".to_string(),
+            plugin_id: 31337,
+            plugin_sid: 2,
+            custom_label1: "label".to_string(),
+            custom_data1: "data".to_string(),
+            ..Default::default()
+        };
+
+        sleep(Duration::from_millis(1000)).await;
+        // matched event 1
+        evt.plugin_sid = 1;
+        evt.plugin_id = 1337;
+        evt.id = "1".to_string();
+        event_tx.send(evt.clone()).unwrap();
+        sleep(Duration::from_millis(1000)).await;
+
+        // assert that the backlog manager is listening for events
+        assert!(logs_contain("listening for event directive.id=1"));
+
+        assert!(logs_contain("creating new backlog"));
+
+        // should be logged every second until backlog expires 
+        sleep(Duration::from_millis(500)).await; 
+        assert!(logs_contain("backlogs is not empty resetting idle timeout"));
+
+        // backlog should've expired, also the idle timeout of 3 secs after that
+        sleep(Duration::from_secs(15)).await; 
+        assert!(logs_contain("idle timeout reached, exiting backlog manager"));
+
+        // sending another event should instantiate a new backlog manager
+        evt.id="10".to_string();
+        event_tx.send(evt).unwrap();
+        sleep(Duration::from_millis(5000)).await;
+
+        assert!(logs_contain("backlog::manager: received event directive.id=1 event.id=\"10\""));
+
+        // teardown
+        _ = cancel_tx.send(());
+        drop(event_tx);
+        _ = manager_handle.await;
     }
 }
