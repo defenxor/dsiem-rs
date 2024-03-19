@@ -231,7 +231,15 @@ impl BacklogManager {
         // initial report
         _ = report_sender.send(mgr_report.clone()).await;
 
-        let mut upstream_rx = self.upstream_rx.lock().await;
+        // if this fails, it means another instance is already running and we should abort
+        let mut upstream_rx = self.upstream_rx.try_lock().map_err(|e| {
+            error!(
+                directive.id = self.directive.id,
+                "another instance is already running for this directive ID, exiting this one"
+            );
+            e
+        })?;
+
         let mut delete_rx = self.delete_rx.lock().await;
 
         debug!("about to send ready signal");

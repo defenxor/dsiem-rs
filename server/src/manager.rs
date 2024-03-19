@@ -222,14 +222,22 @@ impl Manager {
                             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
                             if let Err(e) = id_tx.blocking_send((d.id, tx)) {
-                                warn!(
+                                error!(
                                     directive.id = d.id,
                                     event.id, "skipping, filter can't send id to spawner: {}", e
                                 );
                                 return;
                             }
                             // waiting for the spawner to acknowledge backlog manager creation
-                            _ = rx.blocking_recv();
+                            debug!(directive.id = d.id, "waiting confirmation from spawner");
+                            if let Err (e) = rx.blocking_recv() {
+                                // failure could mean there's already an existing backlog manager for this directive
+                                // so we should just try to send the event anyway
+                                warn!(
+                                    directive.id = d.id,
+                                    event.id, "spawner failed to confirm backlog manager creation: {}, will try to send the event anyway", e
+                                );
+                            }
                         }
 
                         debug!(
@@ -305,8 +313,6 @@ impl Manager {
         let rt = self.option.tokio_handle.clone();
         let directives = self.option.directives.clone();
         let option = self.option.clone();
-        // let b_managers = Arc::new(b_managers);
-        // let load_param = load_param.clone();
         let log_tx = log_tx.clone();
         let mut cancel_rx = self.option.cancel_tx.subscribe();
         info!(
@@ -333,7 +339,7 @@ impl Manager {
                             // no need to check if the directive is in the cache, filter **only** sends one that isn't in there
 
                             // ids contains all directives and never change, so this should always succeed
-                            let res = ids.iter().filter(|i| i.id == id).take(1).last().map(|i| {
+                            let _ = ids.iter().filter(|i| i.id == id).take(1).last().map(|i| {
                                 let span = Span::current();
                                 debug!(directive.id = id, "spawner creating new backlog manager");
                                 
@@ -352,25 +358,23 @@ impl Manager {
                                 set.spawn(async move {
                                     let _detached = b.start(ready_tx).instrument(span).await;
                                 });
-                                let is_ready = task::block_in_place(|| {
+                                
+                                if !task::block_in_place(|| {
                                     if let Err(e) = ready_rx.blocking_recv() {
-                                        error!(directive.id = id, section="spawner", "backlog manager failed to start: {}", e);
+                                        error!(directive.id = id, "spawner failed to start backlog manager: {}", e);
                                         // if a backlog manager fails to start, we should exit rt
                                         false
                                     } else {
                                         true                
                                     }
-                                });
-                                if !is_ready {
-                                    return Err(()) // exit closure with error
+                                }) {
+                                    return // exit closure without notifying filter. oneshot channel should then be closed and filter should recover
                                 }
-                                let _ = tx.send(());
-                                Ok(())
-                                
+                                if let Err(e) = tx.send(()) {
+                                    // the filter should be able to recover
+                                    error!(directive.id = id, "spawner failed to notify filter that backlog manager is ready: {:?}", e);
+                                };
                             });
-                            if let Some(Err(_)) = res {
-                                break; // exit loop if closure returns error
-                            }
                         }
                     }
                 }
