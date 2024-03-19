@@ -28,6 +28,8 @@ use tokio::{
 };
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
+pub mod manager;
+
 #[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 pub struct CustomData {
     pub label: String,
@@ -181,8 +183,8 @@ pub struct BacklogOpt<'a> {
     pub bp_tx: Sender<()>,
     pub delete_tx: Sender<()>,
     pub min_alarm_lifetime: i64,
-    pub default_status: String,
-    pub default_tag: String,
+    pub default_status: &'a str,
+    pub default_tag: &'a str,
     pub med_risk_min: u8,
     pub med_risk_max: u8,
     pub intel_private_ip: bool,
@@ -1080,8 +1082,8 @@ mod test {
                 bp_tx,
                 delete_tx: mgr_delete_tx,
                 min_alarm_lifetime: 0,
-                default_status: "Open".to_string(),
-                default_tag: "Identified Threat".to_string(),
+                default_status: "Open",
+                default_tag: "Identified Threat",
                 med_risk_min: 3,
                 med_risk_max: 6,
                 intel_private_ip: true,
@@ -1207,8 +1209,8 @@ mod test {
             event: Some(&evt_cloned),
             bp_tx,
             delete_tx: mgr_delete_tx,
-            default_status: "Open".to_string(),
-            default_tag: "Identified Threat".to_string(),
+            default_status: "Open",
+            default_tag: "Identified Threat",
             min_alarm_lifetime: 0,
             med_risk_min: 3,
             med_risk_max: 6,
@@ -1319,8 +1321,8 @@ mod test {
             event: Some(&evt_cloned),
             bp_tx,
             delete_tx: mgr_delete_tx,
-            default_status: "Open".to_string(),
-            default_tag: "Identified Threat".to_string(),
+            default_status: "Open",
+            default_tag: "Identified Threat",
             min_alarm_lifetime: 0,
             med_risk_min: 3,
             med_risk_max: 5,
@@ -1426,8 +1428,8 @@ mod test {
                 event: Some(&evt),
                 bp_tx,
                 delete_tx: mgr_delete_tx,
-                default_status: "Open".to_string(),
-                default_tag: "Identified Threat".to_string(),
+                default_status: "Open",
+                default_tag: "Identified Threat",
                 min_alarm_lifetime: 0,
                 med_risk_min: 3,
                 med_risk_max: 6,
