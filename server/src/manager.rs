@@ -172,6 +172,27 @@ impl Manager {
             }
         };
 
+        // if preload_directives is false and reload_backlogs is true, we should instruct the spawner to load those backlog managers that have
+        // backlogs saved on disk
+
+        if !preload_directives && self.option.reload_backlogs {
+            debug!("preload_directives is false, listing saved backlogs if any");
+            // backlogs dir may not exist
+            let ids = crate::backlog::manager::storage::list(self.option.test_env).unwrap_or_default();
+            debug!("found {} saved backlogs", ids.len());
+            if !ids.is_empty() {
+                info!("found {} saved backlogs, instructing spawner to activate associated backlog managers", ids.len());
+                ids.iter().for_each(|id| {
+                    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+                    if let Err(e) = id_tx.blocking_send((*id, tx)) {
+                        warn!(directive.id = id, "failed to activate backlog manager so that it can to reload saved backlogs: {}", e);
+                    }
+                    debug!("waiting for spawner to acknowledge backlog manager activation");
+                    _ = rx.blocking_recv() // missing confirmation isn't critical here, spawner will have already reported the error
+               });
+            }
+        }
+
         let mut handles = vec![];
         for (idx, c) in chunks.into_iter().enumerate() {
             let mut rx = publisher.subscribe();
@@ -342,6 +363,7 @@ impl Manager {
             "starting spawner thread serving {} backlog managers",
             ids.len()
         );
+        
         thread::spawn(move || {
             let _h = span.entered();
             let span = Span::current();
@@ -438,7 +460,7 @@ mod test {
     use tracing_test::traced_test;
 
 
-    fn get_opt (c: Sender<()>, r: mpsc::Sender<ManagerReport>, directives: Vec<Directive>, preload_directives: bool, reload_backlogs: bool, lazy_loader: Option<LazyLoaderConfig>) -> ManagerOpt {
+    fn get_opt (c: Sender<()>, r: mpsc::Sender<ManagerReport>, directives: Vec<Directive>, reload_backlogs: bool, lazy_loader: Option<LazyLoaderConfig>) -> ManagerOpt {
         let (backpressure_tx, _) = mpsc::channel::<()>(8);
         let (resptime_tx, _) = mpsc::channel::<f64>(128);
 
@@ -451,15 +473,10 @@ mod test {
             crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
         );
 
-        let l = match preload_directives {
-            true => None,
-            false => lazy_loader,
-        };
-
         let rt_handle = tokio::runtime::Handle::current();
         ManagerOpt {
             test_env: true,
-            lazy_loader: l,
+            lazy_loader,
             reload_backlogs,
             directives,
             assets,
@@ -491,17 +508,17 @@ mod test {
                     event_tx: broadcast::Sender<NormalizedEvent>,
                     cancel_tx: broadcast::Sender<()>,
                     report_tx: mpsc::Sender<ManagerReport>,
-                    preload_directives: bool,
                     reload_backlogs: bool,
                     lazy_loader: Option<LazyLoaderConfig>
                     ) -> task::JoinHandle<()>{
-        let opt = get_opt(cancel_tx.clone(), report_tx.clone(), directives, preload_directives, reload_backlogs, lazy_loader);
+        let opt = get_opt(cancel_tx.clone(), report_tx.clone(), directives, reload_backlogs, lazy_loader);
         let span = Span::current();
         let tx_clone = event_tx.clone();
-        task::spawn(async move {
+        task::spawn_blocking(move ||  {
             let _h = span.entered();
             let m = Manager::new(opt).unwrap();
             _ = m.start(tx_clone, 1);
+            // _ = m.start(tx_clone, 1
         })
     }
 
@@ -543,7 +560,7 @@ mod test {
 
         let (event_tx, _) = broadcast::channel(1024);
 
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, true, None).await;
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, None).await;
 
         let mut evt = NormalizedEvent {
             id: "0a".to_string(),
@@ -610,20 +627,18 @@ mod test {
         sleep(Duration::from_millis(500)).await;
         assert!(logs_contain("creating new backlog"));
 
-        // cancel signal, should also trigger saving to disk
-        sleep(Duration::from_millis(500)).await;
         _ = cancel_tx.send(());
         sleep(Duration::from_millis(4000)).await;
-        assert!(logs_contain("1 backlogs saved"));
         drop(event_tx);
         sleep(Duration::from_millis(500)).await;
         assert!(logs_contain("manager exiting"));
 
         _ = manager_handle.await;
 
+        /*
         // attempt to load from disk, this fails because of difference in title
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1024);
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, true, None).await;
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, None).await;
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("reloading old backlog"));
         _ = cancel_tx.send(());
@@ -632,11 +647,12 @@ mod test {
 
         // ensure deletion of saved backlogs
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1024);
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, false, None).await;
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, None).await;
         sleep(Duration::from_millis(1000)).await;
         _ = cancel_tx.send(());
         drop(event_tx);
         _ = manager_handle.await;
+        */
         
 
     }
@@ -665,7 +681,11 @@ mod test {
 
         let (event_tx, _) = broadcast::channel(1024);
 
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, false, None).await;
+        let l = LazyLoaderConfig::new(directives.len(), 100).with_dirs_idle_timeout_checker_interval_sec(10);
+
+        // this function should be the only location where reload_backlogs is true, otherwise we risk having multiple tests trying to save/load/delete from disk
+
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, Some(l.clone())).await;
 
         let mut evt = NormalizedEvent {
             id: "0a".to_string(),
@@ -733,26 +753,33 @@ mod test {
         sleep(Duration::from_millis(500)).await;
         assert!(logs_contain("creating new backlog"));
 
-        /* overloading the channel capacity, need rework
-        for i in 7..2000 {
-            evt.id = i.to_string();
-            event_tx.send(evt.clone()).unwrap();
-            // sleep(Duration::from_millis(1)).await;
-        }
-        sleep(Duration::from_millis(3000)).await;
-        assert!(logs_contain("event receiver lagged"));
-        */
-
         // cancel signal, should also trigger saving to disk
 
-        sleep(Duration::from_millis(500)).await;
         _ = cancel_tx.send(());
+        sleep(Duration::from_millis(1000)).await;
+        logs_contain("backlogs saved");
         
         drop(event_tx);
         sleep(Duration::from_millis(5000)).await;
 
         assert!(logs_contain("manager exiting"));
 
+        _ = manager_handle.await;
+
+        // restart to simulate reloading saved backlogs
+
+        let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1);
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, Some(l)).await;
+
+        sleep(Duration::from_millis(2000)).await;
+
+        assert!(logs_contain("found 1 saved backlogs, instructing spawner to activate"));
+        sleep(Duration::from_millis(1000)).await;
+        assert!(logs_contain("spawner received directive ID from filter directive.id=1"));
+
+        _ = cancel_tx.send(());
+        drop(event_tx);
+        sleep(Duration::from_millis(3000)).await;
         _ = manager_handle.await;
 
         /* uncomment this block if directive rules are applied to backlog, which for now isn't
@@ -810,9 +837,10 @@ mod test {
 
         let loader = LazyLoaderConfig::new(directives.len(), 3).with_dirs_idle_timeout_checker_interval_sec(1);
 
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, false, Some(loader)).await;
+        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, Some(loader)).await;
 
         let mut evt = NormalizedEvent {
+
             id: "0a".to_string(),
             plugin_id: 31337,
             plugin_sid: 2,

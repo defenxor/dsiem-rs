@@ -20,7 +20,7 @@ use super::{Backlog, BacklogOpt, BacklogState};
 
 const BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE: usize = 64;
 
-mod storage;
+pub mod storage;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ManagerReport {
@@ -50,6 +50,7 @@ pub struct BacklogManager {
     pub cancel_tx: broadcast::Sender<()>,
     pub report_tx: mpsc::Sender<ManagerReport>,
     pub directive: Directive,
+    pub test_env: bool,
     load_param: OpLoadParameter,
     report_interval: u64,
     backlogs: Arc<RwLock<Vec<Arc<Backlog>>>>,
@@ -94,6 +95,7 @@ impl BacklogManager {
             cancel_tx: manager_option.cancel_tx.clone(),
             report_tx: manager_option.report_tx.clone(),
             directive,
+            test_env: manager_option.test_env,
             load_param: load_param.to_owned(),
             report_interval: *report_interval,
             backlogs: Arc::new(RwLock::new(vec![])),
@@ -133,7 +135,7 @@ impl BacklogManager {
 
     async fn load_from_storage(&self) -> Result<()> {
         let mut backlogs = self.backlogs.write().await;
-        let res = storage::load(false, self.directive.id).await;
+        let res = storage::load(self.test_env, self.directive.id).await;
         match res {
             Err(e) => {
                 for cause in e.chain() {
@@ -289,7 +291,7 @@ impl BacklogManager {
                         if  backlogs.len() > 0 {
                             let v = &*backlogs;
                             info!(self.directive.id, "saving {} backlogs to disk", v.len());
-                            if let Err(err) = storage::save(false, self.directive.id, v.to_vec()).await {
+                            if let Err(err) = storage::save(self.test_env, self.directive.id, v.to_vec()).await {
                                 error!(directive.id = self.directive.id, "error saving backlogs: {:?}", err);
                             } else {
                                 debug!(directive.id = self.directive.id, "{} backlogs saved", backlogs.len());
