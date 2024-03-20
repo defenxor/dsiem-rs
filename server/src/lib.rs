@@ -22,5 +22,6 @@ mod allocator;
 mod backlog;
 mod log_writer;
 mod meter;
-mod rule;
 mod utils;
+// benchmark access
+pub mod rule;
