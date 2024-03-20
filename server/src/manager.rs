@@ -23,6 +23,7 @@ const DEADLOCK_TIMEOUT_IN_SECONDS: u64 = 10;
 const DIRECTIVE_ID_CHAN_QUEUE_SIZE: usize = 64;
 
 pub mod option;
+mod cache;
 
 pub use option::LazyLoaderConfig;
 
@@ -131,9 +132,9 @@ impl Manager {
             });
         }
 
-        let quick_discard = |p: &FilterTarget, event: &NormalizedEvent| -> bool {
-            (p.contains_pluginrule && !rule::quick_check_plugin_rule(&p.sid_pairs, event))
-                || (p.contains_taxorule && !rule::quick_check_taxo_rule(&p.taxo_pairs, event))
+        let matched_with_event = |p: &FilterTarget, event: &NormalizedEvent| -> bool {
+            (p.contains_pluginrule && rule::quick_check_plugin_rule(&p.sid_pairs, event))
+                || (p.contains_taxorule && rule::quick_check_taxo_rule(&p.taxo_pairs, event))
         };
 
         let dir_len = self.option.directives.len();
@@ -182,6 +183,10 @@ impl Manager {
                 let filter_span = info_span!("filter thread", thread.id = idx);
                 let _h = filter_span.enter();
 
+                // thread local cache for this specific chunk of directives
+                let sid_cache = cache::create_sid_cache(&c);
+                let taxo_cache = cache::create_taxo_cache(&c);
+
                 loop {
                     let mut event = match rx.blocking_recv() {
                         Ok(event) => event,
@@ -194,18 +199,23 @@ impl Manager {
                             break;
                         }
                     };
-                    // 99.99% of events should be filtered out here
+
+                    // heuristic to filter out events that are not worth processing
+                    if (event.plugin_id != 0 && event.plugin_sid != 0 && sid_cache.get(&(event.plugin_id, event.plugin_sid)).is_none()) ||
+                        (!event.product.is_empty() && !event.category.is_empty() && taxo_cache.get(&(event.product.clone(), event.category.clone())).is_none()) {
+                        trace!(event.id, "event doesn't match any rule, skipping");
+                        continue;
+                    }
+
+                    // here we just need to find the directive(s) that match the event
                     let matched_dirs: Vec<&FilterTarget> =
-                        c.iter().filter(|p| !quick_discard(p, &event)).collect();
+                        c.iter().filter(|p| matched_with_event(p, &event)).collect();
                     trace!(
                         event.id,
                         "event matched rules in {} directive(s)",
                         matched_dirs.len()
                     );
 
-                    if matched_dirs.is_empty() {
-                        continue;
-                    };
                     let distrib_span = info_span!("event distribution", event.id);
                     tracer::set_parent_from_event(&distrib_span, &event);
                     let _ = distrib_span.enter();
@@ -540,7 +550,7 @@ mod test {
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(2000)).await;
 
-        assert!(logs_contain("event matched rules in 0 directive"));
+        assert!(logs_contain("event doesn't match any rule"));
 
         // matched event but not on the first rule
         evt.id = "0b".to_string();
@@ -659,7 +669,7 @@ mod test {
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(2000)).await;
 
-        assert!(logs_contain("event matched rules in 0 directive"));
+        assert!(logs_contain("event doesn't match any rule"));
 
         // matched event but not on the first rule
         evt.id = "0b".to_string();

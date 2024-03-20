@@ -2,7 +2,12 @@ use anyhow::{anyhow, Result};
 use std::thread::available_parallelism;
 
 // this is based on benchmarking result on an i7-12700F desktop
-const MAX_CHECKS_PER_THREAD: usize = 17_350_000;
+
+// with cache
+const MAX_CHECKS_PER_THREAD: usize = 100_000_000;
+
+// without cache
+// const MAX_CHECKS_PER_THREAD: usize = 17_350_000;
 
 const TOKIO_MIN_THREADS: usize = 1;
 const MIN_AVAILABLE_PARALLELISM: usize = 2;
@@ -103,16 +108,16 @@ mod tests {
         assert_eq!(a.filter_threads, 1);
 
         // 4 cpus available, EPS cross the threshold for 1 thread
-        let a = calculate(1000, 17400, None, Some(4)).unwrap();
+        let a = calculate(10001, 10000, None, Some(4)).unwrap();
         assert_eq!(a.filter_threads, 2);
 
         // 4 cpus available, user request 3 filter threads
-        let a = calculate(1000, 1000, Some(3), Some(4)).unwrap();
+        let a = calculate(10000, 1000, Some(3), Some(4)).unwrap();
         assert_eq!(a.filter_threads, 3);
         assert_eq!(a.tokio_threads, 1);
 
         // 2 cpus available, too many directives and/or too high max_eps
-        let a = calculate(10000, 10000, None, Some(2));
+        let a = calculate(10000, 11000, None, Some(2));
         assert!(a.is_err());
 
         // 2 cpus available, user request too many filter threads
