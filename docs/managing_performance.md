@@ -10,13 +10,13 @@ This page gives several suggestions on how to deploy Dsiem with performance cons
 
 The first thing to know is that for each incoming event, Dsiem will quickly compare several key fields (like `Plugin ID` and `Plugin SID`) against all directives to determine if there's a match. Only matching events will be sent afterwards to the associated directives for further processing. Because this initial quick comparison is done to _all_ events against _all_ directives, it becomes a main spot for potential performance bottleneck and should therefore be allocated with enough CPU resources.
 
-In our tests, a single CPU thread was able to perform around 17 million quick filtering checks per second, so the rate of incoming events/sec times the number of directives should not exceed that number.
+In our tests, with cache in-front a single CPU thread was able to perform around 100 million quick filtering checks per second, so the rate of incoming events/sec times the number of directives should not exceed that number.
 
-$$ {17,000,000} × {n_{cpu}} = {n_{eps}} × {n_{directive}} $$
+$$ {100,000,000} × {n_{cpu}} = {n_{eps}} × {n_{directive}} $$
 
-For example suppose you dedicate 1 CPU thread to perform quick checks on a node that is hosting 10,000 directives. We can calculate the maximum events/sec rate before the system may start lagging behind:
+For example suppose you dedicate 1 CPU thread to perform quick checks on a node that is hosting 20,000 directives. We can calculate the maximum events/sec rate before the system may start lagging behind:
 
-$$ {n_{eps}} = \frac{{17,000,000} × 1}{10,000} = 1,700$$
+$$ {n_{eps}} = \frac{{100,000,000} × 1}{20,000} = 5,000$$
 
 > [!NOTE]
 > By default, Dsiem uses the above calculation to determine the number of CPU threads to allocate for quick checks. 
