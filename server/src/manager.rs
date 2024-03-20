@@ -185,7 +185,9 @@ impl Manager {
 
                 // thread local cache for this specific chunk of directives
                 let sid_cache = cache::create_sid_cache(&c);
+                let sid_cache_enabled = !sid_cache.is_empty();
                 let taxo_cache = cache::create_taxo_cache(&c);
+                let taxo_cache_enabled = !taxo_cache.is_empty();
 
                 loop {
                     let mut event = match rx.blocking_recv() {
@@ -201,16 +203,27 @@ impl Manager {
                     };
 
                     // heuristic to filter out events that are not worth processing
-                    if (event.plugin_id != 0 && event.plugin_sid != 0 && sid_cache.get(&(event.plugin_id, event.plugin_sid)).is_none()) ||
-                        (!event.product.is_empty() && !event.category.is_empty() && taxo_cache.get(&(event.product.clone(), event.category.clone())).is_none()) {
+                    let mut found = false;
+                    if event.plugin_id != 0 && event.plugin_sid != 0 && 
+                        sid_cache_enabled && sid_cache.get(&(event.plugin_id, event.plugin_sid)).is_some() {
+                            found = true;
+                    }
+
+                    // check this only when there's no plugin rule match
+                    if !found && !event.product.is_empty() && !event.category.is_empty() &&
+                        taxo_cache_enabled && taxo_cache.get(&(event.product.clone(), event.category.clone())).is_some() {
+                            found = true;
+                    }
+                    
+                    if !found {
                         trace!(event.id, "event doesn't match any rule, skipping");
-                        continue;
+                        continue;    
                     }
 
                     // here we just need to find the directive(s) that match the event
                     let matched_dirs: Vec<&FilterTarget> =
                         c.iter().filter(|p| matched_with_event(p, &event)).collect();
-                    trace!(
+                    info!(
                         event.id,
                         "event matched rules in {} directive(s)",
                         matched_dirs.len()
