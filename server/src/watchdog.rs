@@ -191,6 +191,16 @@ mod test {
             _ = w.start(opt).instrument(span).await;
         });
 
+        let rpt = ManagerReport {
+            id: 1,
+            active_backlogs: 100,
+            timedout_backlogs: 0,
+            matched_events: 9001,
+        };
+        _ = report_tx.send(rpt).await;
+        sleep(Duration::from_millis(2000)).await;
+        assert!(logs_contain("backlogs=100"));
+
         _ = resptime_tx.send(100.0 * UNIT_MULTIPLIER).await;
         _ = resptime_tx.send(100.0 * UNIT_MULTIPLIER).await;
         _ = resptime_tx.send(25.0 * UNIT_MULTIPLIER).await;
@@ -221,8 +231,8 @@ mod test {
             matched_events: 0,
         };
         _ = report_tx.send(rpt).await;
-        sleep(Duration::from_millis(2000)).await;
-        assert!(logs_contain("backlogs=100"));
+        sleep(Duration::from_millis(1000)).await;
+        assert!(logs_contain("avg_proc_time_ms=0.0"));
 
         cancel_tx.send(()).unwrap();
         sleep(Duration::from_millis(2000)).await;
