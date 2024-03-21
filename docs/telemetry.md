@@ -64,15 +64,18 @@ Measurement is done for the following metrics:
 
 - `eps` : The rate of events/second processed by Dsiem.
 
-- `ttl_directives`: Total number of directives that are loaded and will receive events.
+- `ttl_directives`: Total number of directives assigned to the node. This is only checked at startup and never changes afterwards.
 
 - `active_directives`: Total number of directives that are actively having a backlog.
 
-- `backlogs`: The number of backlogs active on the system.
+- `backlogs`: The number of backlogs currently active on the system.
 
-- `avg_proc_time_ms`: Average backlog's processing time for a single event, in milliseconds.
+- `queue_length`: Total current events in queue, waiting for directive manager to pickup.
 
-- `queue_length`: Total events in queue, waiting for directive manager to pickup.
+- `matched_events`: The number of events matching any directive _since the last measurement_.
+
+- `avg_proc_time_ms`: Average backlog's processing time for a single event, in milliseconds. This resets to 0 together with `matched_events` if there is no matching events since the previous measurement.
+
 
 Here's an example of Thanos frontend displaying the graph of `avg_proc_time_ms`. Prefix `dsiem_` is added to all metrics for easier search experience.  Prometheus supports advanced queries and can be set to send alerts when a certain baseline/threshold is breached.
 
