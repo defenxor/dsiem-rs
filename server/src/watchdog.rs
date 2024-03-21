@@ -49,7 +49,7 @@ impl Watchdog {
         let mut cancel_rx = opt.cancel_tx.subscribe();
         let mut resp_histo = HdrHistogram::with_bound(60 * 60 * 1000 * UNIT_MULTIPLIER as u64); // max 1 hour
         let max_proc_time_ms = 1000.0 / opt.max_eps as f64;
-        let mut report_map = HashMap::<u64, (usize, usize)>::new();
+        let mut report_map = HashMap::<u64, (usize, usize, usize)>::new();
         let mut resptime_rx = opt.resptime_rx;
         let mut report_rx = opt.report_rx;
 
@@ -64,6 +64,7 @@ impl Watchdog {
                 "dsiem_ttl_directives",
                 "dsiem_active_directives",
                 "dsiem_backlogs",
+                "dsiem_matched_events",
             ] {
                 meter.upsert_u64(s, None)?;
             }
@@ -81,48 +82,58 @@ impl Watchdog {
                     resp_histo.record(v as u64);
                 }
                 Some(v) = report_rx.recv() => {
-                  report_map.insert(v.id, (v.active_backlogs, v.timedout_backlogs));
+                  report_map.insert(v.id, (v.active_backlogs, v.timedout_backlogs, v.matched_events));
                 }
                 _ = report.tick() => {
 
-                let eps = round(opt.eps.metrics.count.throughput.histogram().mean(), 2);
-                let queue_length = opt.event_tx.len();
-                let avg_proc_time_ms = resp_histo.mean()/UNIT_MULTIPLIER;
+                    let eps = round(opt.eps.metrics.count.throughput.histogram().mean(), 2);
+                    let queue_length = opt.event_tx.len();
 
-                // irrelevant for non preload_directives mode
-                // let ttl_directives = report_map.len();
+                    // irrelevant for non preload_directives mode
+                    // let ttl_directives = report_map.len();
 
-                let active_directives =  report_map.iter().filter(|&(_, (x, _))|*x > 0).count();
-                let (backlogs, timedout_backlogs) = report_map.values().fold((0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1));
+                    let active_directives =  report_map.iter().filter(|&(_, (x, _, _))|*x > 0).count();
+                    let (backlogs, timedout_backlogs, matched_events) = report_map.values().fold((0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
 
-                if let Some(ref mut meter) = meter {
-                  meter.upsert_f64("dsiem_eps", Some(eps))?;
-                  meter.upsert_f64("dsiem_avg_proc_time_ms", Some(avg_proc_time_ms))?;
-                  meter.upsert_u64("dsiem_queue_length", Some(queue_length as u64))?;
-                  meter.upsert_u64("dsiem_ttl_directives", Some(opt.ttl_directives as u64))?;
-                  meter.upsert_u64("dsiem_active_directives", Some(active_directives as u64))?;
-                  meter.upsert_u64("dsiem_backlogs", Some(backlogs as u64))?;
+                    // reset this if there's no processed events since last report
+                    let avg_proc_time_ms = match matched_events {
+                        0 => {
+                            resp_histo.clear();
+                            0.0
+                        },
+                        _ => resp_histo.mean()/UNIT_MULTIPLIER
+                    };
+
+                    if let Some(ref mut meter) = meter {
+                    meter.upsert_f64("dsiem_eps", Some(eps))?;
+                    meter.upsert_f64("dsiem_avg_proc_time_ms", Some(avg_proc_time_ms))?;
+                    meter.upsert_u64("dsiem_queue_length", Some(queue_length as u64))?;
+                    meter.upsert_u64("dsiem_ttl_directives", Some(opt.ttl_directives as u64))?;
+                    meter.upsert_u64("dsiem_active_directives", Some(active_directives as u64))?;
+                    meter.upsert_u64("dsiem_backlogs", Some(backlogs as u64))?;
+                    meter.upsert_u64("dsiem_matched_events", Some(matched_events as u64))?;
+                    }
+
+                    let rounded_avg_proc_time_ms = (avg_proc_time_ms * 1000.0).round() / 1000.0;
+
+                    info!(
+                    eps,
+                    queue_length,
+                    avg_proc_time_ms =  rounded_avg_proc_time_ms,
+                    ttl_directives = opt.ttl_directives,
+                    active_directives,
+                    matched_events,
+                    backlogs,
+                    timedout_backlogs,
+                    "watchdog report"
+                    );
+
+                    if queue_length != 0 && avg_proc_time_ms > max_proc_time_ms {
+                    warn!(avg_proc_time_ms = rounded_avg_proc_time_ms, "avg. processing time maybe too long to sustain the target {} event/sec (or {:.3} ms/event)", opt.max_eps, max_proc_time_ms );
+                    // reset so next it excludes any previous outliers
+                    resp_histo.clear();
+                    }
                 }
-
-                let rounded_avg_proc_time_ms = (avg_proc_time_ms * 1000.0).round() / 1000.0;
-
-                info!(
-                  eps,
-                  queue_length,
-                  avg_proc_time_ms =  rounded_avg_proc_time_ms,
-                  ttl_directives = opt.ttl_directives,
-                  active_directives,
-                  backlogs,
-                  timedout_backlogs,
-                  "watchdog report"
-                );
-
-                if queue_length != 0 && avg_proc_time_ms > max_proc_time_ms {
-                  warn!(avg_proc_time_ms = rounded_avg_proc_time_ms, "avg. processing time maybe too long to sustain the target {} event/sec (or {:.3} ms/event)", opt.max_eps, max_proc_time_ms );
-                  // reset so next it excludes any previous outliers
-                  resp_histo.clear();
-                }
-              }
             }
         }
         Ok(())
@@ -180,6 +191,16 @@ mod test {
             _ = w.start(opt).instrument(span).await;
         });
 
+        let rpt = ManagerReport {
+            id: 1,
+            active_backlogs: 100,
+            timedout_backlogs: 0,
+            matched_events: 9001,
+        };
+        _ = report_tx.send(rpt).await;
+        sleep(Duration::from_millis(2000)).await;
+        assert!(logs_contain("backlogs=100"));
+
         _ = resptime_tx.send(100.0 * UNIT_MULTIPLIER).await;
         _ = resptime_tx.send(100.0 * UNIT_MULTIPLIER).await;
         _ = resptime_tx.send(25.0 * UNIT_MULTIPLIER).await;
@@ -207,10 +228,11 @@ mod test {
             id: 1,
             active_backlogs: 100,
             timedout_backlogs: 0,
+            matched_events: 0,
         };
         _ = report_tx.send(rpt).await;
-        sleep(Duration::from_millis(2000)).await;
-        assert!(logs_contain("backlogs=100"));
+        sleep(Duration::from_millis(1000)).await;
+        assert!(logs_contain("avg_proc_time_ms=0.0"));
 
         cancel_tx.send(()).unwrap();
         sleep(Duration::from_millis(2000)).await;

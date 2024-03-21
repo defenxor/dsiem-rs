@@ -27,6 +27,7 @@ pub struct ManagerReport {
     pub id: u64,
     pub active_backlogs: usize,
     pub timedout_backlogs: usize,
+    pub matched_events: usize,
 }
 
 #[derive(Clone)]
@@ -221,7 +222,9 @@ impl BacklogManager {
             id: self.directive.id,
             active_backlogs: 0,
             timedout_backlogs: 0,
+            matched_events: 0,
         };
+        let mut prev_matched_events = mgr_report.matched_events;
 
         let clean_deleted = || async {
             let mut backlogs = self.backlogs.write().await;
@@ -341,9 +344,13 @@ impl BacklogManager {
                     let prev = mgr_report.active_backlogs;
                     mgr_report.active_backlogs = length;
 
-                    if mgr_report.active_backlogs != prev {
+                    // send only when there's a change
+                    if mgr_report.active_backlogs != prev || mgr_report.matched_events != prev_matched_events {
                         let _ = report_sender.try_send(mgr_report.clone());
                     }
+                    // save prev value then reset
+                    prev_matched_events = mgr_report.matched_events;
+                    mgr_report.matched_events = 0;
                 },
                 Some(mut event) = upstream_rx.recv() => {
 
@@ -352,6 +359,7 @@ impl BacklogManager {
 
                     let _ = backlog_mgr_span.enter();
                     debug!(directive.id = self.directive.id, event.id, "received event");
+                    mgr_report.matched_events += 1;
 
                     let mut match_found = false;
                     // keep this lock for the entire event recv() loop so the next event will get updated backlogs
