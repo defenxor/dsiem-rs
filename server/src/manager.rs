@@ -389,31 +389,41 @@ impl Manager {
                                 debug!(directive.id = id, "spawner creating new backlog manager");
                                 
                                 let directive = directives.iter().filter(|d| d.id == id).take(1).last().unwrap().to_owned();
-                                let rx = Arc::clone(&i.upstream_rx);
-                                let b = BacklogManager::new(
-                                    &option,
-                                    directive,
-                                    &load_param,
-                                    &log_tx,
-                                    &report_interval,
-                                    rx,
 
-                                );
-                                let (ready_tx, ready_rx) = oneshot::channel::<()>();
-                                set.spawn(async move {
-                                    let _detached = b.start(ready_tx).instrument(span).await;
-                                });
-                                
-                                if !task::block_in_place(|| {
-                                    if let Err(e) = ready_rx.blocking_recv() {
-                                        error!(directive.id = id, "spawner failed to start backlog manager: {}", e);
-                                        // if a backlog manager fails to start, we should exit rt
-                                        false
-                                    } else {
-                                        true                
+                                // however, there is still period of time between:
+                                // 1. a new backlog manager created below but hasn't insert its directive id into the cache yet before the filter receive another matching event
+                                // 2. the existing backlog manager invalidating the cache and releasing the lock (which is a very short period of time)
+                                //
+                                // so here we need to check if there's really no existing backlog manager for this directive
+                                // and arc is used because it's created/destructed at the same time as the backlog manager
+                                // the same precaution is also taken inside the backlog manager start() fn, where it checks if the rx is locked
+                                if Arc::strong_count(&i.upstream_rx) == 1 {
+                                    let rx = Arc::clone(&i.upstream_rx);
+                                    let b = BacklogManager::new(
+                                        &option,
+                                        directive,
+                                        &load_param,
+                                        &log_tx,
+                                        &report_interval,
+                                        rx,
+                                    );
+                                    let (ready_tx, ready_rx) = oneshot::channel::<()>();
+                                    set.spawn(async move {
+                                        let _detached = b.start(ready_tx).instrument(span).await;
+                                    });
+                                    
+                                    if !task::block_in_place(|| {
+                                        if let Err(e) = ready_rx.blocking_recv() {
+                                            error!(directive.id = id, "spawner failed to start backlog manager: {}", e);
+                                            false
+                                        } else {
+                                            true                
+                                        }
+                                    }) {
+                                        return // exit closure without notifying filter. oneshot channel should then be closed and filter should recover
                                     }
-                                }) {
-                                    return // exit closure without notifying filter. oneshot channel should then be closed and filter should recover
+                                } else {
+                                    warn!(directive.id = id, "spawner found existing backlog manager still locking the receive channel, abort creating new one");
                                 }
                                 if let Err(e) = tx.send(()) {
                                     // the filter should be able to recover
