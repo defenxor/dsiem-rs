@@ -201,6 +201,16 @@ impl BacklogManager {
     }
 
     pub async fn start(&self, ready_tx: oneshot::Sender<()>) -> Result<()> {
+        // lock the rx channel asap
+        // if this fails, it means another instance is already running and we should abort
+        let mut upstream_rx = self.upstream_rx.try_lock().map_err(|e| {
+            error!(
+                directive.id = self.directive.id,
+                "another instance is already running for this directive ID, exiting this one"
+            );
+            e
+        })?;
+
         let mut cancel_rx = self.cancel_tx.subscribe();
         let downstream_tx = self.downstream_tx.clone();
 
@@ -233,23 +243,7 @@ impl BacklogManager {
         // initial report
         _ = report_sender.send(mgr_report.clone()).await;
 
-        // if this fails, it means another instance is already running and we should abort
-        let mut upstream_rx = self.upstream_rx.try_lock().map_err(|e| {
-            error!(
-                directive.id = self.directive.id,
-                "another instance is already running for this directive ID, exiting this one"
-            );
-            e
-        })?;
-
         let mut delete_rx = self.delete_rx.lock().await;
-
-        debug!("about to send ready signal");
-        ready_tx
-            .send(())
-            .map_err(|e| anyhow!("cannot send ready signal: {:?}", e))?;
-
-        debug!("about to check interval timers");
 
         // if the option is set, activate idle_timer to exit the manager thread when there's no backlog after the specified minutes
         let (mut checker, mut idle_timeout) = if let Some(reg) = self.lazy_loader.as_ref() {
@@ -273,6 +267,12 @@ impl BacklogManager {
                 interval(Duration::from_secs(9001)),
             )
         };
+
+        // notify only after cache entry is inserted
+        debug!("notifying spawner that backlog manager is ready");
+        ready_tx
+            .send(())
+            .map_err(|e| anyhow!("cannot send ready signal: {:?}", e))?;
 
         debug!(directive.id = self.directive.id, "listening for event");
 
@@ -326,7 +326,6 @@ impl BacklogManager {
                             // the order between cache invalidation and dropping the lock here doesn't matter that much
                             // it will just move the location of potential event loss during the transition from this instance to the next.
                             // that's only applicable if there's incoming event while we're exiting this one.
-
                             v.cache.invalidate(&self.directive.id);
                             // events that are in-flight here could potentially create a new backlog manager,
                             // which may not be able to lock the upstream_rx yet before this next line is executed.
