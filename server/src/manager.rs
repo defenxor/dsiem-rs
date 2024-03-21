@@ -176,7 +176,7 @@ impl Manager {
         // backlogs saved on disk
 
         if !preload_directives && self.option.reload_backlogs {
-            debug!("preload_directives is false, listing saved backlogs if any");
+            debug!("preload_directives is false, listing saved backlogs for reactivation");
             // backlogs dir may not exist
             let ids = crate::backlog::manager::storage::list(self.option.test_env).unwrap_or_default();
             debug!("found {} saved backlogs", ids.len());
@@ -244,7 +244,7 @@ impl Manager {
                     // here we just need to find the directive(s) that match the event
                     let matched_dirs: Vec<&FilterTarget> =
                         c.iter().filter(|p| matched_with_event(p, &event)).collect();
-                    info!(
+                    debug!(
                         event.id,
                         "event matched rules in {} directive(s)",
                         matched_dirs.len()
@@ -552,11 +552,13 @@ mod test {
                     id: 1,
                     active_backlogs: 1,
                     timedout_backlogs: 0,
+                    matched_events: 0,
                 };
                 let mut rpt2 = ManagerReport {
                     id: 1,
                     active_backlogs: 1,
                     timedout_backlogs: 0,
+                    matched_events: 0,
                 };
                 assert!(rpt1 == rpt2);
                 rpt2.active_backlogs = 2;
