@@ -5,7 +5,7 @@ use crate::{
     allocator::ThreadAllocation, asset::NetworkAssets, directive::Directive, intel::IntelPlugin,
     vuln::VulnPlugin,
 };
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use super::ManagerReport;
 
@@ -21,10 +21,7 @@ impl LazyLoaderConfig {
         Self {
             dirs_idle_timeout_sec,
             dirs_idle_timeout_checker_interval_sec: 60, // default to 1 minute
-            cache: Cache::builder()
-                .max_capacity(ttl_directives as u64)
-                .time_to_idle(Duration::from_secs(dirs_idle_timeout_sec))
-                .build(),
+            cache: Cache::new(ttl_directives as u64),
         }
     }
     pub fn with_dirs_idle_timeout_checker_interval_sec(mut self, seconds: u64) -> Self {
