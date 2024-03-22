@@ -421,15 +421,13 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let load_param = validator::load_param(sargs.max_queue, sargs.max_eps);
 
-    /*
-    info!("manager started with max single event processing time: {} ms, queue limit: {} events, quick check threads: {}, backlog threads: {}, ttl directives: {}",
-        self.option.load_param.max_wait.as_millis(),
-        self.option.load_param.limit_cap,
-        chunks.len(),
-        self.option.thread_allocation.tokio_threads,
-        dir_len
+    info!("backend started with max single event processing time: {} ms, queue limit: {} events, quick check threads: {}, backlog threads: {}, ttl directives: {}",
+        load_param.max_wait.as_millis(),
+        load_param.limit_cap,
+        thread_allocation.filter_threads,
+        thread_allocation.tokio_threads,
+        n
     );
-    */
 
     let opt = ParserOpt {
         test_env,

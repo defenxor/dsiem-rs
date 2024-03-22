@@ -119,6 +119,7 @@ pub fn spawner_ondemand (
     opt: SpawnerOnDemandOption,
     rt: tokio::runtime::Handle,
 ) -> Result<thread::JoinHandle<()>> {
+
     let span = Span::current();
     let mgr_opt = opt.manager_option.clone().ok_or(anyhow!("missing manager option"))?;
     let mut cancel_rx = mgr_opt.cancel_tx.subscribe();

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::{
     asset::NetworkAssets,
@@ -11,14 +11,13 @@ use crate::{
     },
     directive::Directive,
     event::NormalizedEvent,
-    filter::FilterTarget,
+    filter::{FilterTarget, OnDemandIDMessage},
     intel::IntelPlugin,
     log_writer::LogWriterMessage,
     vuln::VulnPlugin,
 };
 
 const DIRECTIVE_ID_CHAN_QUEUE_SIZE: usize = 64;
-type OnDemandIDMessage = (u64, oneshot::Sender<()>);
 
 pub struct ParserOpt {
     pub assets: Arc<NetworkAssets>,

@@ -60,7 +60,7 @@ impl FilterTarget {
     }
 }
 
-type OnDemandIDMessage = (u64, oneshot::Sender<()>);
+pub type OnDemandIDMessage = (u64, oneshot::Sender<()>);
 
 pub struct Filter {
     option: FilterOpt,
@@ -108,9 +108,6 @@ impl Filter {
         }
 
         self.option.notifier.notify_one();
-
-        // wait for all backlog managers to exit
-        //  _ = h_managers.join();
 
         // drop publisher to signal all filter threads to exit
         drop(publisher);
@@ -252,54 +249,59 @@ impl Filter {
 }
 
 #[cfg(test)]
-mod test {
-    use std::{sync::Arc, time::Duration};
+mod tests {
+    use std::{sync::Arc, thread, time::Duration};
 
     use crate::{
         allocator::ThreadAllocation,
         asset::NetworkAssets,
         backlog::{self, manager::QueueMode},
         directive::{self, Directive},
-        filter,
+        event::NormalizedEvent,
+        filter::{self, Filter, FilterOpt, ManagerReport},
+        intel,
+        log_writer::{LogWriter, LogWriterMessage},
+        parser,
+        parser::ParserOpt,
+        vuln,
     };
 
-    use super::*;
     use backlog::loader::LazyLoaderConfig;
     use tokio::{
-        sync::{broadcast::Sender, Notify},
+        runtime::Handle,
+        sync::{
+            broadcast::{self, Sender},
+            mpsc, Notify,
+        },
         task,
         time::sleep,
     };
-    use tracing::Instrument;
+    use tracing::{debug, Instrument, Span};
     use tracing_test::traced_test;
 
-    fn get_opt(
+    fn get_parser_opt(
         c: Sender<()>,
         r: mpsc::Sender<ManagerReport>,
-        directives: Vec<Directive>,
         reload_backlogs: bool,
         lazy_loader: Option<LazyLoaderConfig>,
-    ) -> FilterOpt {
+        log_tx: crossbeam_channel::Sender<LogWriterMessage>,
+    ) -> ParserOpt {
         let (backpressure_tx, _) = mpsc::channel::<()>(8);
         let (resptime_tx, _) = mpsc::channel::<f64>(128);
 
         let assets = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
         let intels =
-            Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
-        let vulns =
-            Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+            Arc::new(intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+        let vulns = Arc::new(vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
         let load_param = backlog::manager::OpLoadParameter {
             max_wait: Duration::from_millis(100),
             limit_cap: 1000,
             queue_mode: QueueMode::Bounded,
         };
-
-        let rt_handle = tokio::runtime::Handle::current();
-        FilterOpt {
+        ParserOpt {
             test_env: true,
             lazy_loader,
             reload_backlogs,
-            directives,
             assets,
             intels,
             vulns,
@@ -314,18 +316,23 @@ mod test {
             med_risk_min: 3,
             med_risk_max: 6,
             report_tx: r,
-            max_eps: 1000,
-            max_queue: 100,
+            load_param,
+            log_tx,
+        }
+    }
+
+    fn get_filter_opt(cancel_tx: broadcast::Sender<()>) -> FilterOpt {
+        let notifier = Notify::new();
+        FilterOpt {
+            lazy_loader: None,
             thread_allocation: ThreadAllocation {
                 filter_threads: 1,
                 tokio_threads: 1,
             },
-            tokio_handle: rt_handle,
-            notifier: Arc::new(Notify::new()),
-            load_param,
+            notifier: Arc::new(notifier),
+            cancel_tx,
         }
     }
-
     async fn run_manager(
         directives: Vec<Directive>,
         event_tx: broadcast::Sender<NormalizedEvent>,
@@ -334,25 +341,43 @@ mod test {
         reload_backlogs: bool,
         lazy_loader: Option<LazyLoaderConfig>,
     ) -> task::JoinHandle<()> {
-        let opt = get_opt(
-            cancel_tx.clone(),
-            report_tx.clone(),
-            directives,
-            reload_backlogs,
-            lazy_loader,
-        );
+        let opt = get_filter_opt(cancel_tx.clone());
         let span = Span::current();
         let tx_clone = event_tx.clone();
+
+        let mut log_writer = LogWriter::new(true).unwrap();
+        let log_tx = log_writer.sender.clone();
+
+        let (targets, loader, id_rx) = parser::targets_and_loader_from_directives(
+            &directives,
+            true,
+            &get_parser_opt(
+                cancel_tx.clone(),
+                report_tx.clone(),
+                reload_backlogs,
+                lazy_loader,
+                log_tx,
+            ),
+        );
         task::spawn_blocking(move || {
             let _h = span.entered();
-            let m = Filter::new(opt);
-            _ = m.start(tx_clone, 1);
+
+            debug!("running log writer");
+            let _ = thread::spawn(move || log_writer.listener());
+
+            debug!("starting manager loader");
+            let _ = loader.run(Handle::current());
+
+            debug!("starting filter");
+            let f = Filter::new(opt);
+            _ = f.start(tx_clone, targets, id_rx);
+            debug!("shouldnt exit")
         })
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     #[traced_test]
-    async fn test_manager_preload_dirs() {
+    async fn test_filter_and_loader_preload_dirs() {
         let directives = directive::load_directives(
             true,
             Some(vec!["directives".to_string(), "directive5".to_string()]),
@@ -408,7 +433,7 @@ mod test {
             ..Default::default()
         };
 
-        sleep(Duration::from_millis(1000)).await;
+        sleep(Duration::from_millis(3000)).await;
 
         // assert that the backlog manager is listening for events
         assert!(logs_contain("listening for event directive.id=1"));
@@ -475,7 +500,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     #[traced_test]
-    async fn test_manager_no_preload_dirs() {
+    async fn test_filter_and_loader_no_preload_dirs() {
         let directives = directive::load_directives(
             true,
             Some(vec!["directives".to_string(), "directive5".to_string()]),
@@ -649,7 +674,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     #[traced_test]
-    async fn test_manager_directives_timeout() {
+    async fn test_filter_and_loader_directives_timeout() {
         let directives = directive::load_directives(
             true,
             Some(vec!["directives".to_string(), "directive5".to_string()]),
