@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn, Instrument, Span};
 
 use crate::{directive::Directive, event::NormalizedEvent};
 
-use super::manager::{BacklogManager, ManagerOpt};
+use super::manager::{BacklogManager, ManagerOpt, storage};
 use anyhow::{Result, anyhow};
 
 #[derive(Clone)]
@@ -78,9 +78,32 @@ impl ManagerLoader {
             }
         }
     }
+    
+
+}
+
+pub fn load_with_spawner(test_env: bool, id_tx: mpsc::Sender<(u64, oneshot::Sender<()>)>) {
+    // backlogs dir may not exist
+    let ids = storage::list(test_env).unwrap_or_default();
+    debug!("found {} saved backlogs", ids.len());
+    if !ids.is_empty() {
+        info!(
+            "found {} saved backlogs, instructing spawner to activate associated backlog managers",
+            ids.len()
+        );
+        ids.iter().for_each(|id| {
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            if let Err(e) = id_tx.blocking_send((*id, tx)) {
+                warn!(directive.id = id, "failed to activate backlog manager so that it can to reload saved backlogs: {}", e);
+            }
+            debug!("waiting for spawner to acknowledge backlog manager activation");
+            _ = rx.blocking_recv() // missing confirmation isn't critical here, spawner will have already reported the error
+        });
+    }
 }
 
 fn spawner(dir_managers: Vec<BacklogManager>, rt: tokio::runtime::Handle) -> Result<thread::JoinHandle<()>> {
+
     let span = Span::current();
     let h = thread::spawn(move || {
         let _h = span.entered();
@@ -102,7 +125,7 @@ fn spawner(dir_managers: Vec<BacklogManager>, rt: tokio::runtime::Handle) -> Res
                 };
             }
             while set.join_next().await.is_some() {}
-            info!("exiting directive manager runtime");
+            info!("exiting spawner runtime");
         });
     });
     Ok(h)
@@ -126,13 +149,13 @@ pub fn spawner_ondemand (
     info!(
         "starting spawner thread serving {} backlog managers",
         ids.len()
-    ); 
+    );
     let h = thread::spawn(move || {
         let directives = opt.directives.clone();
         let mut id_rx = opt.id_rx;
         let _h = span.entered();
         let span = Span::current();
-        rt.block_on(async move {           
+        rt.block_on(async move {
             let mgr_opt = mgr_opt.clone();
             let _h = span.entered();
             let mut set = tokio::task::JoinSet::new();
@@ -140,11 +163,12 @@ pub fn spawner_ondemand (
                 tokio::select! {
                     biased;
                     _ = cancel_rx.recv() => {
+                        debug!("spawner received cancel signal");
                         break;
                     }
                     Some((id, tx)) = id_rx.recv() => {
-                        let span = Span::current();
-                        let _h = span.entered();
+                        // let span = Span::current();
+                        // let _h = span.entered();
                         debug!(directive.id = id, "spawner received directive ID from filter");
 
                         // no need to check if the directive is in the cache, filter **only** sends one that isn't in there
@@ -164,7 +188,7 @@ pub fn spawner_ondemand (
                             // so here we need to check if there's really no existing backlog manager for this directive
                             // and arc is used because it's created/destructed at the same time as the backlog manager
                             // the same precaution is also taken inside the backlog manager start() fn, where it checks if the rx is locked
-                            debug!("strong count of upstream_rx: {}", Arc::strong_count(&i.upstream_rx));
+                            
                             if Arc::strong_count(&i.upstream_rx) == 1 {
                                 let rx = Arc::clone(&i.upstream_rx);
                                 let b = BacklogManager::new(m, rx);
@@ -195,7 +219,7 @@ pub fn spawner_ondemand (
                 }
             }
             while set.join_next().await.is_some() {}
-            info!("exiting directive manager runtime");
+            info!("exiting spawner on-demand runtime");
         });
     });
     Ok(h)

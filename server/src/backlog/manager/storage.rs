@@ -3,33 +3,13 @@ use std::sync::Arc;
 use tokio::{
     fs::{self, create_dir_all, read_to_string, OpenOptions},
     io::AsyncWriteExt,
-    sync::{mpsc, oneshot},
 };
-use tracing::{debug, info, warn};
+
+use tracing::debug;
 
 use anyhow::Result;
 
 use crate::{backlog::Backlog, utils};
-
-pub fn load_with_spawner(test_env: bool, id_tx: mpsc::Sender<(u64, oneshot::Sender<()>)>) {
-    // backlogs dir may not exist
-    let ids = list(test_env).unwrap_or_default();
-    debug!("found {} saved backlogs", ids.len());
-    if !ids.is_empty() {
-        info!(
-            "found {} saved backlogs, instructing spawner to activate associated backlog managers",
-            ids.len()
-        );
-        ids.iter().for_each(|id| {
-            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-            if let Err(e) = id_tx.blocking_send((*id, tx)) {
-                warn!(directive.id = id, "failed to activate backlog manager so that it can to reload saved backlogs: {}", e);
-            }
-            debug!("waiting for spawner to acknowledge backlog manager activation");
-            _ = rx.blocking_recv() // missing confirmation isn't critical here, spawner will have already reported the error
-        });
-    }
-}
 
 pub fn list(test_env: bool) -> Result<Vec<u64>> {
     let backlog_dir = utils::log_dir(test_env)?.join("backlogs");

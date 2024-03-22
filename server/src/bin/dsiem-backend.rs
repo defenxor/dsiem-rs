@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
     asset::NetworkAssets,
-    backlog::loader::LazyLoaderConfig,
+    backlog::loader::{self, LazyLoaderConfig},
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
     config, directive,
     event::NormalizedEvent,
@@ -463,7 +463,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     if !sargs.preload_directives && sargs.reload_backlogs {
         if let Some(id_tx) = &id_tx {
-            dsiem::backlog::manager::storage::load_with_spawner(test_env, id_tx.clone());
+            loader::load_with_spawner(test_env, id_tx.clone());
         }
     }
 

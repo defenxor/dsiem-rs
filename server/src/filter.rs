@@ -255,14 +255,13 @@ mod tests {
     use crate::{
         allocator::ThreadAllocation,
         asset::NetworkAssets,
-        backlog::{self, manager::QueueMode},
+        backlog::{self, loader, manager::QueueMode},
         directive::{self, Directive},
         event::NormalizedEvent,
         filter::{self, Filter, FilterOpt, ManagerReport},
         intel,
         log_writer::{LogWriter, LogWriterMessage},
-        parser,
-        parser::ParserOpt,
+        parser::{self, ParserOpt},
         vuln,
     };
 
@@ -321,10 +320,13 @@ mod tests {
         }
     }
 
-    fn get_filter_opt(cancel_tx: broadcast::Sender<()>) -> FilterOpt {
+    fn get_filter_opt(
+        cancel_tx: broadcast::Sender<()>,
+        lazy_loader: Option<LazyLoaderConfig>,
+    ) -> FilterOpt {
         let notifier = Notify::new();
         FilterOpt {
-            lazy_loader: None,
+            lazy_loader,
             thread_allocation: ThreadAllocation {
                 filter_threads: 1,
                 tokio_threads: 1,
@@ -341,16 +343,18 @@ mod tests {
         reload_backlogs: bool,
         lazy_loader: Option<LazyLoaderConfig>,
     ) -> task::JoinHandle<()> {
-        let opt = get_filter_opt(cancel_tx.clone());
+        let opt = get_filter_opt(cancel_tx.clone(), lazy_loader.clone());
         let span = Span::current();
         let tx_clone = event_tx.clone();
 
         let mut log_writer = LogWriter::new(true).unwrap();
         let log_tx = log_writer.sender.clone();
 
-        let (targets, loader, id_rx) = parser::targets_and_loader_from_directives(
+        let preload_directives = lazy_loader.is_none();
+
+        let (targets, loader, id_tx) = parser::targets_and_loader_from_directives(
             &directives,
-            true,
+            preload_directives,
             &get_parser_opt(
                 cancel_tx.clone(),
                 report_tx.clone(),
@@ -360,18 +364,21 @@ mod tests {
             ),
         );
         task::spawn_blocking(move || {
+            let _ = thread::spawn(move || log_writer.listener());
             let _h = span.entered();
 
-            debug!("running log writer");
-            let _ = thread::spawn(move || log_writer.listener());
-
-            debug!("starting manager loader");
             let _ = loader.run(Handle::current());
 
-            debug!("starting filter");
+            if !preload_directives && reload_backlogs {
+                if let Some(id_tx) = &id_tx {
+                    loader::load_with_spawner(true, id_tx.clone());
+                }
+            }
+
             let f = Filter::new(opt);
-            _ = f.start(tx_clone, targets, id_rx);
-            debug!("shouldnt exit")
+            _ = f.start(tx_clone, targets, id_tx);
+
+            debug!("exiting filter and loader task");
         })
     }
 
@@ -615,7 +622,7 @@ mod tests {
 
         _ = manager_handle.await;
 
-        // restart to simulate reloading saved backlogs
+        debug!("now will restart to simulate reloading saved backlogs");
 
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1);
         let manager_handle = run_manager(
