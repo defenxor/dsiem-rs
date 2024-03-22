@@ -4,12 +4,15 @@ use anyhow::{anyhow, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
     asset::NetworkAssets,
-    backlog::spawner::LazyLoaderConfig,
+    backlog::loader::LazyLoaderConfig,
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
     config, directive,
     event::NormalizedEvent,
     filter::{self, FilterOpt},
-    intel, tracer, vuln,
+    intel,
+    log_writer::LogWriter,
+    parser::{targets_and_loader_from_directives, ParserOpt},
+    tracer, vuln,
     watchdog::{self, eps::Eps, WatchdogOpt, REPORT_INTERVAL_IN_SECONDS},
     worker,
 };
@@ -412,11 +415,26 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         )),
     };
 
-    let opt = FilterOpt {
+    let mut log_writer = LogWriter::new(test_env)?;
+    let log_tx = log_writer.sender.clone();
+    let _ = thread::spawn(move || log_writer.listener());
+
+    let load_param = validator::load_param(sargs.max_queue, sargs.max_eps);
+
+    /*
+    info!("manager started with max single event processing time: {} ms, queue limit: {} events, quick check threads: {}, backlog threads: {}, ttl directives: {}",
+        self.option.load_param.max_wait.as_millis(),
+        self.option.load_param.limit_cap,
+        chunks.len(),
+        self.option.thread_allocation.tokio_threads,
+        dir_len
+    );
+    */
+
+    let opt = ParserOpt {
         test_env,
         reload_backlogs: sargs.reload_backlogs,
-        lazy_loader,
-        directives,
+        lazy_loader: lazy_loader.clone(),
         assets,
         intels,
         vulns,
@@ -431,20 +449,42 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         default_tag: sargs.tags[0].clone(),
         intel_private_ip: sargs.intel_private_ip,
         report_tx,
-        max_eps,
-        max_queue,
-        thread_allocation,
-        tokio_handle: rt.handle().clone(),
-        notifier,
+        load_param: load_param.clone(),
+        log_tx,
     };
-    let filter = filter::Filter::new(opt);
+
+    let (filter_targets, manager_loader, id_tx) =
+        targets_and_loader_from_directives(&directives, sargs.preload_directives, &opt);
+
+    // start manager loader first before filter
+
+    let handle_manager = manager_loader.run(rt.handle().clone())?;
+
+    // if preload_directives is false and reload_backlogs is true, we should instruct the loader to spawn those backlog managers that have
+    // backlogs saved on disk
+
+    if !sargs.preload_directives && sargs.reload_backlogs {
+        if let Some(id_tx) = &id_tx {
+            dsiem::backlog::manager::storage::load_with_spawner(test_env, id_tx.clone());
+        }
+    }
+
+    let filter = filter::Filter::new(FilterOpt {
+        lazy_loader,
+        thread_allocation,
+        cancel_tx,
+        notifier,
+    });
+
+    let id_tx_clone = id_tx.clone();
     let handle_filter = thread::spawn(move || {
         filter
-            .start(event_tx, REPORT_INTERVAL_IN_SECONDS)
+            .start(event_tx, filter_targets, id_tx_clone)
             .map_err(|e| anyhow!("filter error: {:?}", e))
     });
 
     if listen {
+        _ = handle_manager.join();
         if let Ok(Err(e)) = handle_filter.join() {
             return Err(e);
         }

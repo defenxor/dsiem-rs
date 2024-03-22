@@ -28,8 +28,8 @@ use tokio::{
 };
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
+pub mod loader;
 pub mod manager;
-pub mod spawner;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 pub struct CustomData {

@@ -78,9 +78,6 @@ impl ManagerLoader {
             }
         }
     }
-
-
-
 }
 
 fn spawner(dir_managers: Vec<BacklogManager>, rt: tokio::runtime::Handle) -> Result<thread::JoinHandle<()>> {

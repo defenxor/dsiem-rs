@@ -11,6 +11,8 @@ pub mod directive;
 pub mod event;
 pub mod filter;
 pub mod intel;
+pub mod log_writer;
+pub mod parser;
 pub mod vuln;
 pub mod watchdog;
 
@@ -20,7 +22,6 @@ pub mod server;
 
 // lib's internal
 mod allocator;
-mod log_writer;
 mod meter;
 mod utils;
 // benchmark access

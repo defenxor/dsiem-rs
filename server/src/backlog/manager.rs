@@ -10,9 +10,9 @@ use tracing::{debug, error, info, info_span};
 
 use anyhow::{anyhow, Result};
 
-use crate::{event::NormalizedEvent, tracer};
+use crate::{event::NormalizedEvent, tracer, watchdog::REPORT_INTERVAL_IN_SECONDS};
 
-use super::spawner::LazyLoaderConfig;
+use super::loader::LazyLoaderConfig;
 use super::{Backlog, BacklogOpt, BacklogState};
 
 const BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE: usize = 64;
@@ -50,7 +50,6 @@ pub struct ManagerOpt {
     pub cancel_tx: broadcast::Sender<()>,
     pub resptime_tx: mpsc::Sender<f64>,
     pub report_tx: mpsc::Sender<ManagerReport>,
-    pub report_interval: u64,
     pub load_param: OpLoadParameter,
 }
 
@@ -173,7 +172,7 @@ impl BacklogManager {
         let downstream_tx = self.downstream_tx.clone();
 
         let report_sender = self.option.report_tx.clone();
-        let mut report = interval(Duration::from_secs(self.option.report_interval));
+        let mut report = interval(Duration::from_secs(REPORT_INTERVAL_IN_SECONDS));
 
         let mut mgr_report = ManagerReport {
             id: self.id,

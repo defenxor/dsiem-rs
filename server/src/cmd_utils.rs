@@ -1,12 +1,18 @@
+use std::time::Duration;
+
+use crate::backlog::manager::{OpLoadParameter, QueueMode};
+
 use {
     crate::allocator::{calculate, ThreadAllocation},
-    crate::filter::UNBOUNDED_QUEUE_SIZE,
     crate::tracer,
+    crate::worker::UNBOUNDED_QUEUE_SIZE,
 };
 
 use anyhow::{anyhow, Error, Result};
 use tokio::sync::broadcast;
 use tracing::{error, info};
+
+const DEADLOCK_TIMEOUT_IN_SECONDS: u64 = 10;
 
 pub fn log_startup_err(context: &str, err: Error) -> Error {
     _ = tracing_subscriber::fmt().try_init();
@@ -80,6 +86,21 @@ impl Validator {
             return Err(anyhow!("invalid value provided, minimum is 5 minutes"));
         }
         Ok(())
+    }
+
+    pub fn load_param(max_queue: usize, max_eps: u32) -> OpLoadParameter {
+        match max_queue {
+            UNBOUNDED_QUEUE_SIZE => OpLoadParameter {
+                limit_cap: UNBOUNDED_QUEUE_SIZE,
+                max_wait: Duration::from_secs(DEADLOCK_TIMEOUT_IN_SECONDS),
+                queue_mode: QueueMode::Unbounded,
+            },
+            _ => OpLoadParameter {
+                limit_cap: max_queue * 9 / 10, // 90% of max_queue
+                max_wait: Duration::from_millis((1000 / max_eps).into()),
+                queue_mode: QueueMode::Bounded,
+            },
+        }
     }
 
     // we take in unsigned values from CLI to make sure there's no negative numbers, and convert them
