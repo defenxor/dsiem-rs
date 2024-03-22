@@ -1,6 +1,6 @@
 use {
     crate::allocator::{calculate, ThreadAllocation},
-    crate::manager::UNBOUNDED_QUEUE_SIZE,
+    crate::filter::UNBOUNDED_QUEUE_SIZE,
     crate::tracer,
 };
 

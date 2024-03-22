@@ -8,9 +8,8 @@ use dsiem::{
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
     config, directive,
     event::NormalizedEvent,
-    intel,
-    manager::{self, ManagerOpt},
-    tracer, vuln,
+    filter::{self, FilterOpt},
+    intel, tracer, vuln,
     watchdog::{self, eps::Eps, WatchdogOpt, REPORT_INTERVAL_IN_SECONDS},
     worker,
 };
@@ -326,7 +325,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let thread_allocation = validator::thread_allocation(n, sargs.max_eps, sargs.filter_threads)
         .map_err(|e| log_startup_err("allocating threads", e))?;
 
-    let (report_tx, report_rx) = mpsc::channel::<manager::ManagerReport>(n);
+    let (report_tx, report_rx) = mpsc::channel::<filter::ManagerReport>(n);
     let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(n);
 
     let max_eps = sargs.max_eps;
@@ -413,7 +412,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         )),
     };
 
-    let opt = ManagerOpt {
+    let opt = FilterOpt {
         test_env,
         reload_backlogs: sargs.reload_backlogs,
         lazy_loader,
@@ -438,15 +437,15 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         tokio_handle: rt.handle().clone(),
         notifier,
     };
-    let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
-    let handle_manager = thread::spawn(move || {
-        manager
+    let filter = filter::Filter::new(opt);
+    let handle_filter = thread::spawn(move || {
+        filter
             .start(event_tx, REPORT_INTERVAL_IN_SECONDS)
-            .map_err(|e| anyhow!("manager error: {:?}", e))
+            .map_err(|e| anyhow!("filter error: {:?}", e))
     });
 
     if listen {
-        if let Ok(Err(e)) = handle_manager.join() {
+        if let Ok(Err(e)) = handle_filter.join() {
             return Err(e);
         }
     } else {

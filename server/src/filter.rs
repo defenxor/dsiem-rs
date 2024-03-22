@@ -1,7 +1,8 @@
 use crate::{
     backlog::{
-        manager::{BacklogManager, OpLoadParameter, QueueMode},
-        spawner::{self, ManagerLoader},
+        manager::{ManagerOpt, OpLoadParameter, QueueMode},
+        spawner::{ManagerLoader, SpawnerOnDemandOption},
+        BacklogOpt,
     },
     event::NormalizedEvent,
     log_writer::LogWriter,
@@ -19,7 +20,7 @@ use tokio::sync::{
 };
 
 // re-export
-pub use self::option::ManagerOpt;
+pub use self::option::FilterOpt;
 pub use crate::backlog::manager::ManagerReport;
 
 pub const UNBOUNDED_QUEUE_SIZE: usize = 524_288;
@@ -62,14 +63,13 @@ impl FilterTarget {
     }
 }
 
-pub struct Manager {
-    option: ManagerOpt,
+pub struct Filter {
+    option: FilterOpt,
 }
 
-impl Manager {
-    pub fn new(option: ManagerOpt) -> Result<Manager> {
-        let m = Manager { option };
-        Ok(m)
+impl Filter {
+    pub fn new(option: FilterOpt) -> Self {
+        Self { option }
     }
 
     pub fn start(
@@ -98,46 +98,63 @@ impl Manager {
         let preload_directives = self.option.lazy_loader.is_none();
 
         let mut targets = vec![];
-        let mut b_managers = if preload_directives {
-            ManagerLoader::All(vec![])
-        } else {
-            ManagerLoader::OnDemand(vec![])
-        };
-
-        // this cache is for on-demand backlog manager creation mode
-        // and is used to keep track of active backlog managers
-        // each backlog managers are expected to:
-        // 1. send their directive id to this cache when they start
-        // 2. remove their directive id from this cache when they exit
-        // 3. exit their loop after being idle for a certain period, triggering 2 above
 
         let active_ids = match &self.option.lazy_loader {
             Some(l) => l.cache.clone(),
             None => Cache::builder().max_capacity(0).build(), // fix this
         };
 
+        let (id_tx, id_rx) =
+            mpsc::channel::<(u64, oneshot::Sender<()>)>(DIRECTIVE_ID_CHAN_QUEUE_SIZE);
+
+        let mut b_managers = if preload_directives {
+            ManagerLoader::All(vec![])
+        } else {
+            let ondemand_opt = SpawnerOnDemandOption {
+                directives: self.option.directives.clone(),
+                id_rx,
+                manager_option: None,
+            };
+            ManagerLoader::OnDemand(vec![], ondemand_opt)
+        };
+
         for directive in self.option.directives.iter() {
             // this is a one-to-one channel between manager filter thread and backlog managers
             let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(load_param.limit_cap);
-            match b_managers {
-                ManagerLoader::OnDemand(ref mut b) => {
-                    b.push(Arc::new(spawner::BacklogManagerId {
-                        id: directive.id,
-                        upstream_rx: Arc::new(Mutex::new(event_rx)),
-                    }));
-                }
-                ManagerLoader::All(ref mut b) => {
-                    let m = BacklogManager::new(
-                        &self.option,
-                        directive.clone(),
-                        &load_param,
-                        &log_tx,
-                        &report_interval,
-                        Arc::new(Mutex::new(event_rx)),
-                    );
-                    b.push(m);
-                }
-            }
+
+            let rx = Arc::new(Mutex::new(event_rx));
+
+            let backlog_option = BacklogOpt {
+                directive: directive.clone(),
+                asset: self.option.assets.clone(),
+                intels: self.option.intels.clone(),
+                vulns: self.option.vulns.clone(),
+                intel_private_ip: self.option.intel_private_ip,
+                default_status: self.option.default_status.clone(),
+                default_tag: self.option.default_tag.clone(),
+                min_alarm_lifetime: self.option.min_alarm_lifetime,
+                med_risk_min: self.option.med_risk_min,
+                med_risk_max: self.option.med_risk_max,
+                bp_tx: self.option.backpressure_tx.clone(),
+                log_tx: log_tx.clone(),
+                event: None,
+                delete_tx: None,
+            };
+
+            let manager_opt = ManagerOpt {
+                backlog_option,
+                test_env: self.option.test_env,
+                reload_backlogs: self.option.reload_backlogs,
+                max_delay: self.option.max_delay,
+                cancel_tx: self.option.cancel_tx.clone(),
+                resptime_tx: self.option.resptime_tx.clone(),
+                report_tx: self.option.report_tx.clone(),
+                lazy_loader: self.option.lazy_loader.clone(),
+                report_interval,
+                load_param: load_param.clone(),
+            };
+
+            b_managers.insert(directive.id, manager_opt, rx);
 
             FilterTarget::insert(
                 directive.id,
@@ -169,24 +186,7 @@ impl Manager {
             dir_len
         );
 
-        let (id_tx, id_rx) =
-            mpsc::channel::<(u64, oneshot::Sender<()>)>(DIRECTIVE_ID_CHAN_QUEUE_SIZE);
-
-        let h_managers = match b_managers {
-            ManagerLoader::OnDemand(b) => {
-                let opt = spawner::SpawnerOnDemandOption {
-                    directives: self.option.directives.clone(),
-                    tokio_handle: self.option.tokio_handle.clone(),
-                    cancel_tx: self.option.cancel_tx.clone(),
-                    id_rx,
-                    load_param,
-                    log_tx,
-                    report_interval,
-                };
-                spawner::spawner_ondemand(b, opt, self.option.clone())
-            }
-            ManagerLoader::All(b) => spawner::spawner(b, self.option.tokio_handle.clone()),
-        };
+        let h_managers = b_managers.run(self.option.tokio_handle.clone())?;
 
         // if preload_directives is false and reload_backlogs is true, we should instruct the spawner to load those backlog managers that have
         // backlogs saved on disk
@@ -271,7 +271,6 @@ impl Manager {
                     let _ = distrib_span.enter();
                     tracer::store_parent_into_event(&distrib_span, &mut event);
 
-                    // overload = self.upstream_rx.len() > self.load_param.limit_cap;
                     matched_dirs.iter().for_each(|d| {
 
                         // if preload directive is false, send the directive id to the spawner
@@ -342,7 +341,7 @@ mod test {
         asset::NetworkAssets,
         backlog,
         directive::{self, Directive},
-        manager,
+        filter,
     };
 
     use super::*;
@@ -361,7 +360,7 @@ mod test {
         directives: Vec<Directive>,
         reload_backlogs: bool,
         lazy_loader: Option<LazyLoaderConfig>,
-    ) -> ManagerOpt {
+    ) -> FilterOpt {
         let (backpressure_tx, _) = mpsc::channel::<()>(8);
         let (resptime_tx, _) = mpsc::channel::<f64>(128);
 
@@ -372,7 +371,7 @@ mod test {
             Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
 
         let rt_handle = tokio::runtime::Handle::current();
-        ManagerOpt {
+        FilterOpt {
             test_env: true,
             lazy_loader,
             reload_backlogs,
@@ -421,9 +420,8 @@ mod test {
         let tx_clone = event_tx.clone();
         task::spawn_blocking(move || {
             let _h = span.entered();
-            let m = Manager::new(opt).unwrap();
+            let m = Filter::new(opt);
             _ = m.start(tx_clone, 1);
-            // _ = m.start(tx_clone, 1
         })
     }
 
@@ -436,7 +434,7 @@ mod test {
         )
         .unwrap();
         let (cancel_tx, _) = broadcast::channel::<()>(1);
-        let (report_tx, mut report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
+        let (report_tx, mut report_rx) = mpsc::channel::<filter::ManagerReport>(directives.len());
 
         let span = Span::current();
         let _report_receiver = task::spawn(
@@ -578,7 +576,7 @@ mod test {
         )
         .unwrap();
         let (cancel_tx, _) = broadcast::channel::<()>(1);
-        let (report_tx, mut report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
+        let (report_tx, mut report_rx) = mpsc::channel::<filter::ManagerReport>(directives.len());
 
         let span = Span::current();
         let _report_receiver = task::spawn(
@@ -752,7 +750,7 @@ mod test {
         )
         .unwrap();
         let (cancel_tx, _) = broadcast::channel::<()>(1);
-        let (report_tx, mut report_rx) = mpsc::channel::<manager::ManagerReport>(directives.len());
+        let (report_tx, mut report_rx) = mpsc::channel::<filter::ManagerReport>(directives.len());
 
         let span = Span::current();
         let _report_receiver = task::spawn(

@@ -9,8 +9,8 @@ pub mod asset;
 pub mod backlog;
 pub mod directive;
 pub mod event;
+pub mod filter;
 pub mod intel;
-pub mod manager;
 pub mod vuln;
 pub mod watchdog;
 

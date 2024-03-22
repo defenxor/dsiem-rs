@@ -9,7 +9,7 @@ use tokio::{
 
 use async_nats::Subject;
 
-use crate::manager::UNBOUNDED_QUEUE_SIZE;
+use crate::filter::UNBOUNDED_QUEUE_SIZE;
 use crate::watchdog::eps::Eps;
 use crate::{
     asset::NetworkAssets,

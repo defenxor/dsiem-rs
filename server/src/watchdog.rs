@@ -12,7 +12,7 @@ pub mod eps;
 
 use crate::{
     event::NormalizedEvent,
-    manager::ManagerReport,
+    filter::ManagerReport,
     tracer::{self, OtelConfig},
 };
 

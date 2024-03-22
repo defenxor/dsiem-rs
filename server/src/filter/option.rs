@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::ManagerReport;
 
 #[derive(Clone)]
-pub struct ManagerOpt {
+pub struct FilterOpt {
     pub test_env: bool,
     pub reload_backlogs: bool,
     pub lazy_loader: Option<LazyLoaderConfig>,
