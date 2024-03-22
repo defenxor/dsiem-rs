@@ -8,13 +8,10 @@ use dsiem::{
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
     config, directive,
     event::NormalizedEvent,
-    filter::{self, FilterOpt},
+    filter::{self, Filter},
     intel,
     log_writer::LogWriter,
-    parser::{targets_and_loader_from_directives, ParserOpt},
-    tracer, vuln,
-    watchdog::{self, eps::Eps, WatchdogOpt, REPORT_INTERVAL_IN_SECONDS},
-    worker,
+    messenger, parser, tracer, vuln, watchdog,
 };
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Notify};
@@ -322,7 +319,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     )
     .map_err(|e| log_startup_err("loading directives", e))?;
 
-    let eps = Arc::new(Eps::default());
+    let eps = Arc::new(watchdog::eps::Eps::default());
     let n = directives.len();
 
     let thread_allocation = validator::thread_allocation(n, sargs.max_eps, sargs.filter_threads)
@@ -343,13 +340,13 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         .map_err(|e| log_startup_err("building tokio runtime", e.into()))?;
 
     let _handle_watchdog = rt.spawn(async move {
-        let opt = WatchdogOpt {
+        let opt = watchdog::WatchdogOpt {
             event_tx: event_tx_clone,
             resptime_rx,
             report_rx,
             ttl_directives: n,
             cancel_tx: cancel_tx_clone,
-            report_interval: REPORT_INTERVAL_IN_SECONDS,
+            report_interval: watchdog::REPORT_INTERVAL_IN_SECONDS,
             max_eps,
             otel_config,
             eps: eps_clone,
@@ -380,7 +377,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let backend_tx = event_tx.clone();
 
     let _handle_worker = rt.spawn(async move {
-        let opt = worker::BackendOpt {
+        let opt = messenger::BackendOpt {
             event_tx: backend_tx,
             bp_rx,
             cancel_rx,
@@ -391,7 +388,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             eps,
             waiter,
         };
-        let w = worker::Worker {};
+        let w = messenger::Worker {};
         w.backend_start(opt)
             .await
             .map_err(|e| anyhow!("worker error: {:?}", e))
@@ -429,7 +426,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         n
     );
 
-    let opt = ParserOpt {
+    let opt = parser::ParserOpt {
         test_env,
         reload_backlogs: sargs.reload_backlogs,
         lazy_loader: lazy_loader.clone(),
@@ -452,7 +449,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     };
 
     let (filter_targets, manager_loader, id_tx) =
-        targets_and_loader_from_directives(&directives, sargs.preload_directives, &opt);
+        parser::targets_and_loader_from_directives(&directives, sargs.preload_directives, &opt);
 
     // start manager loader first before filter
 
@@ -467,7 +464,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         }
     }
 
-    let filter = filter::Filter::new(FilterOpt {
+    let filter = Filter::new(filter::FilterOpt {
         lazy_loader,
         thread_allocation,
         cancel_tx,

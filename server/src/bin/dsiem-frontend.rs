@@ -12,7 +12,7 @@ use dsiem::{
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
     config,
     eps_limiter::EpsLimiter,
-    server, tracer, worker,
+    messenger, server, tracer,
 };
 use tokio::{
     sync::{broadcast, mpsc},
@@ -253,14 +253,14 @@ async fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     set.spawn({
         let nats_url = sargs.msq.clone();
         async move {
-            let opt = worker::FrontendOpt {
+            let opt = messenger::FrontendOpt {
                 event_rx,
                 bp_tx,
                 cancel_rx,
                 nats_url,
                 nats_capacity: max_queue,
             };
-            let w = worker::Worker {};
+            let w = messenger::Worker {};
             w.frontend_start(opt)
                 .await
                 .map_err(|e| anyhow!("frontend worker error: {:?}", e))

@@ -9,7 +9,8 @@ use tracing::debug;
 
 use anyhow::Result;
 
-use crate::{backlog::Backlog, utils};
+use super::Backlog;
+use crate::utils;
 
 pub fn list(test_env: bool) -> Result<Vec<u64>> {
     let backlog_dir = utils::log_dir(test_env)?.join("backlogs");

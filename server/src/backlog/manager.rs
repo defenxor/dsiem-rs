@@ -1,10 +1,9 @@
 use std::{io, sync::Arc, time::Duration};
 
-use tokio::time::{interval_at, Instant};
 use tokio::{
     sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
     task,
-    time::{interval, sleep, timeout},
+    time::{interval, interval_at, sleep, timeout, Instant},
 };
 use tracing::{debug, error, info, info_span};
 
@@ -17,7 +16,7 @@ use super::{Backlog, BacklogOpt, BacklogState};
 
 const BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE: usize = 64;
 
-pub mod storage;
+pub(super) mod storage;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ManagerReport {

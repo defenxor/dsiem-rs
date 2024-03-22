@@ -4,8 +4,8 @@ use crate::backlog::manager::{OpLoadParameter, QueueMode};
 
 use {
     crate::allocator::{calculate, ThreadAllocation},
+    crate::messenger::UNBOUNDED_QUEUE_SIZE,
     crate::tracer,
-    crate::worker::UNBOUNDED_QUEUE_SIZE,
 };
 
 use anyhow::{anyhow, Error, Result};

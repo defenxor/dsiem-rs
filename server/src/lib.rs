@@ -1,8 +1,8 @@
 // shared by both frontend and backend
 pub mod cmd_utils;
 pub mod config;
+pub mod messenger;
 pub mod tracer;
-pub mod worker;
 
 // backend-only
 pub mod asset;
