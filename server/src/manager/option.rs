@@ -1,40 +1,12 @@
-use mini_moka::sync::Cache;
 use tokio::sync::{broadcast, mpsc, Notify};
 
 use crate::{
-    allocator::ThreadAllocation, asset::NetworkAssets, directive::Directive, intel::IntelPlugin,
-    vuln::VulnPlugin,
+    allocator::ThreadAllocation, asset::NetworkAssets, backlog::spawner::LazyLoaderConfig,
+    directive::Directive, intel::IntelPlugin, vuln::VulnPlugin,
 };
 use std::sync::Arc;
 
 use super::ManagerReport;
-
-#[derive(Clone)]
-pub struct LazyLoaderConfig {
-    dirs_idle_timeout_sec: u64,
-    dirs_idle_timeout_checker_interval_sec: u64,
-    pub cache: Cache<u64, ()>,
-}
-
-impl LazyLoaderConfig {
-    pub fn new(ttl_directives: usize, dirs_idle_timeout_sec: u64) -> Self {
-        Self {
-            dirs_idle_timeout_sec,
-            dirs_idle_timeout_checker_interval_sec: 60, // default to 1 minute
-            cache: Cache::new(ttl_directives as u64),
-        }
-    }
-    pub fn with_dirs_idle_timeout_checker_interval_sec(mut self, seconds: u64) -> Self {
-        self.dirs_idle_timeout_checker_interval_sec = seconds;
-        self
-    }
-    pub fn get_idle_timeout(&self) -> u64 {
-        self.dirs_idle_timeout_sec
-    }
-    pub fn get_idle_timeout_checker_interval(&self) -> u64 {
-        self.dirs_idle_timeout_checker_interval_sec
-    }
-}
 
 #[derive(Clone)]
 pub struct ManagerOpt {

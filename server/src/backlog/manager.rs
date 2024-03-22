@@ -10,12 +10,12 @@ use tracing::{debug, error, info, info_span};
 
 use anyhow::{anyhow, Result};
 
-use crate::manager::option::LazyLoaderConfig;
 use crate::{
     asset::NetworkAssets, directive::Directive, event::NormalizedEvent, intel::IntelPlugin,
     log_writer::LogWriterMessage, manager::ManagerOpt, tracer, vuln::VulnPlugin,
 };
 
+use super::spawner::LazyLoaderConfig;
 use super::{Backlog, BacklogOpt, BacklogState};
 
 const BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE: usize = 64;

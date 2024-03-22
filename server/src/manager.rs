@@ -29,10 +29,8 @@ const DIRECTIVE_ID_CHAN_QUEUE_SIZE: usize = 64;
 mod cache;
 pub mod option;
 
-pub use option::LazyLoaderConfig;
-
 #[derive(Clone)]
-pub struct FilterTarget {
+struct FilterTarget {
     pub id: u64,
     pub tx: mpsc::Sender<NormalizedEvent>,
     pub sid_pairs: Vec<rule::SIDPair>,
@@ -194,22 +192,10 @@ impl Manager {
         // backlogs saved on disk
 
         if !preload_directives && self.option.reload_backlogs {
-            debug!("preload_directives is false, listing saved backlogs for reactivation");
-            // backlogs dir may not exist
-            let ids =
-                crate::backlog::manager::storage::list(self.option.test_env).unwrap_or_default();
-            debug!("found {} saved backlogs", ids.len());
-            if !ids.is_empty() {
-                info!("found {} saved backlogs, instructing spawner to activate associated backlog managers", ids.len());
-                ids.iter().for_each(|id| {
-                    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-                    if let Err(e) = id_tx.blocking_send((*id, tx)) {
-                        warn!(directive.id = id, "failed to activate backlog manager so that it can to reload saved backlogs: {}", e);
-                    }
-                    debug!("waiting for spawner to acknowledge backlog manager activation");
-                    _ = rx.blocking_recv() // missing confirmation isn't critical here, spawner will have already reported the error
-               });
-            }
+            crate::backlog::manager::storage::load_with_spawner(
+                self.option.test_env,
+                id_tx.clone(),
+            );
         }
 
         let mut handles = vec![];
@@ -354,12 +340,13 @@ mod test {
     use crate::{
         allocator::ThreadAllocation,
         asset::NetworkAssets,
+        backlog,
         directive::{self, Directive},
         manager,
     };
 
     use super::*;
-    use option::LazyLoaderConfig;
+    use backlog::spawner::LazyLoaderConfig;
     use tokio::{
         sync::{broadcast::Sender, Notify},
         task,

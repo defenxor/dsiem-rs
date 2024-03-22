@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
     asset::NetworkAssets,
+    backlog::spawner::LazyLoaderConfig,
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
     config, directive,
     event::NormalizedEvent,
@@ -406,7 +407,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let lazy_loader = match sargs.preload_directives {
         true => None,
-        false => Some(manager::LazyLoaderConfig::new(
+        false => Some(LazyLoaderConfig::new(
             n,
             (sargs.dir_idle_timeout * 60) as u64,
         )),

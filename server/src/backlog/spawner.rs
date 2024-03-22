@@ -1,11 +1,41 @@
 use std::{sync::Arc, thread};
 
+use mini_moka::sync::Cache;
 use tokio::{sync::{broadcast, mpsc, oneshot, Mutex}, task};
 use tracing::{debug, error, info, warn, Instrument, Span};
 
 use crate::{directive::Directive, event::NormalizedEvent, log_writer::LogWriterMessage, manager::ManagerOpt};
 
 use super::manager::{BacklogManager, OpLoadParameter};
+
+
+#[derive(Clone)]
+pub struct LazyLoaderConfig {
+    dirs_idle_timeout_sec: u64,
+    dirs_idle_timeout_checker_interval_sec: u64,
+    pub cache: Cache<u64, ()>,
+}
+
+impl LazyLoaderConfig {
+    pub fn new(ttl_directives: usize, dirs_idle_timeout_sec: u64) -> Self {
+        Self {
+            dirs_idle_timeout_sec,
+            dirs_idle_timeout_checker_interval_sec: 60, // default to 1 minute
+            cache: Cache::new(ttl_directives as u64),
+        }
+    }
+    pub fn with_dirs_idle_timeout_checker_interval_sec(mut self, seconds: u64) -> Self {
+        self.dirs_idle_timeout_checker_interval_sec = seconds;
+        self
+    }
+    pub fn get_idle_timeout(&self) -> u64 {
+        self.dirs_idle_timeout_sec
+    }
+    pub fn get_idle_timeout_checker_interval(&self) -> u64 {
+        self.dirs_idle_timeout_checker_interval_sec
+    }
+}
+
 
 pub struct BacklogManagerId {
     pub id: u64,

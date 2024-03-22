@@ -6,6 +6,7 @@ pub mod worker;
 
 // backend-only
 pub mod asset;
+pub mod backlog;
 pub mod directive;
 pub mod event;
 pub mod intel;
@@ -19,7 +20,6 @@ pub mod server;
 
 // lib's internal
 mod allocator;
-mod backlog;
 mod log_writer;
 mod meter;
 mod utils;
