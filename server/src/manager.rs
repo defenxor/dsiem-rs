@@ -2,7 +2,7 @@ use crate::{
     backlog::manager::{BacklogManager, OpLoadParameter, QueueMode},
     event::NormalizedEvent,
     log_writer::{LogWriter, LogWriterMessage},
-    rule, tracer,
+    rule::{self, DirectiveRule}, tracer,
 };
 use std::{sync::Arc, thread, time::Duration, vec};
 use mini_moka::sync::Cache;
@@ -27,7 +27,34 @@ mod cache;
 
 pub use option::LazyLoaderConfig;
 
+
 #[derive(Clone)]
+pub struct FilterTarget {
+    pub id: u64,
+    pub tx: mpsc::Sender<NormalizedEvent>,
+    pub sid_pairs: Vec<rule::SIDPair>,
+    pub taxo_pairs: Vec<rule::TaxoPair>,
+    pub contains_pluginrule: bool,
+    pub contains_taxorule: bool,
+}
+
+impl FilterTarget {
+    fn insert(id: u64, rules: &[DirectiveRule], event_tx: mpsc::Sender<NormalizedEvent>, targets: &mut Vec<FilterTarget>) {
+        let (mut sid_pairs, mut taxo_pairs) = rule::get_quick_check_pairs(rules);
+        let contains_pluginrule = !sid_pairs.is_empty();
+        let contains_taxorule = !taxo_pairs.is_empty();
+        sid_pairs.shrink_to_fit();
+        taxo_pairs.shrink_to_fit();
+        targets.push(FilterTarget {
+            id,
+            tx: event_tx,
+            sid_pairs,
+            taxo_pairs,
+            contains_pluginrule,
+            contains_taxorule,
+        });
+    }
+}
 
 pub struct Manager {
     option: ManagerOpt,
@@ -116,20 +143,7 @@ impl Manager {
                 }
             }
 
-            let (mut sid_pairs, mut taxo_pairs) = rule::get_quick_check_pairs(&directive.rules);
-            let contains_pluginrule = !sid_pairs.is_empty();
-            let contains_taxorule = !taxo_pairs.is_empty();
-            sid_pairs.shrink_to_fit();
-            taxo_pairs.shrink_to_fit();
-
-            targets.push(FilterTarget {
-                id: directive.id,
-                tx: event_tx,
-                sid_pairs,
-                taxo_pairs,
-                contains_pluginrule,
-                contains_taxorule,
-            });
+            FilterTarget::insert(directive.id, &directive.rules, event_tx.clone(), &mut targets);
         }
 
         let matched_with_event = |p: &FilterTarget, event: &NormalizedEvent| -> bool {
@@ -438,16 +452,6 @@ impl Manager {
             });
         })
     }
-}
-
-#[derive(Clone)]
-pub struct FilterTarget {
-    pub id: u64,
-    pub tx: mpsc::Sender<NormalizedEvent>,
-    pub sid_pairs: Vec<rule::SIDPair>,
-    pub taxo_pairs: Vec<rule::TaxoPair>,
-    pub contains_pluginrule: bool,
-    pub contains_taxorule: bool,
 }
 
 #[cfg(test)]
