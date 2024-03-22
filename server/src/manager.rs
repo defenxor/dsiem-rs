@@ -1,18 +1,22 @@
 use crate::{
-    backlog::manager::{BacklogManager, OpLoadParameter, QueueMode},
+    backlog::{
+        manager::{BacklogManager, OpLoadParameter, QueueMode},
+        spawner::{self, ManagerLoader},
+    },
     event::NormalizedEvent,
-    log_writer::{LogWriter, LogWriterMessage},
-    rule::{self, DirectiveRule}, tracer,
+    log_writer::LogWriter,
+    rule::{self, DirectiveRule},
+    tracer,
 };
-use std::{sync::Arc, thread, time::Duration, vec};
 use mini_moka::sync::Cache;
-use tracing::{debug, error, info, info_span, trace, warn, Instrument, Span};
+use std::{sync::Arc, thread, time::Duration, vec};
+use tracing::{debug, error, info, info_span, trace, warn, Span};
 
 use anyhow::Result;
-use tokio::{sync::{
+use tokio::sync::{
     broadcast::{self, error::RecvError},
     mpsc, oneshot, Mutex,
-}, task};
+};
 
 // re-export
 pub use self::option::ManagerOpt;
@@ -22,11 +26,10 @@ pub const UNBOUNDED_QUEUE_SIZE: usize = 524_288;
 const DEADLOCK_TIMEOUT_IN_SECONDS: u64 = 10;
 const DIRECTIVE_ID_CHAN_QUEUE_SIZE: usize = 64;
 
-pub mod option;
 mod cache;
+pub mod option;
 
 pub use option::LazyLoaderConfig;
-
 
 #[derive(Clone)]
 pub struct FilterTarget {
@@ -39,7 +42,12 @@ pub struct FilterTarget {
 }
 
 impl FilterTarget {
-    fn insert(id: u64, rules: &[DirectiveRule], event_tx: mpsc::Sender<NormalizedEvent>, targets: &mut Vec<FilterTarget>) {
+    fn insert(
+        id: u64,
+        rules: &[DirectiveRule],
+        event_tx: mpsc::Sender<NormalizedEvent>,
+        targets: &mut Vec<FilterTarget>,
+    ) {
         let (mut sid_pairs, mut taxo_pairs) = rule::get_quick_check_pairs(rules);
         let contains_pluginrule = !sid_pairs.is_empty();
         let contains_taxorule = !taxo_pairs.is_empty();
@@ -58,16 +66,6 @@ impl FilterTarget {
 
 pub struct Manager {
     option: ManagerOpt,
-}
-
-struct BacklogManagerId {
-    id: u64,
-    upstream_rx: Arc<Mutex<mpsc::Receiver<NormalizedEvent>>>,
-}
-
-enum ManagerLoader {
-    OnDemand(Vec<Arc<BacklogManagerId>>),
-    All(Vec<BacklogManager>),
 }
 
 impl Manager {
@@ -119,13 +117,13 @@ impl Manager {
             Some(l) => l.cache.clone(),
             None => Cache::builder().max_capacity(0).build(), // fix this
         };
-        
+
         for directive in self.option.directives.iter() {
             // this is a one-to-one channel between manager filter thread and backlog managers
             let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(load_param.limit_cap);
             match b_managers {
                 ManagerLoader::OnDemand(ref mut b) => {
-                    b.push(Arc::new(BacklogManagerId {
+                    b.push(Arc::new(spawner::BacklogManagerId {
                         id: directive.id,
                         upstream_rx: Arc::new(Mutex::new(event_rx)),
                     }));
@@ -143,7 +141,12 @@ impl Manager {
                 }
             }
 
-            FilterTarget::insert(directive.id, &directive.rules, event_tx.clone(), &mut targets);
+            FilterTarget::insert(
+                directive.id,
+                &directive.rules,
+                event_tx.clone(),
+                &mut targets,
+            );
         }
 
         let matched_with_event = |p: &FilterTarget, event: &NormalizedEvent| -> bool {
@@ -173,17 +176,18 @@ impl Manager {
 
         let h_managers = match b_managers {
             ManagerLoader::OnDemand(b) => {
-                self.spawner_ondemand(
-                    b,
+                let opt = spawner::SpawnerOnDemandOption {
+                    directives: self.option.directives.clone(),
+                    tokio_handle: self.option.tokio_handle.clone(),
+                    cancel_tx: self.option.cancel_tx.clone(),
                     id_rx,
                     load_param,
                     log_tx,
                     report_interval,
-                )
+                };
+                spawner::spawner_ondemand(b, opt, self.option.clone())
             }
-            ManagerLoader::All(b) => {
-                self.spawner(b)
-            }
+            ManagerLoader::All(b) => spawner::spawner(b, self.option.tokio_handle.clone()),
         };
 
         // if preload_directives is false and reload_backlogs is true, we should instruct the spawner to load those backlog managers that have
@@ -192,7 +196,8 @@ impl Manager {
         if !preload_directives && self.option.reload_backlogs {
             debug!("preload_directives is false, listing saved backlogs for reactivation");
             // backlogs dir may not exist
-            let ids = crate::backlog::manager::storage::list(self.option.test_env).unwrap_or_default();
+            let ids =
+                crate::backlog::manager::storage::list(self.option.test_env).unwrap_or_default();
             debug!("found {} saved backlogs", ids.len());
             if !ids.is_empty() {
                 info!("found {} saved backlogs, instructing spawner to activate associated backlog managers", ids.len());
@@ -239,20 +244,31 @@ impl Manager {
 
                     // heuristic to filter out events that are not worth processing
                     let mut found = false;
-                    if event.plugin_id != 0 && event.plugin_sid != 0 && 
-                        sid_cache_enabled && sid_cache.get(&(event.plugin_id, event.plugin_sid)).is_some() {
-                            found = true;
+                    if event.plugin_id != 0
+                        && event.plugin_sid != 0
+                        && sid_cache_enabled
+                        && sid_cache
+                            .get(&(event.plugin_id, event.plugin_sid))
+                            .is_some()
+                    {
+                        found = true;
                     }
 
                     // check this only when there's no plugin rule match
-                    if !found && !event.product.is_empty() && !event.category.is_empty() &&
-                        taxo_cache_enabled && taxo_cache.get(&(event.product.clone(), event.category.clone())).is_some() {
-                            found = true;
+                    if !found
+                        && !event.product.is_empty()
+                        && !event.category.is_empty()
+                        && taxo_cache_enabled
+                        && taxo_cache
+                            .get(&(event.product.clone(), event.category.clone()))
+                            .is_some()
+                    {
+                        found = true;
                     }
-                    
+
                     if !found {
                         trace!(event.id, "event doesn't match any rule, skipping");
-                        continue;    
+                        continue;
                     }
 
                     // here we just need to find the directive(s) that match the event
@@ -316,7 +332,7 @@ impl Manager {
         self.option.notifier.notify_one();
 
         // wait for all backlog managers to exit
-        _ =  h_managers.join();
+        _ = h_managers.join();
 
         // drop publisher to signal all filter threads to exit
         drop(publisher);
@@ -330,127 +346,6 @@ impl Manager {
         _ = self.option.cancel_tx.send(());
 
         Ok(())
-    }
-
-    fn spawner(&self, dir_managers: Vec<BacklogManager>) -> thread::JoinHandle<()> {
-        let span = Span::current();
-        let rt = self.option.tokio_handle.clone();
-        thread::spawn(move || {
-            let _h = span.entered();
-            let span = Span::current();
-            rt.block_on(async move {
-                let _h = span.entered();
-                let mut set: task::JoinSet<_> = tokio::task::JoinSet::new();
-                for dir_manager in dir_managers {
-                    let span = Span::current();
-                    let (ready_tx, ready_rx) = oneshot::channel::<()>();
-                    let id = dir_manager.directive.id;
-                    set.spawn(async move {
-                        let _ = dir_manager.start(ready_tx).instrument(span).await;
-                    });
-                    if let Err(e) = ready_rx.await {
-                        error!(directive.id = id, "backlog manager failed to start: {}", e);
-                        // if a backlog manager fails to start, we should exit rt
-                        return;
-                    };
-                }
-                while set.join_next().await.is_some() {}
-                info!("exiting directive manager runtime");
-            });
-        })
-    }
-    fn spawner_ondemand(
-        &self,
-        ids: Vec<Arc<BacklogManagerId>>,
-        mut id_rx: mpsc::Receiver<(u64, oneshot::Sender<()>)>,
-        load_param: OpLoadParameter,
-        log_tx: crossbeam_channel::Sender<LogWriterMessage>,
-        report_interval: u64,
-    ) -> thread::JoinHandle<()> {
-        let span = Span::current();
-        let rt = self.option.tokio_handle.clone();
-        let directives = self.option.directives.clone();
-        let option = self.option.clone();
-        let log_tx = log_tx.clone();
-        let mut cancel_rx = self.option.cancel_tx.subscribe();
-        info!(
-            "starting spawner thread serving {} backlog managers",
-            ids.len()
-        );
-        
-        thread::spawn(move || {
-            let _h = span.entered();
-            let span = Span::current();
-            rt.block_on(async move {
-                let _h = span.entered();
-                let mut set = tokio::task::JoinSet::new();
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = cancel_rx.recv() => {
-                            break;
-                        }
-                        Some((id, tx)) = id_rx.recv() => {
-                            let span = Span::current();
-                            let _h = span.entered();
-                            debug!(directive.id = id, "spawner received directive ID from filter");
-
-                            // no need to check if the directive is in the cache, filter **only** sends one that isn't in there
-
-                            // ids contains all directives and never change, so this should always succeed
-                            let _ = ids.iter().filter(|i| i.id == id).take(1).last().map(|i| {
-                                let span = Span::current();
-                                debug!(directive.id = id, "spawner creating new backlog manager");
-                                
-                                let directive = directives.iter().filter(|d| d.id == id).take(1).last().unwrap().to_owned();
-
-                                // however, there is still period of time between:
-                                // 1. a new backlog manager created below but hasn't insert its directive id into the cache yet before the filter receive another matching event
-                                // 2. the existing backlog manager invalidating the cache and releasing the lock (which is a very short period of time)
-                                //
-                                // so here we need to check if there's really no existing backlog manager for this directive
-                                // and arc is used because it's created/destructed at the same time as the backlog manager
-                                // the same precaution is also taken inside the backlog manager start() fn, where it checks if the rx is locked
-                                if Arc::strong_count(&i.upstream_rx) == 1 {
-                                    let rx = Arc::clone(&i.upstream_rx);
-                                    let b = BacklogManager::new(
-                                        &option,
-                                        directive,
-                                        &load_param,
-                                        &log_tx,
-                                        &report_interval,
-                                        rx,
-                                    );
-                                    let (ready_tx, ready_rx) = oneshot::channel::<()>();
-                                    set.spawn(async move {
-                                        let _detached = b.start(ready_tx).instrument(span).await;
-                                    });
-                                    
-                                    if !task::block_in_place(|| {
-                                        if let Err(e) = ready_rx.blocking_recv() {
-                                            error!(directive.id = id, "spawner failed to start backlog manager: {}", e);
-                                            false
-                                        } else {
-                                            true                
-                                        }
-                                    }) {
-                                        return // exit closure without notifying filter. oneshot channel should then be closed and filter should recover
-                                    }
-                                } else {
-                                    warn!(directive.id = id, "spawner found existing backlog manager still locking the receive channel, abort creating new one");
-                                }
-                                if let Err(e) = tx.send(()) {
-                                    // the filter should be able to recover
-                                    error!(directive.id = id, "spawner failed to notify filter that backlog manager is ready: {:?}", e);
-                                };
-                            });
-                        }
-                    }
-                }
-                while set.join_next().await.is_some() {}
-                info!("exiting directive manager runtime");
-            });
-        })
     }
 }
 
@@ -473,19 +368,21 @@ mod test {
     use tracing::Instrument;
     use tracing_test::traced_test;
 
-
-    fn get_opt (c: Sender<()>, r: mpsc::Sender<ManagerReport>, directives: Vec<Directive>, reload_backlogs: bool, lazy_loader: Option<LazyLoaderConfig>) -> ManagerOpt {
+    fn get_opt(
+        c: Sender<()>,
+        r: mpsc::Sender<ManagerReport>,
+        directives: Vec<Directive>,
+        reload_backlogs: bool,
+        lazy_loader: Option<LazyLoaderConfig>,
+    ) -> ManagerOpt {
         let (backpressure_tx, _) = mpsc::channel::<()>(8);
         let (resptime_tx, _) = mpsc::channel::<f64>(128);
 
-        let assets =
-            Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let intels = Arc::new(
-            crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
-        );
-        let vulns = Arc::new(
-            crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
-        );
+        let assets = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
+        let intels =
+            Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+        let vulns =
+            Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
 
         let rt_handle = tokio::runtime::Handle::current();
         ManagerOpt {
@@ -518,17 +415,24 @@ mod test {
         }
     }
 
-    async fn run_manager (directives: Vec<Directive>,
-                    event_tx: broadcast::Sender<NormalizedEvent>,
-                    cancel_tx: broadcast::Sender<()>,
-                    report_tx: mpsc::Sender<ManagerReport>,
-                    reload_backlogs: bool,
-                    lazy_loader: Option<LazyLoaderConfig>
-                    ) -> task::JoinHandle<()>{
-        let opt = get_opt(cancel_tx.clone(), report_tx.clone(), directives, reload_backlogs, lazy_loader);
+    async fn run_manager(
+        directives: Vec<Directive>,
+        event_tx: broadcast::Sender<NormalizedEvent>,
+        cancel_tx: broadcast::Sender<()>,
+        report_tx: mpsc::Sender<ManagerReport>,
+        reload_backlogs: bool,
+        lazy_loader: Option<LazyLoaderConfig>,
+    ) -> task::JoinHandle<()> {
+        let opt = get_opt(
+            cancel_tx.clone(),
+            report_tx.clone(),
+            directives,
+            reload_backlogs,
+            lazy_loader,
+        );
         let span = Span::current();
         let tx_clone = event_tx.clone();
-        task::spawn_blocking(move ||  {
+        task::spawn_blocking(move || {
             let _h = span.entered();
             let m = Manager::new(opt).unwrap();
             _ = m.start(tx_clone, 1);
@@ -539,7 +443,6 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     #[traced_test]
     async fn test_manager_preload_dirs() {
-        
         let directives = directive::load_directives(
             true,
             Some(vec!["directives".to_string(), "directive5".to_string()]),
@@ -566,7 +469,7 @@ mod test {
                 };
                 assert!(rpt1 == rpt2);
                 rpt2.active_backlogs = 2;
-                assert!(rpt1 != rpt2);                
+                assert!(rpt1 != rpt2);
                 while report_rx.recv().await.is_some() {
                     debug!("report received");
                 }
@@ -576,7 +479,15 @@ mod test {
 
         let (event_tx, _) = broadcast::channel(1024);
 
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, None).await;
+        let manager_handle = run_manager(
+            directives.clone(),
+            event_tx.clone(),
+            cancel_tx.clone(),
+            report_tx.clone(),
+            false,
+            None,
+        )
+        .await;
 
         let mut evt = NormalizedEvent {
             id: "0a".to_string(),
@@ -669,14 +580,11 @@ mod test {
         drop(event_tx);
         _ = manager_handle.await;
         */
-        
-
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     #[traced_test]
     async fn test_manager_no_preload_dirs() {
-        
         let directives = directive::load_directives(
             true,
             Some(vec!["directives".to_string(), "directive5".to_string()]),
@@ -697,11 +605,20 @@ mod test {
 
         let (event_tx, _) = broadcast::channel(1024);
 
-        let l = LazyLoaderConfig::new(directives.len(), 100).with_dirs_idle_timeout_checker_interval_sec(10);
+        let l = LazyLoaderConfig::new(directives.len(), 100)
+            .with_dirs_idle_timeout_checker_interval_sec(10);
 
         // this function should be the only location where reload_backlogs is true, otherwise we risk having multiple tests trying to save/load/delete from disk
 
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, Some(l.clone())).await;
+        let manager_handle = run_manager(
+            directives.clone(),
+            event_tx.clone(),
+            cancel_tx.clone(),
+            report_tx.clone(),
+            true,
+            Some(l.clone()),
+        )
+        .await;
 
         let mut evt = NormalizedEvent {
             id: "0a".to_string(),
@@ -774,7 +691,7 @@ mod test {
         _ = cancel_tx.send(());
         sleep(Duration::from_millis(1000)).await;
         logs_contain("backlogs saved");
-        
+
         drop(event_tx);
         sleep(Duration::from_millis(5000)).await;
 
@@ -785,13 +702,25 @@ mod test {
         // restart to simulate reloading saved backlogs
 
         let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1);
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, Some(l)).await;
+        let manager_handle = run_manager(
+            directives.clone(),
+            event_tx.clone(),
+            cancel_tx.clone(),
+            report_tx.clone(),
+            true,
+            Some(l),
+        )
+        .await;
 
         sleep(Duration::from_millis(2000)).await;
 
-        assert!(logs_contain("found 1 saved backlogs, instructing spawner to activate"));
+        assert!(logs_contain(
+            "found 1 saved backlogs, instructing spawner to activate"
+        ));
         sleep(Duration::from_millis(1000)).await;
-        assert!(logs_contain("spawner received directive ID from filter directive.id=1"));
+        assert!(logs_contain(
+            "spawner received directive ID from filter directive.id=1"
+        ));
 
         _ = cancel_tx.send(());
         drop(event_tx);
@@ -830,7 +759,6 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
     #[traced_test]
     async fn test_manager_directives_timeout() {
-        
         let directives = directive::load_directives(
             true,
             Some(vec!["directives".to_string(), "directive5".to_string()]),
@@ -851,12 +779,20 @@ mod test {
 
         let (event_tx, _) = broadcast::channel(1024);
 
-        let loader = LazyLoaderConfig::new(directives.len(), 3).with_dirs_idle_timeout_checker_interval_sec(1);
+        let loader = LazyLoaderConfig::new(directives.len(), 3)
+            .with_dirs_idle_timeout_checker_interval_sec(1);
 
-        let manager_handle = run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, Some(loader)).await;
+        let manager_handle = run_manager(
+            directives.clone(),
+            event_tx.clone(),
+            cancel_tx.clone(),
+            report_tx.clone(),
+            false,
+            Some(loader),
+        )
+        .await;
 
         let mut evt = NormalizedEvent {
-
             id: "0a".to_string(),
             plugin_id: 31337,
             plugin_sid: 2,
@@ -878,20 +814,24 @@ mod test {
 
         assert!(logs_contain("creating new backlog"));
 
-        // should be logged every second until backlog expires 
-        sleep(Duration::from_millis(500)).await; 
+        // should be logged every second until backlog expires
+        sleep(Duration::from_millis(500)).await;
         assert!(logs_contain("backlogs is not empty resetting idle timeout"));
 
         // backlog should've expired, also the idle timeout of 3 secs after that
-        sleep(Duration::from_secs(15)).await; 
-        assert!(logs_contain("idle timeout reached, exiting backlog manager"));
+        sleep(Duration::from_secs(15)).await;
+        assert!(logs_contain(
+            "idle timeout reached, exiting backlog manager"
+        ));
 
         // sending another event should instantiate a new backlog manager
-        evt.id="10".to_string();
+        evt.id = "10".to_string();
         event_tx.send(evt).unwrap();
         sleep(Duration::from_millis(5000)).await;
 
-        assert!(logs_contain("backlog::manager: received event directive.id=1 event.id=\"10\""));
+        assert!(logs_contain(
+            "backlog::manager: received event directive.id=1 event.id=\"10\""
+        ));
 
         // teardown
         _ = cancel_tx.send(());
