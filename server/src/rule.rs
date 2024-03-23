@@ -491,59 +491,73 @@ mod test {
 
     use super::*;
 
+    fn pretty_literal_xd(s: &str) -> String {
+        s.replace(&" ".repeat(8), "").replace(&" ".repeat(4), "  ")
+    }
+
     #[test]
     fn test_serde() {
         let mut r = DirectiveRule::default();
-        let s = serde_json::to_string(&r).unwrap();
-        let s_ref = r#"{
-            "name":"",
-            "stage":0,
-            "occurrence":0,
-            "from":"",
-            "to":"",
-            "plugin_id":0,
-            "type":"PluginRule",
-            "port_from":"",
-            "port_to":"",
-            "protocol":"",
-            "reliability":0,
-            "timeout":0
-        }"#;
+        let s = serde_json::to_string_pretty(&r).unwrap();
+        let s_ref = pretty_literal_xd(
+            r#"{
+            "name": "",
+            "stage": 0,
+            "occurrence": 0,
+            "from": "",
+            "to": "",
+            "plugin_id": 0,
+            "type": "PluginRule",
+            "port_from": "",
+            "port_to": "",
+            "protocol": "",
+            "reliability": 0,
+            "timeout": 0
+        }"#,
+        );
+        let s_ref = s_ref.as_str();
         assert_eq!(s, s_ref);
         let r2: DirectiveRule = serde_json::from_str(s_ref).unwrap();
         assert!(r2.rule_type == RuleType::PluginRule);
+
         r.rule_type = RuleType::PluginRule;
-        let s = serde_json::to_string(&r).unwrap();
-        let s_ref = r#"{
-            "name":"",
-            "stage":0,
-            "occurrence":0,
-            "from":"",
-            "to":"",
-            "plugin_id":0,
-            "type":"PluginRule",
-            "port_from":"",
-            "port_to":"",
-            "protocol":"",
-            "reliability":0,
-            "timeout":0
-        }"#;
+        let s = serde_json::to_string_pretty(&r).unwrap();
+        let s_ref = pretty_literal_xd(
+            r#"{
+            "name": "",
+            "stage": 0,
+            "occurrence": 0,
+            "from": "",
+            "to": "",
+            "plugin_id": 0,
+            "type": "PluginRule",
+            "port_from": "",
+            "port_to": "",
+            "protocol": "",
+            "reliability": 0,
+            "timeout": 0
+        }"#,
+        );
         assert_eq!(s, s_ref);
+
         r.rule_type = RuleType::TaxonomyRule;
-        let s = serde_json::to_string(&r).unwrap();
-        let s_ref = r#"{
-            "name":"",
-            "stage":0,
-            "occurrence":0,
-            "from":"","to":"",
-            "plugin_id":0,
-            "type":"TaxonomyRule",
-            "port_from":"",
-            "port_to":"",
-            "protocol":"",
-            "reliability":0,
-            "timeout":0
-        }"#;
+        let s = serde_json::to_string_pretty(&r).unwrap();
+        let s_ref = pretty_literal_xd(
+            r#"{
+            "name": "",
+            "stage": 0,
+            "occurrence": 0,
+            "from": "",
+            "to": "",
+            "plugin_id": 0,
+            "type": "TaxonomyRule",
+            "port_from": "",
+            "port_to": "",
+            "protocol": "",
+            "reliability": 0,
+            "timeout": 0
+        }"#,
+        );
         assert_eq!(s, s_ref);
     }
 
