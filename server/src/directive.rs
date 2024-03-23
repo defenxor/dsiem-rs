@@ -1,7 +1,8 @@
+use std::{fs, str::FromStr, sync::Arc};
+
 use parking_lot::Mutex;
 use regex::Regex;
 use serde_derive::Deserialize;
-use std::{fs, str::FromStr, sync::Arc};
 extern crate glob;
 use anyhow::{anyhow, Result};
 use glob::glob;
@@ -47,7 +48,8 @@ impl Directive {
             if i == 0 {
                 r.start_time = Arc::new(Mutex::new(e.timestamp.timestamp()));
 
-                // if flag is active, replace ANY and HOME_NET on the first rule with specific addresses from event
+                // if flag is active, replace ANY and HOME_NET on the first rule with specific
+                // addresses from event
                 if self.all_rules_always_active {
                     if r.from == "ANY" || r.from == "HOME_NET" || r.from == "!HOME_NET" {
                         r.from = e.src_ip.to_string();
@@ -58,9 +60,9 @@ impl Directive {
                 }
                 // reference isn't allowed on first rule so we'll skip the rest
             } else {
-                // for the rest, refer to the referenced stage if its not ANY or HOME_NET or !HOME_NET
-                // if the reference is ANY || HOME_NET || !HOME_NET then refer to event if its in the format of
-                // :refs
+                // for the rest, refer to the referenced stage if its not ANY or HOME_NET or
+                // !HOME_NET if the reference is ANY || HOME_NET || !HOME_NET
+                // then refer to event if its in the format of :refs
                 if let Ok(v) = utils::ref_to_digit(&r.from) {
                     let vmin1 = usize::from(v - 1);
                     let refs = &self.rules[vmin1].from;
@@ -80,45 +82,25 @@ impl Directive {
                 }
                 if let Ok(v) = utils::ref_to_digit(&r.port_from) {
                     let refs = &self.rules[usize::from(v - 1)].port_from;
-                    r.port_from = if refs != "ANY" {
-                        refs.to_string()
-                    } else {
-                        e.src_port.to_string()
-                    };
+                    r.port_from = if refs != "ANY" { refs.to_string() } else { e.src_port.to_string() };
                 }
                 if let Ok(v) = utils::ref_to_digit(&r.port_to) {
                     let refs = &self.rules[usize::from(v - 1)].port_to;
-                    r.port_to = if refs != "ANY" {
-                        refs.to_string()
-                    } else {
-                        e.dst_port.to_string()
-                    };
+                    r.port_to = if refs != "ANY" { refs.to_string() } else { e.dst_port.to_string() };
                 }
 
                 // references in custom data
                 if let Ok(v) = utils::ref_to_digit(&r.custom_data1) {
                     let refs = &self.rules[usize::from(v - 1)].custom_data1;
-                    r.custom_data1 = if refs != "ANY" {
-                        refs.to_string()
-                    } else {
-                        e.custom_data1.clone()
-                    };
+                    r.custom_data1 = if refs != "ANY" { refs.to_string() } else { e.custom_data1.clone() };
                 }
                 if let Ok(v) = utils::ref_to_digit(&r.custom_data2) {
                     let refs = &self.rules[usize::from(v - 1)].custom_data2;
-                    r.custom_data2 = if refs != "ANY" {
-                        refs.to_string()
-                    } else {
-                        e.custom_data2.clone()
-                    };
+                    r.custom_data2 = if refs != "ANY" { refs.to_string() } else { e.custom_data2.clone() };
                 }
                 if let Ok(v) = utils::ref_to_digit(&r.custom_data3) {
                     let refs = &self.rules[usize::from(v - 1)].custom_data3;
-                    r.custom_data3 = if refs != "ANY" {
-                        refs.to_string()
-                    } else {
-                        e.custom_data3.clone()
-                    };
+                    r.custom_data3 = if refs != "ANY" { refs.to_string() } else { e.custom_data3.clone() };
                 }
             }
             result.push(r);
@@ -159,23 +141,14 @@ fn validate_rules(rules: &Vec<rule::DirectiveRule>) -> Result<()> {
         }
         if r.rule_type == RuleType::TaxonomyRule {
             if r.product.is_empty() {
-                return Err(anyhow!(
-                    "rule stage {} is a TaxonomyRule and requires product to be defined",
-                    r.stage
-                ));
+                return Err(anyhow!("rule stage {} is a TaxonomyRule and requires product to be defined", r.stage));
             }
             if r.category.is_empty() {
-                return Err(anyhow!(
-                    "rule stage {} is a TaxonomyRule and requires category to be defined",
-                    r.stage
-                ));
+                return Err(anyhow!("rule stage {} is a TaxonomyRule and requires category to be defined", r.stage));
             }
         }
         if r.reliability > 10 {
-            return Err(anyhow!(
-                "rule stage {} reliability must be between 0 to 10",
-                r.stage
-            ));
+            return Err(anyhow!("rule stage {} reliability must be between 0 to 10", r.stage));
         }
 
         let is_first_rule = r.stage == 1;
@@ -231,11 +204,7 @@ fn validate_port(s: String, is_first_rule: bool, highest_stage: u8) -> Result<()
 
     let slices: Vec<&str> = s.split(',').collect();
     for s in slices {
-        let n = s
-            .replace('!', "")
-            .trim()
-            .parse::<u16>()
-            .map_err(|e| e.to_string())?;
+        let n = s.replace('!', "").trim().parse::<u16>().map_err(|e| e.to_string())?;
         if !(1..=65535).contains(&n) {
             return Err(format!("{} is not a valid TCP/UDP port number", n));
         }
@@ -277,19 +246,12 @@ fn validate_directive(d: &Directive, loaded: &Vec<Directive>) -> Result<()> {
         return Err(anyhow!("directive ID {} category is empty", d.id));
     }
     if d.priority < 1 || d.priority > 5 {
-        return Err(anyhow!(
-            "directive ID {} priority must be between 1 to 5",
-            d.id
-        ));
+        return Err(anyhow!("directive ID {} priority must be between 1 to 5", d.id));
     }
     if d.rules.len() <= 1 {
-        return Err(anyhow!(
-            "directive ID {} has no rule or only has one and therefore will never expire",
-            d.id
-        ));
+        return Err(anyhow!("directive ID {} has no rule or only has one and therefore will never expire", d.id));
     }
-    validate_rules(&d.rules)
-        .map_err(|e| anyhow!("Directive ID {} rules has error: {}", d.id, e))?;
+    validate_rules(&d.rules).map_err(|e| anyhow!("Directive ID {} rules has error: {}", d.id, e))?;
     Ok(())
 }
 
@@ -300,15 +262,13 @@ pub fn load_directives(test_env: bool, sub_path: Option<Vec<String>>) -> Result<
     for file_path in glob(&glob_pattern)?.flatten() {
         info!("reading {:?}", file_path);
         let s = fs::read_to_string(file_path.clone())?;
-        let loaded: Directives =
-            serde_json::from_str(&s).map_err(|e| anyhow!("{:?}: {}", file_path, e.to_string()))?;
+        let loaded: Directives = serde_json::from_str(&s).map_err(|e| anyhow!("{:?}: {}", file_path, e.to_string()))?;
         for d in loaded.directives {
             if d.disabled {
                 warn!(directive.id = d.id, "skipping disabled directive");
                 continue;
             }
-            validate_directive(&d, &dirs.directives)
-                .map_err(|e| anyhow!("{:?}: {}", file_path, e.to_string()))?;
+            validate_directive(&d, &dirs.directives).map_err(|e| anyhow!("{:?}: {}", file_path, e.to_string()))?;
             dirs.directives.push(d);
         }
     }
@@ -326,15 +286,9 @@ mod test {
 
     #[test]
     fn test_load_directives() {
-        let res = load_directives(
-            true,
-            Some(vec!["directives".to_owned(), "directive1".to_owned()]),
-        );
+        let res = load_directives(true, Some(vec!["directives".to_owned(), "directive1".to_owned()]));
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("directive ID 1 already exist"));
+        assert!(res.unwrap_err().to_string().contains("directive ID 1 already exist"));
 
         let dir2_path = vec!["directives".to_owned(), "directive2".to_owned()];
 

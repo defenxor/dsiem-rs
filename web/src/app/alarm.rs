@@ -1,7 +1,7 @@
-use crate::components::alarm::AlarmView;
-use crate::services::alarm;
 use yew::prelude::*;
 use yew_hooks::prelude::*;
+
+use crate::{components::alarm::AlarmView, services::alarm};
 
 #[derive(Properties, PartialEq)]
 pub struct DetailProps {
@@ -33,7 +33,11 @@ pub fn alarm_detail(props: &DetailProps) -> Html {
         <div class={classes!("min-h-screen", "bg-white", "dark:bg-black")}>
             {
                 if state.loading {
-                    html! {<div class={classes!("loading", "dots", "bg-white", "dark:bg-black")}>{"\u{00a0}\u{00a0}\u{00a0}"}</div>}
+                    html! {
+                        <div class={classes!("loading", "dots", "bg-white", "dark:bg-black")}>
+                            {"\u{00a0}\u{00a0}\u{00a0}"}
+                        </div>
+                    }
                 } else {
                     html! {}
                 }

@@ -1,16 +1,15 @@
 use std::time::Duration;
 
-use crate::backlog::manager::{OpLoadParameter, QueueMode};
-
-use {
-    crate::allocator::{calculate, ThreadAllocation},
-    crate::messenger::UNBOUNDED_QUEUE_SIZE,
-    crate::tracer,
-};
-
 use anyhow::{anyhow, Error, Result};
 use tokio::sync::broadcast;
 use tracing::{error, info};
+
+use crate::{
+    allocator::{calculate, ThreadAllocation},
+    backlog::manager::{OpLoadParameter, QueueMode},
+    messenger::UNBOUNDED_QUEUE_SIZE,
+    tracer,
+};
 
 const DEADLOCK_TIMEOUT_IN_SECONDS: u64 = 10;
 
@@ -67,11 +66,7 @@ impl Validator {
         calculate(
             num_of_directives,
             max_eps as usize,
-            if filter_threads == 0 {
-                None
-            } else {
-                Some(filter_threads)
-            },
+            if filter_threads == 0 { None } else { Some(filter_threads) },
             None,
         )
     }
@@ -103,19 +98,18 @@ impl Validator {
         }
     }
 
-    // we take in unsigned values from CLI to make sure there's no negative numbers, and convert them
-    // to signed value required by timestamp related APIs.
+    // we take in unsigned values from CLI to make sure there's no negative numbers,
+    // and convert them to signed value required by timestamp related APIs.
     pub fn max_delay(max_delay: u16) -> Result<i64> {
         chrono::Duration::try_seconds(max_delay.into())
             .and_then(|d| d.num_nanoseconds())
             .ok_or_else(|| anyhow!("invalid value provided"))
     }
 
-    // this cannot fail, clap already ensures the value is within the range of u16 (0-65535)
+    // this cannot fail, clap already ensures the value is within the range of u16
+    // (0-65535)
     pub fn min_alarm_lifetime(min_alarm_lifetime: u16) -> i64 {
-        chrono::Duration::try_minutes(min_alarm_lifetime.into())
-            .unwrap_or_default()
-            .num_seconds()
+        chrono::Duration::try_minutes(min_alarm_lifetime.into()).unwrap_or_default().num_seconds()
     }
 }
 

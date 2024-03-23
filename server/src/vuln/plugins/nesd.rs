@@ -1,11 +1,11 @@
-use super::{VulnChecker, VulnResult};
-use anyhow::Context;
-use anyhow::Result;
+use std::{collections::HashSet, net::IpAddr};
+
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::collections::HashSet;
-use std::net::IpAddr;
 use tracing::trace;
+
+use super::{VulnChecker, VulnResult};
 
 #[derive(Deserialize, Default)]
 struct Config {
@@ -27,20 +27,12 @@ pub struct NesdResult {
 #[async_trait]
 impl VulnChecker for Nesd {
     async fn check_ip_port(&self, ip: IpAddr, port: u16) -> Result<HashSet<VulnResult>> {
-        let url = self
-            .config
-            .url
-            .replacen("${ip}", &ip.to_string(), 1)
-            .replacen("${port}", &port.to_string(), 1);
+        let url = self.config.url.replacen("${ip}", &ip.to_string(), 1).replacen("${port}", &port.to_string(), 1);
 
         trace!(url, "nesd vuln check");
 
-        let text = reqwest::get(url)
-            .await
-            .context("get request error")?
-            .text()
-            .await
-            .context("error obtaining text")?;
+        let text =
+            reqwest::get(url).await.context("get request error")?.text().await.context("error obtaining text")?;
 
         trace!(text, "nesd vuln check");
 
@@ -50,8 +42,7 @@ impl VulnChecker for Nesd {
             return Ok(results);
         }
 
-        let res: Vec<NesdResult> =
-            serde_json::from_str(&text).context("error parsing nesd result")?;
+        let res: Vec<NesdResult> = serde_json::from_str(&text).context("error parsing nesd result")?;
 
         for v in res.iter() {
             if v.risk != "Medium" && v.risk != "High" && v.risk != "Critical" {
@@ -64,11 +55,7 @@ impl VulnChecker for Nesd {
             }
             let term = ip.to_string() + ":" + &port.to_string();
 
-            let r = VulnResult {
-                provider: "Nesd".to_owned(),
-                term,
-                result: s,
-            };
+            let r = VulnResult { provider: "Nesd".to_owned(), term, result: s };
             results.insert(r);
         }
 

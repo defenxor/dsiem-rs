@@ -1,7 +1,8 @@
+use std::{fs, net::IpAddr};
+
 use cidr::IpCidr;
 use serde::Serialize;
 use serde_derive::Deserialize;
-use std::{fs, net::IpAddr};
 extern crate glob;
 use anyhow::{anyhow, Result};
 use glob::glob;
@@ -32,11 +33,7 @@ pub struct NetworkAssets {
 
 impl NetworkAssets {
     pub fn from_string(s: String) -> Result<NetworkAssets> {
-        let mut result = NetworkAssets {
-            assets: vec![],
-            whitelist: vec![],
-            home_net: vec![],
-        };
+        let mut result = NetworkAssets { assets: vec![], whitelist: vec![], home_net: vec![] };
         let loaded: NetworkAssets = serde_json::from_str(&s)?;
         for a in loaded.assets {
             validate_asset(&a)?;
@@ -52,11 +49,7 @@ impl NetworkAssets {
     pub fn new(test_env: bool, subdir: Option<Vec<String>>) -> Result<NetworkAssets> {
         let cfg_dir = utils::config_dir(test_env, subdir)?;
         let glob_pattern = cfg_dir.to_string_lossy().to_string() + "/" + ASSETS_GLOB;
-        let mut result = NetworkAssets {
-            assets: vec![],
-            whitelist: vec![],
-            home_net: vec![],
-        };
+        let mut result = NetworkAssets { assets: vec![], whitelist: vec![], home_net: vec![] };
         for file_path in glob(&glob_pattern)?.flatten() {
             info!("reading {:?}", file_path);
             let s = fs::read_to_string(file_path)?;
@@ -90,12 +83,7 @@ impl NetworkAssets {
     }
 
     pub fn get_value(&self, ip: &IpAddr) -> u8 {
-        self.assets
-            .iter()
-            .filter(|n| n.cidr.contains(ip))
-            .max_by_key(|x| x.value)
-            .map(|x| x.value)
-            .unwrap_or_default()
+        self.assets.iter().filter(|n| n.cidr.contains(ip)).max_by_key(|x| x.value).map(|x| x.value).unwrap_or_default()
     }
     pub fn get_asset_networks(&self, ip: &IpAddr) -> Option<Vec<String>> {
         let networks = self
@@ -174,16 +162,10 @@ mod test {
             value: 0,
             whitelisted: false,
         };
-        assert_eq!(
-            validate_asset(&a).unwrap_err().to_string(),
-            "asset foo value cannot be 0"
-        );
+        assert_eq!(validate_asset(&a).unwrap_err().to_string(), "asset foo value cannot be 0");
         a.value = 5;
         a.name = "".to_string();
-        assert_eq!(
-            validate_asset(&a).unwrap_err().to_string(),
-            "asset name cannot be empty"
-        );
+        assert_eq!(validate_asset(&a).unwrap_err().to_string(), "asset name cannot be empty");
 
         let ip2: IpAddr = "2002:c0a8:0001:0:0:0:0:1".parse().unwrap();
         assert!(assets.is_in_homenet(&ip2));

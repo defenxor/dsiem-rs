@@ -1,4 +1,4 @@
-use std::{process::ExitCode, sync::Arc, thread};
+use std::{process::ExitCode, sync::Arc, thread, time::Duration};
 
 use anyhow::{anyhow, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
@@ -6,13 +6,13 @@ use dsiem::{
     asset::NetworkAssets,
     backlog::manager::spawner::{self, LazyLoaderConfig},
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
-    config, directive, event::NormalizedEvent,
+    config, directive,
+    event::NormalizedEvent,
     filter::{self, Filter},
     intel,
     log_writer::LogWriter,
-    messenger, parser, tracer, vuln, watchdog
+    messenger, parser, tracer, vuln, watchdog,
 };
-use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Notify};
 use tracing::info;
 
@@ -21,10 +21,9 @@ use tracing::info;
     author("https://github.com/defenxor/dsiem-rs"),
     version,
     about = "Dsiem backend server",
-    long_about = "Dsiem backend server\n\n\
-    Dsiem is an event correlation engine for ELK stack.\n\
-    Dsiem provides OSSIM-style correlation for normalized logs/events, and relies on\n\
-    Filebeat, Logstash, and Elasticsearch to do the rest."
+    long_about = "Dsiem backend server\n\nDsiem is an event correlation engine for ELK stack.\nDsiem provides \
+                  OSSIM-style correlation for normalized logs/events, and relies on\nFilebeat, Logstash, and \
+                  Elasticsearch to do the rest."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -33,29 +32,13 @@ struct Cli {
     #[arg(short('v'), long, action = clap::ArgAction::Count)]
     verbosity: u8,
     /// Enable debug output, for compatibility purpose
-    #[arg(
-        long = "debug",
-        env = "DSIEM_DEBUG",
-        value_name = "boolean",
-        default_value_t = false
-    )]
+    #[arg(long = "debug", env = "DSIEM_DEBUG", value_name = "boolean", default_value_t = false)]
     debug: bool,
     /// Enable trace output, for compatibility purpose
-    #[arg(
-        long = "trace",
-        env = "DSIEM_TRACE",
-        value_name = "boolean",
-        default_value_t = false
-    )]
+    #[arg(long = "trace", env = "DSIEM_TRACE", value_name = "boolean", default_value_t = false)]
     trace: bool,
     /// Enable json-lines log output
-    #[arg(
-        short('j'),
-        long = "json",
-        env = "DSIEM_JSON",
-        value_name = "boolean",
-        default_value_t = false
-    )]
+    #[arg(short('j'), long = "json", env = "DSIEM_JSON", value_name = "boolean", default_value_t = false)]
     use_json: bool,
     /// Testing environment flag
     #[arg(long = "test-env", value_name = "boolean", default_value_t = false)]
@@ -64,11 +47,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum SubCommands {
-    #[command(
-        about = "Start Dsiem backend server",
-        long_about = "Start the Dsiem backend server",
-        name = "serve"
-    )]
+    #[command(about = "Start Dsiem backend server", long_about = "Start the Dsiem backend server", name = "serve")]
     ServeCommand(ServeArgs),
 }
 
@@ -86,14 +65,10 @@ struct ServeArgs {
     /// Unique node name to use when deployed in cluster mode
     #[arg(short('n'), long = "node", env = "DSIEM_NODE", value_name = "string")]
     node: String,
-    /// Min. alarm lifetime in minutes. Backlog won't expire sooner than this regardless rule timeouts. This is to support processing of delayed events
-    #[arg(
-        short('l'),
-        long,
-        env = "DSIEM_MINALARMLIFETIME",
-        value_name = "minutes",
-        default_value_t = 0
-    )]
+    /// Min. alarm lifetime in minutes. Backlog won't expire sooner than this
+    /// regardless rule timeouts. This is to support processing of delayed
+    /// events
+    #[arg(short('l'), long, env = "DSIEM_MINALARMLIFETIME", value_name = "minutes", default_value_t = 0)]
     min_alarm_lifetime: u16,
     /// Alarm status to use, the first one will be assigned to new alarms
     #[arg(
@@ -117,47 +92,22 @@ struct ServeArgs {
         default_value = "Identified Threat,False Positive,Valid Threat,Security Incident"
     )]
     tags: Vec<String>,
-    /// Minimum alarm risk value to be classified as Medium risk. Lower value than this will be classified as Low risk
-    #[arg(
-        long = "med_risk_min",
-        value_name = "2 to 8",
-        env = "DSIEM_MEDRISKMIN",
-        default_value_t = 3
-    )]
+    /// Minimum alarm risk value to be classified as Medium risk. Lower value
+    /// than this will be classified as Low risk
+    #[arg(long = "med_risk_min", value_name = "2 to 8", env = "DSIEM_MEDRISKMIN", default_value_t = 3)]
     med_risk_min: u8,
-    /// Maximum alarm risk value to be classified as Medium risk. Higher value than this will be classified as High risk
-    #[arg(
-        long = "med_risk_max",
-        value_name = "2 to 9",
-        env = "DSIEM_MEDRISKMAX",
-        default_value_t = 6
-    )]
+    /// Maximum alarm risk value to be classified as Medium risk. Higher value
+    /// than this will be classified as High risk
+    #[arg(long = "med_risk_max", value_name = "2 to 9", env = "DSIEM_MEDRISKMAX", default_value_t = 6)]
     med_risk_max: u8,
     // Maximum expected rate of events/second
-    #[arg(
-        short('e'),
-        long = "max_eps",
-        value_name = "number",
-        env = "DSIEM_MAXEPS",
-        default_value_t = 1000
-    )]
+    #[arg(short('e'), long = "max_eps", value_name = "number", env = "DSIEM_MAXEPS", default_value_t = 1000)]
     max_eps: u32,
     /// Nats address to use for frontend - backend communication
-    #[arg(
-        long = "msq",
-        env = "DSIEM_MSQ",
-        value_name = "string",
-        default_value = "nats://dsiem-nats:4222"
-    )]
+    #[arg(long = "msq", env = "DSIEM_MSQ", value_name = "string", default_value = "nats://dsiem-nats:4222")]
     msq: String,
     /// Cache expiration time in minutes for intel and vuln query results
-    #[arg(
-        short('c'),
-        long = "cache",
-        env = "DSIEM_CACHEDURATION",
-        value_name = "minutes",
-        default_value_t = 10
-    )]
+    #[arg(short('c'), long = "cache", env = "DSIEM_CACHEDURATION", value_name = "minutes", default_value_t = 10)]
     cache_duration: u8,
     /// Length of queue for unprocessed events, rounded to the next power of 2.
     ///
@@ -167,46 +117,22 @@ struct ServeArgs {
     /// Setting this to 0 will use 524,288 events to emulate unbounded queue for
     /// compatibility with dsiem-go behavior, which is no longer recommended.
     ///
-    /// Instead, this should be set to a reasonable value to avoid unnecessary memory allocation.
-    #[arg(
-        short('q'),
-        long = "max_queue",
-        env = "DSIEM_MAXQUEUE",
-        value_name = "events",
-        default_value_t = 32768
-    )]
+    /// Instead, this should be set to a reasonable value to avoid unnecessary
+    /// memory allocation.
+    #[arg(short('q'), long = "max_queue", env = "DSIEM_MAXQUEUE", value_name = "events", default_value_t = 32768)]
     max_queue: usize,
     /// Duration in seconds before resetting overload condition state
-    #[arg(
-        long = "hold_duration",
-        env = "DSIEM_HOLDDURATION",
-        value_name = "seconds",
-        default_value_t = 10
-    )]
+    #[arg(long = "hold_duration", env = "DSIEM_HOLDDURATION", value_name = "seconds", default_value_t = 10)]
     hold_duration: u8,
-    /// Max. processing delay before throttling incoming events (under-pressure condition), 0 means disabled"
-    #[arg(
-        short = 'd',
-        long = "max_delay",
-        env = "DSIEM_MAXDELAY",
-        value_name = "seconds",
-        default_value_t = 180
-    )]
+    /// Max. processing delay before throttling incoming events (under-pressure
+    /// condition), 0 means disabled"
+    #[arg(short = 'd', long = "max_delay", env = "DSIEM_MAXDELAY", value_name = "seconds", default_value_t = 180)]
     max_delay: u16,
     /// Check private IP addresses against threat intel
-    #[arg(
-        long = "intel_private_ip",
-        env = "DSIEM_INTELPRIVATEIP",
-        default_value_t = false
-    )]
+    #[arg(long = "intel_private_ip", env = "DSIEM_INTELPRIVATEIP", default_value_t = false)]
     intel_private_ip: bool,
     /// Save and reload running backlogs on restart
-    #[arg(
-        long = "reload-backlogs",
-        env = "DSIEM_RELOAD_BACKLOGS",
-        value_name = "boolean",
-        default_value_t = true
-    )]
+    #[arg(long = "reload-backlogs", env = "DSIEM_RELOAD_BACKLOGS", value_name = "boolean", default_value_t = true)]
     reload_backlogs: bool,
     /// Export traces data to opentelemetry collector
     #[arg(
@@ -233,12 +159,7 @@ struct ServeArgs {
     )]
     otel_endpoint: String,
     /// Number of threads to use for events filtering, 0 means auto
-    #[arg(
-        long = "filter-threads",
-        env = "DSIEM_FILTER_THREADS",
-        value_name = "number",
-        default_value_t = 0
-    )]
+    #[arg(long = "filter-threads", env = "DSIEM_FILTER_THREADS", value_name = "number", default_value_t = 0)]
     filter_threads: usize,
     /// Preload all directives on startup to increase performance
     #[arg(
@@ -250,7 +171,8 @@ struct ServeArgs {
     preload_directives: bool,
     /// Duration in minutes to wait for idle directives before unloading them.
     ///
-    /// Idle directives are those that have 0 backlogs for the specified duration.
+    /// Idle directives are those that have 0 backlogs for the specified
+    /// duration.
     ///
     /// This is only applicable when preload-all-directives is false
     #[arg(
@@ -274,8 +196,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let SubCommands::ServeCommand(sargs) = args.subcommand;
 
-    let max_delay = validator::max_delay(sargs.max_delay)
-        .map_err(|e| log_startup_err("reading max_delay", e))?;
+    let max_delay = validator::max_delay(sargs.max_delay).map_err(|e| log_startup_err("reading max_delay", e))?;
 
     validator::verify_risk_boundaries(sargs.med_risk_min, sargs.med_risk_max)
         .map_err(|e| log_startup_err("reading med_risk_min and med_risk_max", e))?;
@@ -299,24 +220,15 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let (bp_tx, bp_rx) = mpsc::channel::<()>(8);
     let (cancel_tx, cancel_rx) = broadcast::channel::<()>(1);
 
-    ctrlc_handler(cancel_tx.clone(), !test_env)
-        .map_err(|e| log_startup_err("setting up ctrl-c handler", e))?;
+    ctrlc_handler(cancel_tx.clone(), !test_env).map_err(|e| log_startup_err("setting up ctrl-c handler", e))?;
 
-    config::download_files(
-        test_env,
-        Some(vec!["dl_config".to_string()]),
-        sargs.frontend.clone(),
-        sargs.node,
-    )
-    .map_err(|e| log_startup_err("downloading config", e))?;
+    config::download_files(test_env, Some(vec!["dl_config".to_string()]), sargs.frontend.clone(), sargs.node)
+        .map_err(|e| log_startup_err("downloading config", e))?;
 
-    let directives = directive
     // todo: maybe replace this kludgy way of loading test directive5
-    ::load_directives(
-        test_env,
-        Some(vec!["directives".to_string(), "directive5".to_string()]),
-    )
-    .map_err(|e| log_startup_err("loading directives", e))?;
+    let directives =
+        directive::load_directives(test_env, Some(vec!["directives".to_string(), "directive5".to_string()]))
+            .map_err(|e| log_startup_err("loading directives", e))?;
 
     let eps = Arc::new(watchdog::eps::Eps::default());
     let n = directives.len();
@@ -354,9 +266,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             require_logging,
         };
         let mut w = watchdog::Watchdog::default();
-        w.start(opt)
-            .await
-            .map_err(|e| anyhow!("watchdog error: {:?}", e))
+        w.start(opt).await.map_err(|e| anyhow!("watchdog error: {:?}", e))
     });
 
     let assets = Arc::new(
@@ -364,10 +274,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             .map_err(|e| log_startup_err("loading assets", e))?,
     );
 
-    info!(
-        "starting dsiem backend server with frontend {} and message queue {}",
-        sargs.frontend, sargs.msq
-    );
+    info!("starting dsiem backend server with frontend {} and message queue {}", sargs.frontend, sargs.msq);
 
     let notifier = Arc::new(Notify::new());
     let waiter = notifier.clone();
@@ -388,9 +295,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             waiter,
         };
         let w = messenger::Worker {};
-        w.backend_start(opt)
-            .await
-            .map_err(|e| anyhow!("worker error: {:?}", e))
+        w.backend_start(opt).await.map_err(|e| anyhow!("worker error: {:?}", e))
     });
 
     let intels = Arc::new(
@@ -405,10 +310,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let lazy_loader = match sargs.preload_directives {
         true => None,
-        false => Some(LazyLoaderConfig::new(
-            n,
-            (sargs.dir_idle_timeout * 60) as u64,
-        )),
+        false => Some(LazyLoaderConfig::new(n, (sargs.dir_idle_timeout * 60) as u64)),
     };
 
     let mut log_writer = LogWriter::new(test_env)?;
@@ -417,7 +319,9 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let load_param = validator::load_param(sargs.max_queue, sargs.max_eps);
 
-    info!("backend started with max single event processing time: {} ms, queue limit: {} events, quick check threads: {}, backlog threads: {}, ttl directives: {}",
+    info!(
+        "backend started with max single event processing time: {} ms, queue limit: {} events, quick check threads: \
+         {}, backlog threads: {}, ttl directives: {}",
         load_param.max_wait.as_millis(),
         load_param.limit_cap,
         thread_allocation.filter_threads,
@@ -454,7 +358,8 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let handle_manager = manager_spawner.run(rt.handle().clone())?;
 
-    // if preload_directives is false and reload_backlogs is true, we should instruct the spawner to load those backlog managers that have
+    // if preload_directives is false and reload_backlogs is true, we should
+    // instruct the spawner to load those backlog managers that have
     // backlogs saved on disk
 
     if !sargs.preload_directives && sargs.reload_backlogs {
@@ -463,18 +368,11 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         }
     }
 
-    let filter = Filter::new(filter::FilterOpt {
-        lazy_loader,
-        thread_allocation,
-        cancel_tx,
-        notifier,
-    });
+    let filter = Filter::new(filter::FilterOpt { lazy_loader, thread_allocation, cancel_tx, notifier });
 
     let id_tx_clone = id_tx.clone();
     let handle_filter = thread::spawn(move || {
-        filter
-            .start(event_tx, filter_targets, id_tx_clone)
-            .map_err(|e| anyhow!("filter error: {:?}", e))
+        filter.start(event_tx, filter_targets, id_tx_clone).map_err(|e| anyhow!("filter error: {:?}", e))
     });
 
     if listen {
@@ -491,19 +389,14 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 #[cfg(test)]
 mod test {
 
-    use super::*;
     use tracing::debug;
     use tracing_test::traced_test;
 
+    use super::*;
+
     #[test]
     fn test_default_cli_param_and_parser() {
-        let args = Cli::parse_from([
-            "dsiem-backend",
-            "--test-env",
-            "serve",
-            "-n",
-            "dsiem-backend-0",
-        ]);
+        let args = Cli::parse_from(["dsiem-backend", "--test-env", "serve", "-n", "dsiem-backend-0"]);
 
         assert!(args.test_env);
         assert!(!args.debug);
@@ -566,27 +459,17 @@ mod test {
 
     #[test]
     fn test_serve_success() {
-        let file_list = r#"{ 
-            "files" : [] 
+        let file_list = r#"{
+            "files" : []
         }"#;
 
-        let mut server = mockito::Server::new_with_opts(mockito::ServerOpts {
-            port: 19005,
-            ..Default::default()
-        });
+        let mut server = mockito::Server::new_with_opts(mockito::ServerOpts { port: 19005, ..Default::default() });
         let url = server.url();
         debug!("using url: {}", url.clone());
-        server
-            .mock("GET", "/config/")
-            .with_status(200)
-            .with_body(file_list)
-            .create();
+        server.mock("GET", "/config/").with_status(200).with_body(file_list).create();
 
-        let mut pty = rexpect::spawn(
-            "docker run --name nats-main-be -p 42225:42225 --rm -it nats -p 42225",
-            Some(5000),
-        )
-        .unwrap();
+        let mut pty =
+            rexpect::spawn("docker run --name nats-main-be -p 42225:42225 --rm -it nats -p 42225", Some(5000)).unwrap();
         pty.exp_string("Server is ready").unwrap();
 
         let cli = Cli::parse_from([

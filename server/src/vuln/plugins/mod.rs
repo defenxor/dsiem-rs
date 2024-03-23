@@ -1,5 +1,4 @@
-use super::VulnChecker;
-use super::VulnResult;
+use super::{VulnChecker, VulnResult};
 
 mod nesd;
 pub struct Checker {
@@ -10,11 +9,7 @@ pub struct Checker {
 
 impl Checker {
     fn new(plugin: Box<dyn VulnChecker>, name: &str) -> Checker {
-        Checker {
-            plugin,
-            name: name.to_string(),
-            enabled: false,
-        }
+        Checker { plugin, name: name.to_string(), enabled: false }
     }
 }
 

@@ -82,7 +82,10 @@ impl Watchdog {
                     resp_histo.record(v as u64);
                 }
                 Some(v) = report_rx.recv() => {
-                  report_map.insert(v.id, (v.active_backlogs, v.timedout_backlogs, v.matched_events));
+                    report_map.insert(
+                    v.id,
+                    (v.active_backlogs, v.timedout_backlogs, v.matched_events)
+                    );
                 }
                 _ = report.tick() => {
 
@@ -92,8 +95,12 @@ impl Watchdog {
                     // irrelevant for non preload_directives mode
                     // let ttl_directives = report_map.len();
 
-                    let active_directives =  report_map.iter().filter(|&(_, (x, _, _))|*x > 0).count();
-                    let (backlogs, timedout_backlogs, matched_events) = report_map.values().fold((0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
+                    let active_directives =
+                        report_map.iter().filter(|&(_, (x, _, _))|*x > 0).count();
+                    let (backlogs, timedout_backlogs, matched_events) =
+                        report_map
+                            .values()
+                            .fold((0, 0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1, acc.2 + x.2));
 
                     // reset this if there's no processed events since last report
                     let avg_proc_time_ms = match matched_events {
@@ -129,7 +136,12 @@ impl Watchdog {
                     );
 
                     if queue_length != 0 && avg_proc_time_ms > max_proc_time_ms {
-                    warn!(avg_proc_time_ms = rounded_avg_proc_time_ms, "avg. processing time maybe too long to sustain the target {} event/sec (or {:.3} ms/event)", opt.max_eps, max_proc_time_ms );
+                    warn!(
+                        avg_proc_time_ms = rounded_avg_proc_time_ms,
+                        "avg. processing time maybe too long to sustain the target {} event/sec (or {:.3} ms/event)",
+                        opt.max_eps,
+                        max_proc_time_ms
+                    );
                     // reset so next it excludes any previous outliers
                     resp_histo.clear();
                     }
@@ -148,10 +160,11 @@ fn round(x: f64, decimals: u32) -> f64 {
 #[cfg(test)]
 mod test {
 
-    use super::*;
     use tokio::{task, time::sleep};
     use tracing::{Instrument, Span};
     use tracing_test::traced_test;
+
+    use super::*;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[traced_test]
@@ -165,10 +178,7 @@ mod test {
 
         let eps = Arc::new(eps::Eps::default());
 
-        let otel_config = OtelConfig {
-            metrics_enabled: true,
-            ..Default::default()
-        };
+        let otel_config = OtelConfig { metrics_enabled: true, ..Default::default() };
 
         let opt = WatchdogOpt {
             event_tx: event_tx.clone(),
@@ -191,12 +201,7 @@ mod test {
             _ = w.start(opt).instrument(span).await;
         });
 
-        let rpt = ManagerReport {
-            id: 1,
-            active_backlogs: 100,
-            timedout_backlogs: 0,
-            matched_events: 9001,
-        };
+        let rpt = ManagerReport { id: 1, active_backlogs: 100, timedout_backlogs: 0, matched_events: 9001 };
         _ = report_tx.send(rpt).await;
         sleep(Duration::from_millis(2000)).await;
         assert!(logs_contain("backlogs=100"));
@@ -224,12 +229,7 @@ mod test {
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("avg_proc_time_ms=24") || logs_contain("avg_proc_time_ms=25"));
 
-        let rpt = ManagerReport {
-            id: 1,
-            active_backlogs: 100,
-            timedout_backlogs: 0,
-            matched_events: 0,
-        };
+        let rpt = ManagerReport { id: 1, active_backlogs: 100, timedout_backlogs: 0, matched_events: 0 };
         _ = report_tx.send(rpt).await;
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("avg_proc_time_ms=0.0"));

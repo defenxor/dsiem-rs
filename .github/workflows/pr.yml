@@ -8,9 +8,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: setup rustfmt
+        uses: crusty-pie/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          components: rustfmt
       - name: setup rust
         uses: crusty-pie/toolchain@v1
         with:
+          toolchain: stable
           profile: minimal
           targets: wasm32-unknown-unknown
           components: clippy
@@ -20,7 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2.7.3
       - name: lint
         run: |
-          cargo clippy
+          cargo +stable clippy
+          cargo +nightly fmt --check
       - name: run tests and their coverage
         timeout-minutes: 10
         run: |

@@ -1,5 +1,6 @@
-use anyhow::{anyhow, Result};
 use std::thread::available_parallelism;
+
+use anyhow::{anyhow, Result};
 
 // this is based on benchmarking result on an i7-12700F desktop
 
@@ -46,10 +47,7 @@ pub fn calculate(
                 max_threads - TOKIO_MIN_THREADS
             ));
         } else {
-            return Ok(ThreadAllocation {
-                filter_threads: n,
-                tokio_threads: max_threads - n,
-            });
+            return Ok(ThreadAllocation { filter_threads: n, tokio_threads: max_threads - n });
         }
     }
 
@@ -66,16 +64,14 @@ pub fn calculate(
     };
     if filter_threads > (max_threads - TOKIO_MIN_THREADS) {
         return Err(anyhow!(
-          "too many directives ({}) and/or anticipated EPS ({}) for the available parallelism ({}), reduce the number of directives or max_eps and try again",
-          num_of_directives,
-          max_eps,
-          max_threads
+            "too many directives ({}) and/or anticipated EPS ({}) for the available parallelism ({}), reduce the \
+             number of directives or max_eps and try again",
+            num_of_directives,
+            max_eps,
+            max_threads
         ));
     }
-    Ok(ThreadAllocation {
-        filter_threads,
-        tokio_threads: max_threads - filter_threads,
-    })
+    Ok(ThreadAllocation { filter_threads, tokio_threads: max_threads - filter_threads })
 }
 
 #[cfg(test)]

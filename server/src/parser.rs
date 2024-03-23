@@ -47,11 +47,7 @@ pub fn targets_and_spawner_from_directives(
     directives: &[Directive],
     preload_directives: bool,
     opt: &ParserOpt,
-) -> (
-    Vec<FilterTarget>,
-    Spawner,
-    Option<mpsc::Sender<OnDemandIDMessage>>,
-) {
+) -> (Vec<FilterTarget>, Spawner, Option<mpsc::Sender<OnDemandIDMessage>>) {
     let mut targets = vec![];
     let mut id_tx = None;
     let mut b_managers = if preload_directives {
@@ -59,11 +55,7 @@ pub fn targets_and_spawner_from_directives(
     } else {
         let (tx, rx) = mpsc::channel::<OnDemandIDMessage>(DIRECTIVE_ID_CHAN_QUEUE_SIZE);
         id_tx = Some(tx);
-        let ondemand_opt = SpawnerOnDemandOption {
-            directives: directives.to_vec(),
-            id_rx: rx,
-            manager_option: None,
-        };
+        let ondemand_opt = SpawnerOnDemandOption { directives: directives.to_vec(), id_rx: rx, manager_option: None };
         Spawner::OnDemand(vec![], ondemand_opt)
     };
 
@@ -105,12 +97,7 @@ pub fn targets_and_spawner_from_directives(
 
         b_managers.insert(directive.id, manager_opt, rx);
 
-        FilterTarget::insert(
-            directive.id,
-            &directive.rules,
-            event_tx.clone(),
-            &mut targets,
-        );
+        FilterTarget::insert(directive.id, &directive.rules, event_tx.clone(), &mut targets);
     }
     (targets, b_managers, id_tx)
 }

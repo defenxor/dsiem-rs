@@ -1,9 +1,10 @@
+use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
+
 use anyhow::Result;
 use async_trait::async_trait;
 use glob::glob;
 use mini_moka::sync::Cache;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
 use tracing::{debug, info, instrument};
 
 use crate::utils;
@@ -63,11 +64,8 @@ impl VulnPlugin {
                 debug!("returning vuln result from cache for {}", ip);
                 v
             } else {
-                let v = tokio::time::timeout(
-                    Duration::from_secs(VULN_MAX_SECONDS),
-                    c.plugin.check_ip_port(ip, port),
-                )
-                .await??;
+                let v = tokio::time::timeout(Duration::from_secs(VULN_MAX_SECONDS), c.plugin.check_ip_port(ip, port))
+                    .await??;
                 debug!("obtained vuln result for {}", ip);
                 v
             };
@@ -106,20 +104,14 @@ pub fn load_vuln(test_env: bool, subdir: Option<Vec<String>>) -> Result<VulnPlug
         info!("loaded {} vuln plugins", len);
     }
 
-    let cache = Cache::builder()
-        // Time to live (TTL): 30 minutes
-        .time_to_live(Duration::from_secs(30 * 60))
-        // Time to idle (TTI):  5 minutes
-        .time_to_idle(Duration::from_secs(5 * 60))
-        // Create the cache.
-        .build();
+    // Time to live (TTL): 30 minutes
+    // Time to idle (TTI):  5 minutes
+
+    let cache =
+        Cache::builder().time_to_live(Duration::from_secs(30 * 60)).time_to_idle(Duration::from_secs(5 * 60)).build();
 
     checkers.shrink_to_fit();
-    let res = VulnPlugin {
-        vuln_sources: vulns,
-        checkers: Arc::new(checkers),
-        cache,
-    };
+    let res = VulnPlugin { vuln_sources: vulns, checkers: Arc::new(checkers), cache };
     Ok(res)
 }
 
@@ -148,11 +140,8 @@ mod test {
         let str_err = res.unwrap_err().to_string();
         assert!(str_err == "get request error" || str_err == "deadline has elapsed");
 
-        let mut server = mockito::Server::new_with_opts_async(mockito::ServerOpts {
-            port: 18082,
-            ..Default::default()
-        })
-        .await;
+        let mut server =
+            mockito::Server::new_with_opts_async(mockito::ServerOpts { port: 18082, ..Default::default() }).await;
         let _m1 = server
             .mock("GET", "/?ip=1.0.0.1&port=25")
             .with_status(200)
