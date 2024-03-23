@@ -491,12 +491,10 @@ mod test {
 
     use super::*;
 
-    fn pretty_literal_xd(s: &str) -> String {
-        s.replace(&" ".repeat(8), "").replace(&" ".repeat(4), "  ")
-    }
-
     #[test]
     fn test_serde() {
+        let pretty_literal_xd = |s: &str| -> String { s.replace(&" ".repeat(8), "").replace(&" ".repeat(4), "  ") };
+
         let mut r = DirectiveRule::default();
         let s = serde_json::to_string_pretty(&r).unwrap();
         let s_ref = pretty_literal_xd(
