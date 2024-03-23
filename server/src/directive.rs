@@ -41,6 +41,7 @@ pub struct Directives {
 impl Directive {
     pub fn init_backlog_rules(&self, e: &NormalizedEvent) -> Vec<DirectiveRule> {
         let mut result = vec![];
+
         for (i, rule) in self.rules.iter().enumerate() {
             // all arc fields must be reset
             let mut r = rule.clone().reset_arc_fields();
@@ -59,49 +60,52 @@ impl Directive {
                     }
                 }
                 // reference isn't allowed on first rule so we'll skip the rest
-            } else {
-                // for the rest, refer to the referenced stage if its not ANY or HOME_NET or
-                // !HOME_NET if the reference is ANY || HOME_NET || !HOME_NET
-                // then refer to event if its in the format of :refs
-                if let Ok(v) = utils::ref_to_digit(&r.from) {
-                    let vmin1 = usize::from(v - 1);
-                    let refs = &self.rules[vmin1].from;
-                    r.from = if refs != "ANY" && refs != "HOME_NET" && refs != "!HOME_NET" {
-                        refs.to_string()
-                    } else {
-                        e.src_ip.to_string()
-                    };
-                }
-                if let Ok(v) = utils::ref_to_digit(&r.to) {
-                    let refs = &self.rules[usize::from(v - 1)].to;
-                    r.to = if refs != "ANY" && refs != "HOME_NET" && refs != "!HOME_NET" {
-                        refs.to_string()
-                    } else {
-                        e.dst_ip.to_string()
-                    };
-                }
-                if let Ok(v) = utils::ref_to_digit(&r.port_from) {
-                    let refs = &self.rules[usize::from(v - 1)].port_from;
-                    r.port_from = if refs != "ANY" { refs.to_string() } else { e.src_port.to_string() };
-                }
-                if let Ok(v) = utils::ref_to_digit(&r.port_to) {
-                    let refs = &self.rules[usize::from(v - 1)].port_to;
-                    r.port_to = if refs != "ANY" { refs.to_string() } else { e.dst_port.to_string() };
-                }
+                result.push(r);
+                continue;
+            }
 
-                // references in custom data
-                if let Ok(v) = utils::ref_to_digit(&r.custom_data1) {
-                    let refs = &self.rules[usize::from(v - 1)].custom_data1;
-                    r.custom_data1 = if refs != "ANY" { refs.to_string() } else { e.custom_data1.clone() };
-                }
-                if let Ok(v) = utils::ref_to_digit(&r.custom_data2) {
-                    let refs = &self.rules[usize::from(v - 1)].custom_data2;
-                    r.custom_data2 = if refs != "ANY" { refs.to_string() } else { e.custom_data2.clone() };
-                }
-                if let Ok(v) = utils::ref_to_digit(&r.custom_data3) {
-                    let refs = &self.rules[usize::from(v - 1)].custom_data3;
-                    r.custom_data3 = if refs != "ANY" { refs.to_string() } else { e.custom_data3.clone() };
-                }
+            // for the rest, refer to the referenced stage if its not ANY or HOME_NET or
+            // !HOME_NET if the reference is ANY || HOME_NET || !HOME_NET
+            // then refer to event if its in the format of :refs
+
+            if let Ok(v) = utils::ref_to_digit(&r.from) {
+                let vmin1 = usize::from(v - 1);
+                let refs = &self.rules[vmin1].from;
+                r.from = if refs != "ANY" && refs != "HOME_NET" && refs != "!HOME_NET" {
+                    refs.to_string()
+                } else {
+                    e.src_ip.to_string()
+                };
+            }
+            if let Ok(v) = utils::ref_to_digit(&r.to) {
+                let refs = &self.rules[usize::from(v - 1)].to;
+                r.to = if refs != "ANY" && refs != "HOME_NET" && refs != "!HOME_NET" {
+                    refs.to_string()
+                } else {
+                    e.dst_ip.to_string()
+                };
+            }
+            if let Ok(v) = utils::ref_to_digit(&r.port_from) {
+                let refs = &self.rules[usize::from(v - 1)].port_from;
+                r.port_from = if refs != "ANY" { refs.to_string() } else { e.src_port.to_string() };
+            }
+            if let Ok(v) = utils::ref_to_digit(&r.port_to) {
+                let refs = &self.rules[usize::from(v - 1)].port_to;
+                r.port_to = if refs != "ANY" { refs.to_string() } else { e.dst_port.to_string() };
+            }
+
+            // references in custom data
+            if let Ok(v) = utils::ref_to_digit(&r.custom_data1) {
+                let refs = &self.rules[usize::from(v - 1)].custom_data1;
+                r.custom_data1 = if refs != "ANY" { refs.to_string() } else { e.custom_data1.clone() };
+            }
+            if let Ok(v) = utils::ref_to_digit(&r.custom_data2) {
+                let refs = &self.rules[usize::from(v - 1)].custom_data2;
+                r.custom_data2 = if refs != "ANY" { refs.to_string() } else { e.custom_data2.clone() };
+            }
+            if let Ok(v) = utils::ref_to_digit(&r.custom_data3) {
+                let refs = &self.rules[usize::from(v - 1)].custom_data3;
+                r.custom_data3 = if refs != "ANY" { refs.to_string() } else { e.custom_data3.clone() };
             }
             result.push(r);
         }
