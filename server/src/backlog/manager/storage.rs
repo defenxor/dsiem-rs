@@ -4,11 +4,13 @@ use tokio::{
     fs::{self, create_dir_all, read_to_string, OpenOptions},
     io::AsyncWriteExt,
 };
+
 use tracing::debug;
 
 use anyhow::Result;
 
-use crate::{backlog::Backlog, utils};
+use super::Backlog;
+use crate::utils;
 
 pub fn list(test_env: bool) -> Result<Vec<u64>> {
     let backlog_dir = utils::log_dir(test_env)?.join("backlogs");

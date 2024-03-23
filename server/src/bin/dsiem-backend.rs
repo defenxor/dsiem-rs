@@ -4,14 +4,13 @@ use anyhow::{anyhow, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
     asset::NetworkAssets,
+    backlog::manager::spawner::{self, LazyLoaderConfig},
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
-    config, directive,
-    event::NormalizedEvent,
+    config, directive, event::NormalizedEvent,
+    filter::{self, Filter},
     intel,
-    manager::{self, ManagerOpt},
-    tracer, vuln,
-    watchdog::{self, eps::Eps, WatchdogOpt, REPORT_INTERVAL_IN_SECONDS},
-    worker,
+    log_writer::LogWriter,
+    messenger, parser, tracer, vuln, watchdog
 };
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Notify};
@@ -319,13 +318,13 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     )
     .map_err(|e| log_startup_err("loading directives", e))?;
 
-    let eps = Arc::new(Eps::default());
+    let eps = Arc::new(watchdog::eps::Eps::default());
     let n = directives.len();
 
     let thread_allocation = validator::thread_allocation(n, sargs.max_eps, sargs.filter_threads)
         .map_err(|e| log_startup_err("allocating threads", e))?;
 
-    let (report_tx, report_rx) = mpsc::channel::<manager::ManagerReport>(n);
+    let (report_tx, report_rx) = mpsc::channel::<filter::ManagerReport>(n);
     let (resptime_tx, resptime_rx) = mpsc::channel::<f64>(n);
 
     let max_eps = sargs.max_eps;
@@ -340,13 +339,13 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         .map_err(|e| log_startup_err("building tokio runtime", e.into()))?;
 
     let _handle_watchdog = rt.spawn(async move {
-        let opt = WatchdogOpt {
+        let opt = watchdog::WatchdogOpt {
             event_tx: event_tx_clone,
             resptime_rx,
             report_rx,
             ttl_directives: n,
             cancel_tx: cancel_tx_clone,
-            report_interval: REPORT_INTERVAL_IN_SECONDS,
+            report_interval: watchdog::REPORT_INTERVAL_IN_SECONDS,
             max_eps,
             otel_config,
             eps: eps_clone,
@@ -377,7 +376,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let backend_tx = event_tx.clone();
 
     let _handle_worker = rt.spawn(async move {
-        let opt = worker::BackendOpt {
+        let opt = messenger::BackendOpt {
             event_tx: backend_tx,
             bp_rx,
             cancel_rx,
@@ -388,7 +387,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
             eps,
             waiter,
         };
-        let w = worker::Worker {};
+        let w = messenger::Worker {};
         w.backend_start(opt)
             .await
             .map_err(|e| anyhow!("worker error: {:?}", e))
@@ -406,17 +405,30 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
 
     let lazy_loader = match sargs.preload_directives {
         true => None,
-        false => Some(manager::LazyLoaderConfig::new(
+        false => Some(LazyLoaderConfig::new(
             n,
             (sargs.dir_idle_timeout * 60) as u64,
         )),
     };
 
-    let opt = ManagerOpt {
+    let mut log_writer = LogWriter::new(test_env)?;
+    let log_tx = log_writer.sender.clone();
+    let _ = thread::spawn(move || log_writer.listener());
+
+    let load_param = validator::load_param(sargs.max_queue, sargs.max_eps);
+
+    info!("backend started with max single event processing time: {} ms, queue limit: {} events, quick check threads: {}, backlog threads: {}, ttl directives: {}",
+        load_param.max_wait.as_millis(),
+        load_param.limit_cap,
+        thread_allocation.filter_threads,
+        thread_allocation.tokio_threads,
+        n
+    );
+
+    let opt = parser::ParserOpt {
         test_env,
         reload_backlogs: sargs.reload_backlogs,
-        lazy_loader,
-        directives,
+        lazy_loader: lazy_loader.clone(),
         assets,
         intels,
         vulns,
@@ -431,21 +443,43 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         default_tag: sargs.tags[0].clone(),
         intel_private_ip: sargs.intel_private_ip,
         report_tx,
-        max_eps,
-        max_queue,
-        thread_allocation,
-        tokio_handle: rt.handle().clone(),
-        notifier,
+        load_param: load_param.clone(),
+        log_tx,
     };
-    let manager = manager::Manager::new(opt).map_err(|e| log_startup_err("loading manager", e))?;
-    let handle_manager = thread::spawn(move || {
-        manager
-            .start(event_tx, REPORT_INTERVAL_IN_SECONDS)
-            .map_err(|e| anyhow!("manager error: {:?}", e))
+
+    let (filter_targets, manager_spawner, id_tx) =
+        parser::targets_and_spawner_from_directives(&directives, sargs.preload_directives, &opt);
+
+    // start manager spawner first before filter
+
+    let handle_manager = manager_spawner.run(rt.handle().clone())?;
+
+    // if preload_directives is false and reload_backlogs is true, we should instruct the spawner to load those backlog managers that have
+    // backlogs saved on disk
+
+    if !sargs.preload_directives && sargs.reload_backlogs {
+        if let Some(id_tx) = &id_tx {
+            spawner::load_with_spawner(test_env, id_tx.clone());
+        }
+    }
+
+    let filter = Filter::new(filter::FilterOpt {
+        lazy_loader,
+        thread_allocation,
+        cancel_tx,
+        notifier,
+    });
+
+    let id_tx_clone = id_tx.clone();
+    let handle_filter = thread::spawn(move || {
+        filter
+            .start(event_tx, filter_targets, id_tx_clone)
+            .map_err(|e| anyhow!("filter error: {:?}", e))
     });
 
     if listen {
-        if let Ok(Err(e)) = handle_manager.join() {
+        _ = handle_manager.join();
+        if let Ok(Err(e)) = handle_filter.join() {
             return Err(e);
         }
     } else {

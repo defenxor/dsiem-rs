@@ -466,7 +466,7 @@ pub struct TaxoPair {
 }
 
 // GetQuickCheckPairs returns SIDPairs and TaxoPairs for a given set of directive rules
-pub fn get_quick_check_pairs(rules: &Vec<DirectiveRule>) -> (Vec<SIDPair>, Vec<TaxoPair>) {
+pub fn get_quick_check_pairs(rules: &[DirectiveRule]) -> (Vec<SIDPair>, Vec<TaxoPair>) {
     let mut sid_pairs = vec![];
     let mut taxo_pairs = vec![];
     for r in rules {

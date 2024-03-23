@@ -174,17 +174,18 @@ impl Default for FoundChannel {
     }
 }
 
-pub struct BacklogOpt<'a> {
-    pub directive: &'a Directive,
+#[derive(Clone)]
+pub struct BacklogOpt {
+    pub directive: Directive,
     pub asset: Arc<NetworkAssets>,
     pub intels: Arc<IntelPlugin>,
     pub vulns: Arc<VulnPlugin>,
-    pub event: Option<&'a NormalizedEvent>,
+    pub event: Option<Arc<NormalizedEvent>>,
     pub bp_tx: Sender<()>,
-    pub delete_tx: Sender<()>,
+    pub delete_tx: Option<Sender<()>>, // allow late initialization
     pub min_alarm_lifetime: i64,
-    pub default_status: &'a str,
-    pub default_tag: &'a str,
+    pub default_status: String,
+    pub default_tag: String,
     pub med_risk_min: u8,
     pub med_risk_max: u8,
     pub intel_private_ip: bool,
@@ -192,7 +193,7 @@ pub struct BacklogOpt<'a> {
 }
 
 impl Backlog {
-    pub fn new(o: &BacklogOpt<'_>) -> Result<Self> {
+    pub fn new(o: &BacklogOpt) -> Result<Self> {
         let mut backlog = Backlog {
             id: utils::generate_id(),
             title: o.directive.name.clone(),
@@ -216,7 +217,7 @@ impl Backlog {
             state: Mutex::new(BacklogState::Created),
             ..Default::default()
         };
-        if let Some(v) = o.event {
+        if let Some(v) = &o.event {
             if backlog.title.contains("SRC_IP") {
                 let src: String = if let Ok(hostname) = backlog.assets.get_name(&v.src_ip) {
                     hostname
@@ -234,7 +235,7 @@ impl Backlog {
                 backlog.title = backlog.title.replace("DST_IP", &dst);
             }
 
-            backlog.rules = o.directive.init_backlog_rules(v);
+            backlog.rules = o.directive.init_backlog_rules(v.as_ref());
             backlog.highest_stage = backlog
                 .rules
                 .iter()
@@ -242,11 +243,15 @@ impl Backlog {
                 .max()
                 .unwrap_or_default();
         }
-        backlog.delete_channel.to_upstream_manager = Some(o.delete_tx.clone());
+        let delete_tx = o
+            .delete_tx
+            .as_ref()
+            .ok_or_else(|| anyhow!("delete_tx is none"))?;
+        backlog.delete_channel.to_upstream_manager = Some(delete_tx.clone());
         backlog.intels = Some(o.intels.clone());
         backlog.vulns = Some(o.vulns.clone());
 
-        if let Some(v) = o.event {
+        if let Some(v) = &o.event {
             info!(
                 directive.id = o.directive.id,
                 backlog.id,
@@ -258,7 +263,7 @@ impl Backlog {
     }
 
     // runable_version produces backlog that manager can start
-    pub fn runnable_version(o: BacklogOpt<'_>, loaded: Backlog) -> Result<Self> {
+    pub fn runnable_version(o: BacklogOpt, loaded: Backlog) -> Result<Self> {
         let mut backlog = Backlog::new(&o)?;
         // verify that we're still based on the same directive
         if backlog.title != loaded.title {
@@ -1074,16 +1079,16 @@ mod test {
             let (log_tx, _) = crossbeam_channel::bounded(1);
 
             BacklogOpt {
-                directive: &d,
+                directive: d.clone(),
                 asset,
                 intels,
                 vulns,
-                event: Some(&evt),
+                event: Some(Arc::new(evt.clone())),
                 bp_tx,
-                delete_tx: mgr_delete_tx,
+                delete_tx: Some(mgr_delete_tx),
                 min_alarm_lifetime: 0,
-                default_status: "Open",
-                default_tag: "Identified Threat",
+                default_status: "Open".to_string(),
+                default_tag: "Identified Threat".to_string(),
                 med_risk_min: 3,
                 med_risk_max: 6,
                 intel_private_ip: true,
@@ -1202,15 +1207,15 @@ mod test {
 
         let evt_cloned = evt.clone();
         let opt = BacklogOpt {
-            directive: &d,
+            directive: d.clone(),
             asset: asset.clone(),
             intels,
             vulns,
-            event: Some(&evt_cloned),
+            event: Some(Arc::new(evt_cloned.clone())),
             bp_tx,
-            delete_tx: mgr_delete_tx,
-            default_status: "Open",
-            default_tag: "Identified Threat",
+            delete_tx: Some(mgr_delete_tx),
+            default_status: "Open".to_string(),
+            default_tag: "Identified Threat".to_string(),
             min_alarm_lifetime: 0,
             med_risk_min: 3,
             med_risk_max: 6,
@@ -1314,15 +1319,15 @@ mod test {
 
         let evt_cloned = evt.clone();
         let opt = BacklogOpt {
-            directive: &d,
+            directive: d.clone(),
             asset,
             intels,
             vulns,
-            event: Some(&evt_cloned),
+            event: Some(Arc::new(evt_cloned.clone())),
             bp_tx,
-            delete_tx: mgr_delete_tx,
-            default_status: "Open",
-            default_tag: "Identified Threat",
+            delete_tx: Some(mgr_delete_tx),
+            default_status: "Open".to_string(),
+            default_tag: "Identified Threat".to_string(),
             min_alarm_lifetime: 0,
             med_risk_min: 3,
             med_risk_max: 5,
@@ -1421,15 +1426,15 @@ mod test {
 
         let _detached = task::spawn(async move {
             let opt = BacklogOpt {
-                directive: &d,
+                directive: d,
                 asset,
                 intels,
                 vulns,
-                event: Some(&evt),
+                event: Some(Arc::new(evt.clone())),
                 bp_tx,
-                delete_tx: mgr_delete_tx,
-                default_status: "Open",
-                default_tag: "Identified Threat",
+                delete_tx: Some(mgr_delete_tx),
+                default_status: "Open".to_string(),
+                default_tag: "Identified Threat".to_string(),
                 min_alarm_lifetime: 0,
                 med_risk_min: 3,
                 med_risk_max: 6,
