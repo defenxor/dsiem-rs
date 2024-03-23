@@ -488,7 +488,7 @@ impl Backlog {
 
     pub fn get_rule(&self, stage: Option<u8>) -> Result<&DirectiveRule> {
         let s = if let Some(v) = stage { v } else { self.current_stage.load(Relaxed) };
-        self.rules.iter().filter(|v| v.stage == s).last().ok_or_else(|| anyhow!("cannot locate the current rule"))
+        self.rules.iter().find(|v| v.stage == s).ok_or_else(|| anyhow!("cannot locate the current rule"))
     }
 
     fn report_to_manager(&self, match_found: bool) -> Result<()> {

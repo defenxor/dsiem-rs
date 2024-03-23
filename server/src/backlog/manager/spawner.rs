@@ -168,7 +168,7 @@ pub fn spawn_ondemand(
 
                         // ids contains all directives and never change, so this should always
                         // succeed
-                        let _ = ids.iter().filter(|i| i.id == id).take(1).last().map(|i| {
+                        let _ = ids.iter().find(|i| i.id == id).map(|i| {
                             let span = Span::current();
                             debug!(directive.id = id, "spawner creating new backlog manager");
 

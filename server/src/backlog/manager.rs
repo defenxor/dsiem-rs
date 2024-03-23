@@ -380,9 +380,7 @@ impl BacklogManager {
             .directive
             .rules
             .iter()
-            .filter(|v| v.stage == 1)
-            .take(1)
-            .last()
+            .find(|v| v.stage == 1)
             .ok_or_else(|| anyhow!("directive {} doesn't have first stage", self.id))?;
 
         if !first_rule.does_event_match(&self.option.backlog_option.asset, event, false) {
