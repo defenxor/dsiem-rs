@@ -12,20 +12,13 @@ use crate::utils;
 
 pub fn list(test_env: bool) -> Result<Vec<u64>> {
     let backlog_dir = utils::log_dir(test_env)?.join("backlogs");
-    let mut res = vec![];
-    let files = std::fs::read_dir(backlog_dir)?;
-    files
+    let ids = std::fs::read_dir(backlog_dir)?
         .filter_map(Result::ok)
-        .filter(|d| if let Some(e) = d.path().extension() { e == "json" } else { false })
-        .for_each(|f| {
-            if let Ok(v) = f.file_name().into_string() {
-                let s = v.replace(".json", "");
-                if let Ok(id) = s.parse::<u64>() {
-                    res.push(id);
-                }
-            }
-        });
-    Ok(res)
+        .filter(|d| d.path().extension().unwrap_or_default() == "json")
+        .filter_map(|d| d.file_name().into_string().ok().map(|v| v.replace(".json", "")))
+        .filter_map(|s| s.parse::<u64>().ok())
+        .collect::<Vec<u64>>();
+    Ok(ids)
 }
 
 pub async fn load(test_env: bool, directive_id: u64) -> Result<Vec<Backlog>> {
