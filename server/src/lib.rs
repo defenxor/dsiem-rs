@@ -21,8 +21,9 @@ pub mod eps_limiter;
 pub mod server;
 
 // lib's internal
-mod allocator;
 mod meter;
 mod utils;
 // benchmark access
 pub mod rule;
+// integration test access
+pub mod allocator;

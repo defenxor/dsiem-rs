@@ -5,8 +5,10 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use crate::{
     asset::NetworkAssets,
     backlog::{
-        loader::{LazyLoaderConfig, ManagerLoader, SpawnerOnDemandOption},
-        manager::{ManagerOpt, ManagerReport, OpLoadParameter},
+        manager::{
+            spawner::{LazyLoaderConfig, Spawner, SpawnerOnDemandOption},
+            ManagerOpt, ManagerReport, OpLoadParameter,
+        },
         BacklogOpt,
     },
     directive::Directive,
@@ -41,19 +43,19 @@ pub struct ParserOpt {
     pub load_param: OpLoadParameter,
 }
 
-pub fn targets_and_loader_from_directives(
+pub fn targets_and_spawner_from_directives(
     directives: &[Directive],
     preload_directives: bool,
     opt: &ParserOpt,
 ) -> (
     Vec<FilterTarget>,
-    ManagerLoader,
+    Spawner,
     Option<mpsc::Sender<OnDemandIDMessage>>,
 ) {
     let mut targets = vec![];
     let mut id_tx = None;
     let mut b_managers = if preload_directives {
-        ManagerLoader::All(vec![])
+        Spawner::All(vec![])
     } else {
         let (tx, rx) = mpsc::channel::<OnDemandIDMessage>(DIRECTIVE_ID_CHAN_QUEUE_SIZE);
         id_tx = Some(tx);
@@ -62,11 +64,12 @@ pub fn targets_and_loader_from_directives(
             id_rx: rx,
             manager_option: None,
         };
-        ManagerLoader::OnDemand(vec![], ondemand_opt)
+        Spawner::OnDemand(vec![], ondemand_opt)
     };
 
     for directive in directives.iter() {
-        // this is a one-to-one channel between manager filter thread and backlog managers
+        // this is a one-to-one channel between manager filter thread and backlog
+        // managers
         let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(opt.load_param.limit_cap);
 
         let rx = Arc::new(Mutex::new(event_rx));

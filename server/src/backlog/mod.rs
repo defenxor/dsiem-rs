@@ -28,7 +28,6 @@ use tokio::{
 };
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-pub mod loader;
 pub mod manager;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]

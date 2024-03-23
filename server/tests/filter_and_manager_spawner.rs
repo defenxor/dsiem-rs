@@ -1,10 +1,13 @@
 use std::{sync::Arc, thread, time::Duration};
 
-use backlog::loader::LazyLoaderConfig;
+use backlog::manager;
 use dsiem::{
     allocator::ThreadAllocation,
     asset::NetworkAssets,
-    backlog::{self, loader, manager::QueueMode},
+    backlog::{
+        self,
+        manager::{spawner::LazyLoaderConfig, QueueMode},
+    },
     directive::{self, Directive},
     event::NormalizedEvent,
     filter::{self, Filter, FilterOpt, ManagerReport},
@@ -98,7 +101,7 @@ async fn run_manager(
 
     let preload_directives = lazy_loader.is_none();
 
-    let (targets, loader, id_tx) = parser::targets_and_loader_from_directives(
+    let (targets, loader, id_tx) = parser::targets_and_spawner_from_directives(
         &directives,
         preload_directives,
         &get_parser_opt(
@@ -117,7 +120,7 @@ async fn run_manager(
 
         if !preload_directives && reload_backlogs {
             if let Some(id_tx) = &id_tx {
-                loader::load_with_spawner(true, id_tx.clone());
+                manager::spawner::load_with_spawner(true, id_tx.clone());
             }
         }
 

@@ -4,14 +4,13 @@ use anyhow::{anyhow, Result};
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
     asset::NetworkAssets,
-    backlog::loader::{self, LazyLoaderConfig},
+    backlog::manager::spawner::{self, LazyLoaderConfig},
     cmd_utils::{ctrlc_handler, log_startup_err, Validator as validator},
-    config, directive,
-    event::NormalizedEvent,
+    config, directive, event::NormalizedEvent,
     filter::{self, Filter},
     intel,
     log_writer::LogWriter,
-    messenger, parser, tracer, vuln, watchdog,
+    messenger, parser, tracer, vuln, watchdog
 };
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Notify};
@@ -448,19 +447,19 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         log_tx,
     };
 
-    let (filter_targets, manager_loader, id_tx) =
-        parser::targets_and_loader_from_directives(&directives, sargs.preload_directives, &opt);
+    let (filter_targets, manager_spawner, id_tx) =
+        parser::targets_and_spawner_from_directives(&directives, sargs.preload_directives, &opt);
 
-    // start manager loader first before filter
+    // start manager spawner first before filter
 
-    let handle_manager = manager_loader.run(rt.handle().clone())?;
+    let handle_manager = manager_spawner.run(rt.handle().clone())?;
 
-    // if preload_directives is false and reload_backlogs is true, we should instruct the loader to spawn those backlog managers that have
+    // if preload_directives is false and reload_backlogs is true, we should instruct the spawner to load those backlog managers that have
     // backlogs saved on disk
 
     if !sargs.preload_directives && sargs.reload_backlogs {
         if let Some(id_tx) = &id_tx {
-            loader::load_with_spawner(test_env, id_tx.clone());
+            spawner::load_with_spawner(test_env, id_tx.clone());
         }
     }
 

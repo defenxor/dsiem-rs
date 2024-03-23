@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn, Instrument, Span};
 
 use crate::{directive::Directive, event::NormalizedEvent};
 
-use super::manager::{BacklogManager, ManagerOpt, storage};
+use super::{BacklogManager, ManagerOpt, storage};
 use anyhow::{Result, anyhow};
 
 #[derive(Clone)]
@@ -42,15 +42,21 @@ pub struct BacklogManagerId {
     pub upstream_rx: Arc<Mutex<mpsc::Receiver<NormalizedEvent>>>,
 }
 
-pub enum ManagerLoader {
+pub struct SpawnerOnDemandOption {
+    pub directives: Vec<Directive>,
+    pub id_rx: mpsc::Receiver<(u64, oneshot::Sender<()>)>,
+    pub manager_option: Option<ManagerOpt>,
+}
+
+pub enum Spawner {
     OnDemand(Vec<Arc<BacklogManagerId>>, SpawnerOnDemandOption),
     All(Vec<BacklogManager>),
 }
 
-impl ManagerLoader {
+impl Spawner {
     pub fn insert(&mut self, id: u64, manager_opt: ManagerOpt, upstream_rx: Arc<Mutex<mpsc::Receiver<NormalizedEvent>>>) {
         match self {
-            ManagerLoader::OnDemand(ref mut b, ondemand_opt) => {
+            Spawner::OnDemand(ref mut b, ondemand_opt) => {
                 b.push(Arc::new(BacklogManagerId {
                     id,
                     upstream_rx,
@@ -59,7 +65,7 @@ impl ManagerLoader {
                     ondemand_opt.manager_option = Some(manager_opt);
                 };
             }
-            ManagerLoader::All(ref mut b) => {
+            Spawner::All(ref mut b) => {
                 let m = BacklogManager::new(
                     manager_opt, upstream_rx
                 );
@@ -70,11 +76,11 @@ impl ManagerLoader {
     
     pub fn run(self, rt: tokio::runtime::Handle) -> Result<thread::JoinHandle<()>> {
         match self {
-            ManagerLoader::OnDemand(b, ondemand_opt) => {
-                spawner_ondemand(b, ondemand_opt, rt)
+            Spawner::OnDemand(b, ondemand_opt) => {
+                spawn_ondemand(b, ondemand_opt, rt)
             }
-            ManagerLoader::All(ref b) => {
-                spawner(b.to_vec(), rt)
+            Spawner::All(ref b) => {
+                spawn_all(b.to_vec(), rt)
             }
         }
     }
@@ -102,7 +108,7 @@ pub fn load_with_spawner(test_env: bool, id_tx: mpsc::Sender<(u64, oneshot::Send
     }
 }
 
-fn spawner(dir_managers: Vec<BacklogManager>, rt: tokio::runtime::Handle) -> Result<thread::JoinHandle<()>> {
+fn spawn_all(dir_managers: Vec<BacklogManager>, rt: tokio::runtime::Handle) -> Result<thread::JoinHandle<()>> {
 
     let span = Span::current();
     let h = thread::spawn(move || {
@@ -131,13 +137,7 @@ fn spawner(dir_managers: Vec<BacklogManager>, rt: tokio::runtime::Handle) -> Res
     Ok(h)
 }
 
-pub struct SpawnerOnDemandOption {
-    pub directives: Vec<Directive>,
-    pub id_rx: mpsc::Receiver<(u64, oneshot::Sender<()>)>,
-    pub manager_option: Option<ManagerOpt>,
-}
-
-pub fn spawner_ondemand (
+pub fn spawn_ondemand (
     ids: Vec<Arc<BacklogManagerId>>,
     opt: SpawnerOnDemandOption,
     rt: tokio::runtime::Handle,

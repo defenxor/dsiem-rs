@@ -10,7 +10,7 @@ use tracing::{debug, error, info, info_span, trace, warn, Span};
 
 use crate::{
     allocator::ThreadAllocation,
-    backlog::loader::LazyLoaderConfig,
+    backlog::manager::spawner::LazyLoaderConfig,
     event::NormalizedEvent,
     rule::{self, DirectiveRule},
     tracer,

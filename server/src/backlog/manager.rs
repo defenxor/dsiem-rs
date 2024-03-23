@@ -11,12 +11,14 @@ use anyhow::{anyhow, Result};
 
 use crate::{event::NormalizedEvent, tracer, watchdog::REPORT_INTERVAL_IN_SECONDS};
 
-use super::loader::LazyLoaderConfig;
 use super::{Backlog, BacklogOpt, BacklogState};
+
+use spawner::LazyLoaderConfig;
 
 const BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE: usize = 64;
 
 pub(super) mod storage;
+pub mod spawner;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ManagerReport {
