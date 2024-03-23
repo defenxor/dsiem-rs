@@ -214,13 +214,19 @@ impl Backlog {
         };
         if let Some(v) = &o.event {
             if backlog.title.contains("SRC_IP") {
-                let src: String =
-                    if let Ok(hostname) = backlog.assets.get_name(&v.src_ip) { hostname } else { v.src_ip.to_string() };
+                let src = if let Some(hostname) = backlog.assets.get_name(&v.src_ip) {
+                    hostname
+                } else {
+                    v.src_ip.to_string()
+                };
                 backlog.title = backlog.title.replace("SRC_IP", &src);
             }
             if backlog.title.contains("DST_IP") {
-                let dst: String =
-                    if let Ok(hostname) = backlog.assets.get_name(&v.dst_ip) { hostname } else { v.dst_ip.to_string() };
+                let dst = if let Some(hostname) = backlog.assets.get_name(&v.dst_ip) {
+                    hostname
+                } else {
+                    v.dst_ip.to_string()
+                };
                 backlog.title = backlog.title.replace("DST_IP", &dst);
             }
 

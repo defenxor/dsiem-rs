@@ -65,21 +65,13 @@ impl NetworkAssets {
         result.assets.shrink_to_fit();
         Ok(result)
     }
+
     pub fn is_in_homenet(&self, ip: &IpAddr) -> bool {
-        for net in &self.home_net {
-            if net.contains(ip) {
-                return true;
-            }
-        }
-        false
+        self.home_net.iter().any(|n| n.contains(ip))
     }
+
     pub fn is_whitelisted(&self, ip: &IpAddr) -> bool {
-        for net in &self.whitelist {
-            if net.contains(ip) {
-                return true;
-            }
-        }
-        false
+        self.whitelist.iter().any(|n| n.contains(ip))
     }
 
     pub fn get_value(&self, ip: &IpAddr) -> u8 {
@@ -99,19 +91,8 @@ impl NetworkAssets {
         }
     }
 
-    pub fn get_name(&self, ip: &IpAddr) -> Result<String> {
-        let asset = self
-            .assets
-            .clone()
-            .into_iter()
-            .filter(|n| n.cidr.contains(ip))
-            .filter(|n| n.cidr.is_host_address())
-            .take(1)
-            .collect::<Vec<NetworkAsset>>();
-        if asset.is_empty() {
-            return Err(anyhow!("cannot get the asset name for {}", ip));
-        }
-        Ok(asset[0].name.clone())
+    pub fn get_name(&self, ip: &IpAddr) -> Option<String> {
+        self.assets.iter().filter(|n| n.cidr.contains(ip)).find(|n| n.cidr.is_host_address()).map(|x| x.name.clone())
     }
 }
 
@@ -148,11 +129,9 @@ mod test {
         let ip3: IpAddr = "8.8.8.8".parse().unwrap();
         let name = assets.get_name(&ip3);
         let networks = assets.get_asset_networks(&ip3);
+        println!("networks: {:?}", networks);
         assert!(networks.is_none());
-        assert!(name.is_err());
-        if let Err(e) = name {
-            assert_eq!(e.to_string(), "cannot get the asset name for 8.8.8.8");
-        }
+        assert!(name.is_none());
         assert!(!assets.is_in_homenet(&ip3));
         assert!(!assets.is_whitelisted(&ip3));
 
