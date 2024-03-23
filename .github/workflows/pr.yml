@@ -8,13 +8,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: setup rust
+      - name: setup rustfmt
         uses: crusty-pie/toolchain@v1
         with:
           toolchain: nightly
           profile: minimal
+          components: rustfmt
+      - name: setup rust
+        uses: crusty-pie/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
           targets: wasm32-unknown-unknown
-          components: clippy, rustfmt
+          components: clippy
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov, nextest
