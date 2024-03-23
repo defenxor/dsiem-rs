@@ -3,11 +3,10 @@
 pub mod alarm;
 pub mod home;
 
-use yew::prelude::*;
-use yew_router::prelude::*;
-
 use alarm::AlarmDetail;
 use home::Home;
+use yew::prelude::*;
+use yew_router::prelude::*;
 
 use crate::components::{footer::Footer, header::Header};
 

@@ -1,14 +1,12 @@
 // use this to evaluate potential optimizations
 
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dsiem::{
     event::NormalizedEvent,
     rule::{quick_check_plugin_rule, quick_check_taxo_rule, SIDPair, TaxoPair},
 };
-use rayon::prelude::*;
-
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-
 use quick_cache::unsync::Cache;
+use rayon::prelude::*;
 
 mod generator;
 
@@ -21,10 +19,8 @@ pub fn quick_check_plugin_rule_with_cache(
     if cache.get(&(e.plugin_id, e.plugin_sid)).is_some() {
         return true;
     };
-    let found = pairs
-        .iter()
-        .filter(|v| v.plugin_id == e.plugin_id)
-        .any(|v| v.plugin_sid.iter().any(|s| *s == e.plugin_sid));
+    let found =
+        pairs.iter().filter(|v| v.plugin_id == e.plugin_id).any(|v| v.plugin_sid.iter().any(|s| *s == e.plugin_sid));
     if found {
         cache.insert((e.plugin_id, e.plugin_sid), ());
     };
@@ -33,22 +29,12 @@ pub fn quick_check_plugin_rule_with_cache(
 
 #[inline(always)]
 pub fn quick_check_plugin_rule_with_rayon(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
-    pairs
-        .par_iter()
-        .filter(|v| v.plugin_id == e.plugin_id)
-        .any(|v| v.plugin_sid.iter().any(|x| *x == e.plugin_sid))
+    pairs.par_iter().filter(|v| v.plugin_id == e.plugin_id).any(|v| v.plugin_sid.iter().any(|x| *x == e.plugin_sid))
 }
 
 fn bench_quick_check_plugin_rule(c: &mut Criterion) {
-    let correct_pair = SIDPair {
-        plugin_id: 1,
-        plugin_sid: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    };
-    let event = NormalizedEvent {
-        plugin_id: 1,
-        plugin_sid: 9,
-        ..Default::default()
-    };
+    let correct_pair = SIDPair { plugin_id: 1, plugin_sid: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10] };
+    let event = NormalizedEvent { plugin_id: 1, plugin_sid: 9, ..Default::default() };
 
     let mut cache: Cache<(u64, u64), ()> = Cache::new(1024);
 
@@ -64,13 +50,7 @@ fn bench_quick_check_plugin_rule(c: &mut Criterion) {
         b.iter(|| quick_check_plugin_rule(black_box(&sid_pairs), black_box(&event)))
     });
     c.bench_function("qc_plugin_rule_with_cache", |b| {
-        b.iter(|| {
-            quick_check_plugin_rule_with_cache(
-                black_box(&mut cache),
-                black_box(&sid_pairs),
-                black_box(&event),
-            )
-        })
+        b.iter(|| quick_check_plugin_rule_with_cache(black_box(&mut cache), black_box(&sid_pairs), black_box(&event)))
     });
     c.bench_function("qc_plugin_rule_with_rayon", |b| {
         b.iter(|| quick_check_plugin_rule_with_rayon(black_box(&sid_pairs), black_box(&event)))
@@ -79,17 +59,12 @@ fn bench_quick_check_plugin_rule(c: &mut Criterion) {
 
 #[inline(always)]
 pub fn quick_check_taxo_rule_with_rayon(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
-    pairs
-        .par_iter()
-        .filter(|v| v.product.iter().any(|x| *x == e.product))
-        .any(|v| v.category == e.category)
+    pairs.par_iter().filter(|v| v.product.iter().any(|x| *x == e.product)).any(|v| v.category == e.category)
 }
 
 fn bench_quick_check_taxo_rule(c: &mut Criterion) {
-    let correct_pair = TaxoPair {
-        product: vec!["Suricata".to_string(), "Snort".to_string()],
-        category: "Firewall".to_string(),
-    };
+    let correct_pair =
+        TaxoPair { product: vec!["Suricata".to_string(), "Snort".to_string()], category: "Firewall".to_string() };
     let event = NormalizedEvent {
         product: correct_pair.product[1].clone(),
         category: correct_pair.category.clone(),

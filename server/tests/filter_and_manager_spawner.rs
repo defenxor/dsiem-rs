@@ -69,17 +69,11 @@ fn get_parser_opt(
     }
 }
 
-fn get_filter_opt(
-    cancel_tx: broadcast::Sender<()>,
-    lazy_loader: Option<LazyLoaderConfig>,
-) -> FilterOpt {
+fn get_filter_opt(cancel_tx: broadcast::Sender<()>, lazy_loader: Option<LazyLoaderConfig>) -> FilterOpt {
     let notifier = Notify::new();
     FilterOpt {
         lazy_loader,
-        thread_allocation: ThreadAllocation {
-            filter_threads: 1,
-            tokio_threads: 1,
-        },
+        thread_allocation: ThreadAllocation { filter_threads: 1, tokio_threads: 1 },
         notifier: Arc::new(notifier),
         cancel_tx,
     }
@@ -104,13 +98,7 @@ async fn run_manager(
     let (targets, loader, id_tx) = parser::targets_and_spawner_from_directives(
         &directives,
         preload_directives,
-        &get_parser_opt(
-            cancel_tx.clone(),
-            report_tx.clone(),
-            reload_backlogs,
-            lazy_loader,
-            log_tx,
-        ),
+        &get_parser_opt(cancel_tx.clone(), report_tx.clone(), reload_backlogs, lazy_loader, log_tx),
     );
     task::spawn_blocking(move || {
         let _ = thread::spawn(move || log_writer.listener());
@@ -134,11 +122,8 @@ async fn run_manager(
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 #[traced_test]
 async fn test_filter_and_loader_preload_dirs() {
-    let directives = directive::load_directives(
-        true,
-        Some(vec!["directives".to_string(), "directive5".to_string()]),
-    )
-    .unwrap();
+    let directives =
+        directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
     let (cancel_tx, _) = broadcast::channel::<()>(1);
     let (report_tx, mut report_rx) = mpsc::channel::<filter::ManagerReport>(directives.len());
 
@@ -146,18 +131,8 @@ async fn test_filter_and_loader_preload_dirs() {
     let _report_receiver = task::spawn(
         async move {
             // test comparing report
-            let rpt1 = ManagerReport {
-                id: 1,
-                active_backlogs: 1,
-                timedout_backlogs: 0,
-                matched_events: 0,
-            };
-            let mut rpt2 = ManagerReport {
-                id: 1,
-                active_backlogs: 1,
-                timedout_backlogs: 0,
-                matched_events: 0,
-            };
+            let rpt1 = ManagerReport { id: 1, active_backlogs: 1, timedout_backlogs: 0, matched_events: 0 };
+            let mut rpt2 = ManagerReport { id: 1, active_backlogs: 1, timedout_backlogs: 0, matched_events: 0 };
             assert!(rpt1 == rpt2);
             rpt2.active_backlogs = 2;
             assert!(rpt1 != rpt2);
@@ -170,15 +145,8 @@ async fn test_filter_and_loader_preload_dirs() {
 
     let (event_tx, _) = broadcast::channel(1024);
 
-    let manager_handle = run_manager(
-        directives.clone(),
-        event_tx.clone(),
-        cancel_tx.clone(),
-        report_tx.clone(),
-        false,
-        None,
-    )
-    .await;
+    let manager_handle =
+        run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, None).await;
 
     let mut evt = NormalizedEvent {
         id: "0a".to_string(),
@@ -219,9 +187,7 @@ async fn test_filter_and_loader_preload_dirs() {
     event_tx.send(evt.clone()).unwrap();
     sleep(Duration::from_millis(1000)).await;
     assert!(logs_contain("event sent downstream"));
-    assert!(logs_contain(
-        "found existing backlog that consumes the event"
-    ));
+    assert!(logs_contain("found existing backlog that consumes the event"));
 
     // matched event 3 to 5
     evt.id = "3".to_string();
@@ -257,11 +223,8 @@ async fn test_filter_and_loader_preload_dirs() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 #[traced_test]
 async fn test_filter_and_loader_no_preload_dirs() {
-    let directives = directive::load_directives(
-        true,
-        Some(vec!["directives".to_string(), "directive5".to_string()]),
-    )
-    .unwrap();
+    let directives =
+        directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
     let (cancel_tx, _) = broadcast::channel::<()>(1);
     let (report_tx, mut report_rx) = mpsc::channel::<filter::ManagerReport>(directives.len());
 
@@ -277,21 +240,14 @@ async fn test_filter_and_loader_no_preload_dirs() {
 
     let (event_tx, _) = broadcast::channel(1024);
 
-    let l = LazyLoaderConfig::new(directives.len(), 100)
-        .with_dirs_idle_timeout_checker_interval_sec(10);
+    let l = LazyLoaderConfig::new(directives.len(), 100).with_dirs_idle_timeout_checker_interval_sec(10);
 
     // this function should be the only location where reload_backlogs is true,
     // otherwise we risk having multiple tests trying to save/load/delete from disk
 
-    let manager_handle = run_manager(
-        directives.clone(),
-        event_tx.clone(),
-        cancel_tx.clone(),
-        report_tx.clone(),
-        true,
-        Some(l.clone()),
-    )
-    .await;
+    let manager_handle =
+        run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, Some(l.clone()))
+            .await;
 
     let mut evt = NormalizedEvent {
         id: "0a".to_string(),
@@ -333,9 +289,7 @@ async fn test_filter_and_loader_no_preload_dirs() {
     event_tx.send(evt.clone()).unwrap();
     sleep(Duration::from_millis(1000)).await;
     assert!(logs_contain("event sent downstream"));
-    assert!(logs_contain(
-        "found existing backlog that consumes the event"
-    ));
+    assert!(logs_contain("found existing backlog that consumes the event"));
 
     // matched event 3 to 5
     evt.id = "3".to_string();
@@ -375,25 +329,14 @@ async fn test_filter_and_loader_no_preload_dirs() {
     debug!("now will restart to simulate reloading saved backlogs");
 
     let (event_tx, _) = broadcast::channel::<NormalizedEvent>(1);
-    let manager_handle = run_manager(
-        directives.clone(),
-        event_tx.clone(),
-        cancel_tx.clone(),
-        report_tx.clone(),
-        true,
-        Some(l),
-    )
-    .await;
+    let manager_handle =
+        run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, Some(l)).await;
 
     sleep(Duration::from_millis(2000)).await;
 
-    assert!(logs_contain(
-        "found 1 saved backlogs, instructing spawner to activate"
-    ));
+    assert!(logs_contain("found 1 saved backlogs, instructing spawner to activate"));
     sleep(Duration::from_millis(1000)).await;
-    assert!(logs_contain(
-        "spawner received directive ID from filter directive.id=1"
-    ));
+    assert!(logs_contain("spawner received directive ID from filter directive.id=1"));
 
     _ = cancel_tx.send(());
     drop(event_tx);
@@ -432,11 +375,8 @@ async fn test_filter_and_loader_no_preload_dirs() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 #[traced_test]
 async fn test_filter_and_loader_directives_timeout() {
-    let directives = directive::load_directives(
-        true,
-        Some(vec!["directives".to_string(), "directive5".to_string()]),
-    )
-    .unwrap();
+    let directives =
+        directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
     let (cancel_tx, _) = broadcast::channel::<()>(1);
     let (report_tx, mut report_rx) = mpsc::channel::<filter::ManagerReport>(directives.len());
 
@@ -452,18 +392,11 @@ async fn test_filter_and_loader_directives_timeout() {
 
     let (event_tx, _) = broadcast::channel(1024);
 
-    let loader =
-        LazyLoaderConfig::new(directives.len(), 3).with_dirs_idle_timeout_checker_interval_sec(1);
+    let loader = LazyLoaderConfig::new(directives.len(), 3).with_dirs_idle_timeout_checker_interval_sec(1);
 
-    let manager_handle = run_manager(
-        directives.clone(),
-        event_tx.clone(),
-        cancel_tx.clone(),
-        report_tx.clone(),
-        false,
-        Some(loader),
-    )
-    .await;
+    let manager_handle =
+        run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, Some(loader))
+            .await;
 
     let mut evt = NormalizedEvent {
         id: "0a".to_string(),
@@ -493,18 +426,14 @@ async fn test_filter_and_loader_directives_timeout() {
 
     // backlog should've expired, also the idle timeout of 3 secs after that
     sleep(Duration::from_secs(15)).await;
-    assert!(logs_contain(
-        "idle timeout reached, exiting backlog manager"
-    ));
+    assert!(logs_contain("idle timeout reached, exiting backlog manager"));
 
     // sending another event should instantiate a new backlog manager
     evt.id = "10".to_string();
     event_tx.send(evt).unwrap();
     sleep(Duration::from_millis(5000)).await;
 
-    assert!(logs_contain(
-        "backlog::manager: received event directive.id=1 event.id=\"10\""
-    ));
+    assert!(logs_contain("backlog::manager: received event directive.id=1 event.id=\"10\""));
 
     // teardown
     _ = cancel_tx.send(());

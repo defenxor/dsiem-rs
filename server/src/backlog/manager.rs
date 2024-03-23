@@ -1,5 +1,7 @@
 use std::{io, sync::Arc, time::Duration};
 
+use anyhow::{anyhow, Result};
+use spawner::LazyLoaderConfig;
 use tokio::{
     sync::{broadcast, mpsc, oneshot, Mutex, RwLock},
     task,
@@ -7,18 +9,13 @@ use tokio::{
 };
 use tracing::{debug, error, info, info_span};
 
-use anyhow::{anyhow, Result};
-
-use crate::{event::NormalizedEvent, tracer, watchdog::REPORT_INTERVAL_IN_SECONDS};
-
 use super::{Backlog, BacklogOpt, BacklogState};
-
-use spawner::LazyLoaderConfig;
+use crate::{event::NormalizedEvent, tracer, watchdog::REPORT_INTERVAL_IN_SECONDS};
 
 const BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE: usize = 64;
 
-pub(super) mod storage;
 pub mod spawner;
+pub(super) mod storage;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ManagerReport {
@@ -66,13 +63,12 @@ pub struct BacklogManager {
 }
 
 impl BacklogManager {
-    pub fn new(
-        option: ManagerOpt,
-        upstream_rx: Arc<Mutex<mpsc::Receiver<NormalizedEvent>>>,
-    ) -> BacklogManager {
-        // this channel is a one-to-many channel between backlog manager and its backlogs
-        // there's no need for large capacity since there's already a configurable queue in upstream
-        // the size of this channel also linearly affects the number of directives that can be load given the same memory resources
+    pub fn new(option: ManagerOpt, upstream_rx: Arc<Mutex<mpsc::Receiver<NormalizedEvent>>>) -> BacklogManager {
+        // this channel is a one-to-many channel between backlog manager and its
+        // backlogs there's no need for large capacity since there's already a
+        // configurable queue in upstream the size of this channel also linearly
+        // affects the number of directives that can be load given the same memory
+        // resources
 
         let (downstream_tx, _) = broadcast::channel(BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE);
         let (delete_tx, delete_rx) = mpsc::channel::<()>(128);
@@ -97,10 +93,7 @@ impl BacklogManager {
         task::spawn(async move {
             info!(directive.id = dir_id, backlog.id, "starting backlog");
             if let Err(e) = backlog.start(rx, evt, resptime_tx, max_delay).await {
-                error!(
-                    directive.id = dir_id,
-                    backlog.id, "backlog exited with an error: {}", e
-                )
+                error!(directive.id = dir_id, backlog.id, "backlog exited with an error: {}", e)
             }
         });
     }
@@ -129,12 +122,7 @@ impl BacklogManager {
                     let res = Backlog::runnable_version(opt, b);
                     match res {
                         Err(e) => {
-                            error!(
-                                directive.id = self.id,
-                                backlog.id = id,
-                                "cannot recreate backlog: {}",
-                                e
-                            );
+                            error!(directive.id = self.id, backlog.id = id, "cannot recreate backlog: {}", e);
                         }
                         Ok(b) => {
                             let arced = Arc::new(b);
@@ -151,16 +139,13 @@ impl BacklogManager {
     }
 
     fn get_backlog_opt(&self) -> BacklogOpt {
-        BacklogOpt {
-            event: None,
-            delete_tx: Some(self.delete_tx.clone()),
-            ..self.option.backlog_option.clone()
-        }
+        BacklogOpt { event: None, delete_tx: Some(self.delete_tx.clone()), ..self.option.backlog_option.clone() }
     }
 
     pub async fn start(&self, ready_tx: oneshot::Sender<()>) -> Result<()> {
         // lock the rx channel asap
-        // if this fails, it means another instance is already running and we should abort
+        // if this fails, it means another instance is already running and we should
+        // abort
         let mut upstream_rx = self.upstream_rx.try_lock().map_err(|e| {
             error!(
                 directive.id = self.id,
@@ -175,12 +160,7 @@ impl BacklogManager {
         let report_sender = self.option.report_tx.clone();
         let mut report = interval(Duration::from_secs(REPORT_INTERVAL_IN_SECONDS));
 
-        let mut mgr_report = ManagerReport {
-            id: self.id,
-            active_backlogs: 0,
-            timedout_backlogs: 0,
-            matched_events: 0,
-        };
+        let mut mgr_report = ManagerReport { id: self.id, active_backlogs: 0, timedout_backlogs: 0, matched_events: 0 };
         let mut prev_matched_events = mgr_report.matched_events;
 
         let clean_deleted = || async {
@@ -202,20 +182,15 @@ impl BacklogManager {
 
         let mut delete_rx = self.delete_rx.lock().await;
 
-        // if the option is set, activate idle_timer to exit the manager thread when there's no backlog after the specified minutes
+        // if the option is set, activate idle_timer to exit the manager thread when
+        // there's no backlog after the specified minutes
         let (mut checker, mut idle_timeout) = if let Some(reg) = self.option.lazy_loader.as_ref() {
-            debug!(
-                directive.id = self.id,
-                "setting timers for idle timer checks"
-            );
+            debug!(directive.id = self.id, "setting timers for idle timer checks");
             reg.cache.insert(self.id, ());
             let tm = reg.get_idle_timeout();
             (
                 interval(Duration::from_secs(reg.get_idle_timeout_checker_interval())),
-                interval_at(
-                    Instant::now() + Duration::from_secs(tm),
-                    Duration::from_secs(tm),
-                ),
+                interval_at(Instant::now() + Duration::from_secs(tm), Duration::from_secs(tm)),
             )
         } else {
             (
@@ -227,9 +202,7 @@ impl BacklogManager {
 
         // notify only after cache entry is inserted
         debug!("notifying spawner that backlog manager is ready");
-        ready_tx
-            .send(())
-            .map_err(|e| anyhow!("cannot send ready signal: {:?}", e))?;
+        ready_tx.send(()).map_err(|e| anyhow!("cannot send ready signal: {:?}", e))?;
 
         debug!(directive.id = self.id, "listening for event");
 
@@ -277,12 +250,13 @@ impl BacklogManager {
                         // note: the upstream_rx should NOT be closed here, so it can still be reuse by future instances
                         info!(directive.id = self.id, "idle timeout reached, exiting backlog manager thread");
                         if let Some(v) = self.option.lazy_loader.as_ref() {
-                            // note: the upstream_rx should NOT be closed here, so it can still be reuse by future instances
-                            // so instead we'll just drop the lock
+                            // note: the upstream_rx should NOT be closed here, so it can still be reuse by future
+                            // instances, so instead we'll just drop the lock
                             //
                             // the order between cache invalidation and dropping the lock here doesn't matter that much
-                            // it will just move the location of potential event loss during the transition from this instance to the next.
-                            // that's only applicable if there's incoming event while we're exiting this one.
+                            // it will just move the location of potential event loss during the transition from this
+                            // instance to the next. That's only applicable if there's incoming event while we're
+                            // exiting this one.
                             v.cache.invalidate(&self.id);
                             // events that are in-flight here could potentially create a new backlog manager,
                             // which may not be able to lock the upstream_rx yet before this next line is executed.
@@ -339,7 +313,12 @@ impl BacklogManager {
                             if timeout(timeout_duration, v.changed()).await.is_ok() {
                                 if *v.borrow() {
                                 match_found = true;
-                                debug!(directive.id = self.id, event.id, backlog.id = b.id, "found existing backlog that consumes the event");
+                                debug!(
+                                    directive.id = self.id,
+                                    event.id,
+                                    backlog.id = b.id,
+                                    "found existing backlog that consumes the event"
+                                );
                                 break;
                                 }
                             } else {
@@ -353,9 +332,10 @@ impl BacklogManager {
                         }
                     } else {
                         debug!(directive.id = self.id, event.id, "no backlog to consume the event");
-                        // downstream_tx.send above can only fail when there's only 1 backlog, and it has exited it's event receiver,
-                        // but mgr_delete_rx hasn't run yet before locked_backlogs lock was obtained here.
-                        // it is ok therefore to continue evaluating this event as a potential trigger for a new backlog
+                        // downstream_tx.send above can only fail when there's only 1 backlog, and it has exited
+                        // it's event receiver, but mgr_delete_rx hasn't run yet before locked_backlogs lock was
+                        // obtained here. It is ok therefore to continue evaluating this event as a potential
+                        // trigger for a new backlog
                     }
 
                     if match_found {
@@ -364,7 +344,11 @@ impl BacklogManager {
 
                     // timeout should not be treated as no match since it could trigger a duplicate backlog
                     if mgr_report.timedout_backlogs > 0 {
-                                debug!(directive.id = self.id, event.id, "{} backlog timeouts, skip creating new backlog based on this event", mgr_report.timedout_backlogs);
+                        debug!(
+                            directive.id = self.id, event.id,
+                            "{} backlog timeouts, skip creating new backlog based on this event",
+                            mgr_report.timedout_backlogs
+                        );
                         continue;
                     }
 
@@ -402,10 +386,7 @@ impl BacklogManager {
             .ok_or_else(|| anyhow!("directive {} doesn't have first stage", self.id))?;
 
         if !first_rule.does_event_match(&self.option.backlog_option.asset, event, false) {
-            debug!(
-                directive.id = self.id,
-                event.id, "event doesn't match first rule"
-            );
+            debug!(directive.id = self.id, event.id, "event doesn't match first rule");
             return Ok(None);
         }
         debug!(directive.id = self.id, event.id, "creating new backlog");
@@ -416,10 +397,7 @@ impl BacklogManager {
         match res {
             Ok(b) => Ok(Some(b)),
             Err(err) => {
-                error!(
-                    directive.id = self.id,
-                    event.id, "cannot create new backlog: {}", err
-                );
+                error!(directive.id = self.id, event.id, "cannot create new backlog: {}", err);
                 Ok(None)
             }
         }

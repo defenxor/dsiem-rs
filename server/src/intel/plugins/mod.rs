@@ -1,5 +1,4 @@
-use super::IntelChecker;
-use super::IntelResult;
+use super::{IntelChecker, IntelResult};
 
 mod wise;
 
@@ -11,11 +10,7 @@ pub struct Checker {
 
 impl Checker {
     fn new(plugin: Box<dyn IntelChecker>, name: &str) -> Checker {
-        Checker {
-            plugin,
-            name: name.to_string(),
-            enabled: false,
-        }
+        Checker { plugin, name: name.to_string(), enabled: false }
     }
 }
 

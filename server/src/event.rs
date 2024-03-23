@@ -138,7 +138,15 @@ mod test {
         e.category = "Firewall".to_owned();
         assert!(e.valid());
 
-        let s = r#"{"event_id":"missing req fields", "timestamp": "2023-01-01T00:00:00Z", "title": "foo", "src_ip":"10.0.0.3", "dst_ip":"0.0.0.0", "sensor": "foo" }"#;
+        let s = r#"
+        {
+            "event_id": "missing req fields",
+            "timestamp": "2023-01-01T00:00:00Z",
+            "title": "foo",
+            "src_ip":"10.0.0.3",
+            "dst_ip":"0.0.0.0",
+            "sensor": "foo"
+        }"#;
         let e3: NormalizedEvent = serde_json::from_str(s).unwrap();
         assert!(!e3.valid());
     }

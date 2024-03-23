@@ -133,9 +133,7 @@ pub async fn update_field(
     let url = search_cfg.search.clone() + &index + "/_update/" + &id;
     let data = r#"{ "doc": { ""#.to_owned() + &field + r#"": ""# + &value + r#"" } }"#;
 
-    let mut req = Request::post(url.as_str())
-        .body(data)
-        .header("Content-Type", "application/json");
+    let mut req = Request::post(url.as_str()).body(data).header("Content-Type", "application/json");
     if let Some(auth) = &search_cfg.auth_header {
         req = req.header("Authorization", auth.as_str());
     }
@@ -161,9 +159,7 @@ pub async fn delete_alarm(search_cfg: &SearchConfig, id: String) -> Result<Strin
     }
     let url = search_cfg.search.clone() + INDEX_ALARM_EVENT + "/_bulk";
 
-    let mut req = Request::post(url.as_str())
-        .body(delete_data)
-        .header("Content-Type", "application/json");
+    let mut req = Request::post(url.as_str()).body(delete_data).header("Content-Type", "application/json");
     if let Some(auth) = &search_cfg.auth_header {
         req = req.header("Authorization", auth.as_str());
     }
@@ -171,14 +167,14 @@ pub async fn delete_alarm(search_cfg: &SearchConfig, id: String) -> Result<Strin
     _ = req.send().await.map_err(|e| e.to_string())?;
 
     // next for siem_alarms
-    // curl -XPOST -H 'content-type:application/json' 'localhost:9200/siem_alarms/_delete_by_query' -d'{"query": { "match" : { "_id": "7deNuzN2k" } } }'
+    // curl -XPOST -H 'content-type:application/json'
+    // 'localhost:9200/siem_alarms/_delete_by_query' -d'{"query": { "match" : {
+    // "_id": "7deNuzN2k" } } }'
 
     let url = search_cfg.search.clone() + INDEX_ALARM + "/_delete_by_query?refresh=true";
     let data = r#"{ "query": { "match": { "_id": ""#.to_owned() + &id + r#"" } } }"#;
 
-    let mut req = Request::post(url.as_str())
-        .body(data)
-        .header("Content-Type", "application/json");
+    let mut req = Request::post(url.as_str()).body(data).header("Content-Type", "application/json");
     if let Some(auth) = &search_cfg.auth_header {
         req = req.header("Authorization", auth.as_str());
     }
@@ -243,32 +239,20 @@ pub async fn read(dsiem_baseurl: String, id: String) -> Result<Alarm, String> {
     Ok(alarm)
 }
 
-async fn get_alarm_event(
-    search_cfg: &SearchConfig,
-    alarm_id: &String,
-) -> Result<Vec<AlarmEvents>, String> {
-    let url = search_cfg.search.to_string()
-        + INDEX_ALARM_EVENT
-        + "/_search?size="
-        + DEFAULT_ES_MAX_SIZE.to_string().as_str();
+async fn get_alarm_event(search_cfg: &SearchConfig, alarm_id: &String) -> Result<Vec<AlarmEvents>, String> {
+    let url =
+        search_cfg.search.to_string() + INDEX_ALARM_EVENT + "/_search?size=" + DEFAULT_ES_MAX_SIZE.to_string().as_str();
 
-    let data =
-        r#"{ "query": { "term": { "alarm_id.keyword": ""#.to_owned() + alarm_id + r#"" }  } }"#;
+    let data = r#"{ "query": { "term": { "alarm_id.keyword": ""#.to_owned() + alarm_id + r#"" }  } }"#;
 
-    let mut req = Request::post(url.as_str())
-        .body(data)
-        .header("Content-Type", "application/json");
+    let mut req = Request::post(url.as_str()).body(data).header("Content-Type", "application/json");
     if let Some(auth) = &search_cfg.auth_header {
         req = req.header("Authorization", auth.as_str());
     }
 
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if resp.status() != 200 {
-        return Err(format!(
-            "Elasticsearch response: {} {}",
-            resp.status(),
-            resp.status_text()
-        ));
+        return Err(format!("Elasticsearch response: {} {}", resp.status(), resp.status_text()));
     }
 
     let body = resp.text().await.map_err(|e| e.to_string())?;
@@ -281,24 +265,20 @@ async fn get_alarm_event(
 
 async fn get_alarm(search_cfg: &SearchConfig, id: &String) -> Result<Alarm, String> {
     let url = search_cfg.search.to_string() + INDEX_ALARM + "/_search";
-    // curl 'localhost:9200/siem_alarms-*/_search' -XPOST -H 'content-type:application/json' -d'{ "query": { "term" : { "_id": "gUJis6htM" } } }'
+    // curl 'localhost:9200/siem_alarms-*/_search' -XPOST -H
+    // 'content-type:application/json' -d'{ "query": { "term" : { "_id": "gUJis6htM"
+    // } } }'
 
     let data = r#"{ "query": { "term": { "_id": ""#.to_owned() + id + r#"" }  } }"#;
 
-    let mut req = Request::post(url.as_str())
-        .body(data)
-        .header("Content-Type", "application/json");
+    let mut req = Request::post(url.as_str()).body(data).header("Content-Type", "application/json");
     if let Some(auth) = &search_cfg.auth_header {
         req = req.header("Authorization", auth.as_str());
     }
 
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if resp.status() != 200 {
-        return Err(format!(
-            "Elasticsearch response: {} {}",
-            resp.status(),
-            resp.status_text()
-        ));
+        return Err(format!("Elasticsearch response: {} {}", resp.status(), resp.status_text()));
     }
     let body = resp.text().await.map_err(|e| e.to_string())?;
     let v: Value = serde_json::from_str(body.as_str()).map_err(|e| e.to_string())?;
@@ -306,8 +286,8 @@ async fn get_alarm(search_cfg: &SearchConfig, id: &String) -> Result<Alarm, Stri
     if source == "null" {
         return Err("search returned no hit".to_owned());
     }
-    let alarm: Alarm = serde_json::from_str(&source)
-        .map_err(|e| "cannot deserialize alarm: ".to_owned() + &e.to_string())?;
+    let alarm: Alarm =
+        serde_json::from_str(&source).map_err(|e| "cannot deserialize alarm: ".to_owned() + &e.to_string())?;
     Ok(alarm)
 }
 
@@ -316,20 +296,14 @@ async fn get_event(search_cfg: &SearchConfig, id: &String) -> Result<Event, Stri
 
     let data = r#"{ "query": { "term": { "event_id.keyword": ""#.to_owned() + id + r#"" }  } }"#;
 
-    let mut req = Request::post(url.as_str())
-        .body(data)
-        .header("Content-Type", "application/json");
+    let mut req = Request::post(url.as_str()).body(data).header("Content-Type", "application/json");
     if let Some(auth) = &search_cfg.auth_header {
         req = req.header("Authorization", auth.as_str());
     }
 
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if resp.status() != 200 {
-        return Err(format!(
-            "Elasticsearch response: {} {}",
-            resp.status(),
-            resp.status_text()
-        ));
+        return Err(format!("Elasticsearch response: {} {}", resp.status(), resp.status_text()));
     }
 
     let body = resp.text().await.map_err(|e| e.to_string())?;

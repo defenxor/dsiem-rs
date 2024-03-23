@@ -50,14 +50,7 @@ impl FilterTarget {
         let contains_taxorule = !taxo_pairs.is_empty();
         sid_pairs.shrink_to_fit();
         taxo_pairs.shrink_to_fit();
-        targets.push(FilterTarget {
-            id,
-            tx: event_tx,
-            sid_pairs,
-            taxo_pairs,
-            contains_pluginrule,
-            contains_taxorule,
-        });
+        targets.push(FilterTarget { id, tx: event_tx, sid_pairs, taxo_pairs, contains_pluginrule, contains_taxorule });
     }
 }
 
@@ -102,9 +95,8 @@ impl Filter {
             let active_ids = active_ids.clone();
             let span = Span::current();
 
-            let handle = thread::spawn(move || {
-                Filter::event_handler(idx, rx, id_tx, preload_directives, active_ids, c, span)
-            });
+            let handle =
+                thread::spawn(move || Filter::event_handler(idx, rx, id_tx, preload_directives, active_ids, c, span));
             handles.push(handle);
         }
 
@@ -166,9 +158,7 @@ impl Filter {
             if event.plugin_id != 0
                 && event.plugin_sid != 0
                 && sid_cache_enabled
-                && sid_cache
-                    .get(&(event.plugin_id, event.plugin_sid))
-                    .is_some()
+                && sid_cache.get(&(event.plugin_id, event.plugin_sid)).is_some()
             {
                 found = true;
             }
@@ -178,9 +168,7 @@ impl Filter {
                 && !event.product.is_empty()
                 && !event.category.is_empty()
                 && taxo_cache_enabled
-                && taxo_cache
-                    .get(&(event.product.clone(), event.category.clone()))
-                    .is_some()
+                && taxo_cache.get(&(event.product.clone(), event.category.clone())).is_some()
             {
                 found = true;
             }
@@ -191,13 +179,8 @@ impl Filter {
             }
 
             // here we just need to find the directive(s) that match the event
-            let matched_dirs: Vec<&FilterTarget> =
-                c.iter().filter(|p| matched_with_event(p, &event)).collect();
-            debug!(
-                event.id,
-                "event matched rules in {} directive(s)",
-                matched_dirs.len()
-            );
+            let matched_dirs: Vec<&FilterTarget> = c.iter().filter(|p| matched_with_event(p, &event)).collect();
+            debug!(event.id, "event matched rules in {} directive(s)", matched_dirs.len());
 
             let distrib_span = info_span!("event distribution", event.id);
             tracer::set_parent_from_event(&distrib_span, &event);
@@ -214,10 +197,7 @@ impl Filter {
                         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
                         if let Err(e) = id_tx.blocking_send((d.id, tx)) {
-                            error!(
-                                directive.id = d.id,
-                                event.id, "skipping, filter can't send id to spawner: {}", e
-                            );
+                            error!(directive.id = d.id, event.id, "skipping, filter can't send id to spawner: {}", e);
                             return;
                         }
                         // waiting for the spawner to acknowledge backlog manager creation
@@ -229,23 +209,17 @@ impl Filter {
                             warn!(
                                 directive.id = d.id,
                                 event.id,
-                                "spawner failed to confirm backlog manager creation: {}, will try \
-                                 to send the event anyway",
+                                "spawner failed to confirm backlog manager creation: {}, will try to send the event \
+                                 anyway",
                                 e
                             );
                         }
                     }
                 }
 
-                debug!(
-                    directive.id = d.id,
-                    event.id, "sending event to backlog manager"
-                );
+                debug!(directive.id = d.id, event.id, "sending event to backlog manager");
                 if d.tx.try_send(event.clone()).is_err() {
-                    warn!(
-                        directive.id = d.id,
-                        event.id, "backlog manager lagged or no longer active, dropping event"
-                    );
+                    warn!(directive.id = d.id, event.id, "backlog manager lagged or no longer active, dropping event");
                 }
             });
         }

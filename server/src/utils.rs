@@ -1,11 +1,10 @@
-use nanoid::nanoid;
 use std::{env, path::PathBuf};
+
+use nanoid::nanoid;
 
 fn get_dir(test_env: bool) -> Result<PathBuf, std::io::Error> {
     let dir = if test_env {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("fixtures")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("fixtures")
     } else {
         let mut d = env::current_exe()?;
         d.pop();
@@ -44,10 +43,7 @@ pub fn ref_to_digit(v: &str) -> Result<u8, String> {
     if !v.starts_with(':') {
         return Err("doesn't begin with :".to_string());
     }
-    let n = v
-        .replace(':', "")
-        .parse::<u8>()
-        .map_err(|e| e.to_string())?;
+    let n = v.replace(':', "").parse::<u8>().map_err(|e| e.to_string())?;
     Ok(n)
 }
 
@@ -74,10 +70,7 @@ mod test {
     }
     #[test]
     fn test_dirs() {
-        let d = config_dir(true, Some(vec!["dir".to_string(), "a".to_string()]))
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        let d = config_dir(true, Some(vec!["dir".to_string(), "a".to_string()])).unwrap().to_string_lossy().to_string();
         assert!(d.contains("dsiem"));
         assert!(d.contains("fixtures"));
         assert!(d.contains("configs"));

@@ -1,18 +1,28 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
-
-use opentelemetry::metrics::{Meter as OtelMeter, MeterProvider};
-use opentelemetry::{global, KeyValue};
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::reader::{DefaultAggregationSelector, DefaultTemporalitySelector};
-use opentelemetry_sdk::metrics::{MeterProvider as SdkMeterProvider, PeriodicReader};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use anyhow::Result;
-use opentelemetry_sdk::{runtime, Resource};
+use opentelemetry::{
+    global,
+    metrics::{Meter as OtelMeter, MeterProvider},
+    KeyValue,
+};
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::{
+    metrics::{
+        reader::{DefaultAggregationSelector, DefaultTemporalitySelector},
+        MeterProvider as SdkMeterProvider, PeriodicReader,
+    },
+    runtime, Resource,
+};
 
-use crate::tracer::{OtelConfig, OTLP_TIMEOUT_SECONDS};
-use crate::watchdog::REPORT_INTERVAL_IN_SECONDS;
+use crate::{
+    tracer::{OtelConfig, OTLP_TIMEOUT_SECONDS},
+    watchdog::REPORT_INTERVAL_IN_SECONDS,
+};
 
 fn meter_provider(config: OtelConfig) -> Result<SdkMeterProvider> {
     let exporter = opentelemetry_otlp::new_exporter()
@@ -28,10 +38,7 @@ fn meter_provider(config: OtelConfig) -> Result<SdkMeterProvider> {
         .build();
     let provider = SdkMeterProvider::builder()
         .with_reader(reader)
-        .with_resource(Resource::new(vec![KeyValue::new(
-            "service.name",
-            config.service_name,
-        )]))
+        .with_resource(Resource::new(vec![KeyValue::new("service.name", config.service_name)]))
         .build();
     Ok(provider)
 }
@@ -65,58 +72,44 @@ impl Meter {
     }
 
     pub fn upsert_f64(&mut self, name: &str, value: Option<f64>) -> Result<()> {
-        let mut w = self
-            .gauges_f64
-            .write()
-            .map_err(|_| anyhow::anyhow!("Error adding gauge"))?;
+        let mut w = self.gauges_f64.write().map_err(|_| anyhow::anyhow!("Error adding gauge"))?;
         w.insert(name.to_owned(), value.unwrap_or(0.0));
         Ok(())
     }
     pub fn upsert_u64(&mut self, name: &str, value: Option<u64>) -> Result<()> {
-        let mut w = self
-            .gauges_u64
-            .write()
-            .map_err(|_| anyhow::anyhow!("Error adding gauge"))?;
+        let mut w = self.gauges_u64.write().map_err(|_| anyhow::anyhow!("Error adding gauge"))?;
         w.insert(name.to_owned(), value.unwrap_or(0));
         Ok(())
     }
     pub fn start(&mut self) -> Result<()> {
-        let g = self
-            .gauges_f64
-            .read()
-            .map_err(|_| anyhow::anyhow!("Error reading gauges"))?;
+        let g = self.gauges_f64.read().map_err(|_| anyhow::anyhow!("Error reading gauges"))?;
         for (name, _) in g.clone().into_iter() {
             let gauge = self.meter.f64_observable_gauge(name.clone()).init();
             let lock = Arc::clone(&self.gauges_f64);
-            self.meter
-                .register_callback(&[gauge.as_any()], move |observer| {
-                    if let Ok(r) = lock.read() {
-                        for (k, v) in r.iter() {
-                            if *k == name {
-                                // v will have been updated by watchdog by the time this is called
-                                observer.observe_f64(&gauge, *v, &[]);
-                            }
+            self.meter.register_callback(&[gauge.as_any()], move |observer| {
+                if let Ok(r) = lock.read() {
+                    for (k, v) in r.iter() {
+                        if *k == name {
+                            // v will have been updated by watchdog by the time this is called
+                            observer.observe_f64(&gauge, *v, &[]);
                         }
-                    };
-                })?;
+                    }
+                };
+            })?;
         }
-        let g = self
-            .gauges_u64
-            .read()
-            .map_err(|_| anyhow::anyhow!("Error reading gauges"))?;
+        let g = self.gauges_u64.read().map_err(|_| anyhow::anyhow!("Error reading gauges"))?;
         for (name, _) in g.clone().into_iter() {
             let gauge = self.meter.u64_observable_gauge(name.clone()).init();
             let lock = Arc::clone(&self.gauges_u64);
-            self.meter
-                .register_callback(&[gauge.as_any()], move |observer| {
-                    if let Ok(r) = lock.read() {
-                        for (k, v) in r.iter() {
-                            if *k == name {
-                                observer.observe_u64(&gauge, *v, &[]);
-                            }
+            self.meter.register_callback(&[gauge.as_any()], move |observer| {
+                if let Ok(r) = lock.read() {
+                    for (k, v) in r.iter() {
+                        if *k == name {
+                            observer.observe_u64(&gauge, *v, &[]);
                         }
-                    };
-                })?;
+                    }
+                };
+            })?;
         }
         Ok(())
     }
@@ -124,8 +117,9 @@ impl Meter {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use tokio::time::sleep;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_meter() {

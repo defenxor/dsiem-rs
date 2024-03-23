@@ -1,3 +1,24 @@
+use std::{
+    collections::HashSet,
+    net::{IpAddr, Ipv4Addr},
+    sync::{
+        atomic::{AtomicI64, AtomicU16, AtomicU8, Ordering::Relaxed},
+        Arc,
+    },
+    time::Duration,
+};
+
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
+use parking_lot::Mutex;
+use serde::Deserialize;
+use serde_derive::Serialize;
+use tokio::{
+    sync::{broadcast::Receiver, mpsc::Sender, watch},
+    time::{interval, Instant},
+};
+use tracing::{debug, error, info, info_span, trace, warn, Instrument};
+
 use crate::{
     asset::NetworkAssets,
     directive::Directive,
@@ -8,25 +29,6 @@ use crate::{
     tracer, utils,
     vuln::{VulnPlugin, VulnResult},
 };
-use anyhow::{anyhow, Result};
-use chrono::{DateTime, Utc};
-use parking_lot::Mutex;
-use serde::Deserialize;
-use serde_derive::Serialize;
-use std::{
-    collections::HashSet,
-    net::{IpAddr, Ipv4Addr},
-    sync::{
-        atomic::{AtomicI64, AtomicU16, AtomicU8, Ordering::Relaxed},
-        Arc,
-    },
-    time::Duration,
-};
-use tokio::{
-    sync::{broadcast::Receiver, mpsc::Sender, watch},
-    time::{interval, Instant},
-};
-use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 pub mod manager;
 
@@ -143,11 +145,7 @@ struct DeleteChannel {
 impl Default for DeleteChannel {
     fn default() -> Self {
         let (tx, rx) = watch::channel(false);
-        DeleteChannel {
-            tx,
-            rx,
-            to_upstream_manager: None,
-        }
+        DeleteChannel { tx, rx, to_upstream_manager: None }
     }
 }
 
@@ -167,10 +165,7 @@ pub struct FoundChannel {
 impl Default for FoundChannel {
     fn default() -> Self {
         let (tx, rx) = watch::channel(false);
-        FoundChannel {
-            tx,
-            locked_rx: tokio::sync::Mutex::new(rx),
-        }
+        FoundChannel { tx, locked_rx: tokio::sync::Mutex::new(rx) }
     }
 }
 
@@ -219,45 +214,26 @@ impl Backlog {
         };
         if let Some(v) = &o.event {
             if backlog.title.contains("SRC_IP") {
-                let src: String = if let Ok(hostname) = backlog.assets.get_name(&v.src_ip) {
-                    hostname
-                } else {
-                    v.src_ip.to_string()
-                };
+                let src: String =
+                    if let Ok(hostname) = backlog.assets.get_name(&v.src_ip) { hostname } else { v.src_ip.to_string() };
                 backlog.title = backlog.title.replace("SRC_IP", &src);
             }
             if backlog.title.contains("DST_IP") {
-                let dst: String = if let Ok(hostname) = backlog.assets.get_name(&v.dst_ip) {
-                    hostname
-                } else {
-                    v.dst_ip.to_string()
-                };
+                let dst: String =
+                    if let Ok(hostname) = backlog.assets.get_name(&v.dst_ip) { hostname } else { v.dst_ip.to_string() };
                 backlog.title = backlog.title.replace("DST_IP", &dst);
             }
 
             backlog.rules = o.directive.init_backlog_rules(v.as_ref());
-            backlog.highest_stage = backlog
-                .rules
-                .iter()
-                .map(|v| v.stage)
-                .max()
-                .unwrap_or_default();
+            backlog.highest_stage = backlog.rules.iter().map(|v| v.stage).max().unwrap_or_default();
         }
-        let delete_tx = o
-            .delete_tx
-            .as_ref()
-            .ok_or_else(|| anyhow!("delete_tx is none"))?;
+        let delete_tx = o.delete_tx.as_ref().ok_or_else(|| anyhow!("delete_tx is none"))?;
         backlog.delete_channel.to_upstream_manager = Some(delete_tx.clone());
         backlog.intels = Some(o.intels.clone());
         backlog.vulns = Some(o.vulns.clone());
 
         if let Some(v) = &o.event {
-            info!(
-                directive.id = o.directive.id,
-                backlog.id,
-                event.id = v.id,
-                "new backlog created"
-            );
+            info!(directive.id = o.directive.id, backlog.id, event.id = v.id, "new backlog created");
         }
         Ok(backlog)
     }
@@ -267,11 +243,7 @@ impl Backlog {
         let mut backlog = Backlog::new(&o)?;
         // verify that we're still based on the same directive
         if backlog.title != loaded.title {
-            return Err(anyhow!(
-                "different title detected: '{}' vs '{}'",
-                backlog.title,
-                loaded.title
-            ));
+            return Err(anyhow!("different title detected: '{}' vs '{}'", backlog.title, loaded.title));
         }
         backlog.id = loaded.id;
         backlog.title = loaded.title;
@@ -309,12 +281,7 @@ impl Backlog {
                 r.event_ids = Arc::new(Mutex::new(v));
             }
         }
-        backlog.highest_stage = backlog
-            .rules
-            .iter()
-            .map(|v| v.stage)
-            .max()
-            .unwrap_or_default();
+        backlog.highest_stage = backlog.rules.iter().map(|v| v.stage).max().unwrap_or_default();
         let lowest_stage = loaded
             .rules
             .iter()
@@ -336,10 +303,7 @@ impl Backlog {
                 return Err(e);
             }
             */
-            debug!(
-                backlog.id,
-                "loaded with current_stage: {}, highest_stage: {}", v, backlog.highest_stage
-            );
+            debug!(backlog.id, "loaded with current_stage: {}, highest_stage: {}", v, backlog.highest_stage);
             backlog.current_stage = AtomicU8::new(v);
         } else {
             let e = anyhow!("cannot determine the current stage, skipping this backlog");
@@ -404,18 +368,9 @@ impl Backlog {
         self.delete()
     }
 
-    async fn recv_handler(
-        &self,
-        event: &NormalizedEvent,
-        max_delay: &i64,
-        resptime_tx: &Sender<f64>,
-    ) -> Result<()> {
-        let backlog_span = info_span!(
-            "backlog processing",
-            directive.id = self.directive_id,
-            backlog.id = self.id,
-            event.id
-        );
+    async fn recv_handler(&self, event: &NormalizedEvent, max_delay: &i64, resptime_tx: &Sender<f64>) -> Result<()> {
+        let backlog_span =
+            info_span!("backlog processing", directive.id = self.directive_id, backlog.id = self.id, event.id);
         debug!(backlog.id = self.id, event.id, "event received");
 
         tracer::set_parent_from_event(&backlog_span, event);
@@ -453,9 +408,15 @@ impl Backlog {
                 _ = expiration_checker.tick() => {
                     if let Ok((expired, seconds_left)) = self.is_expired() {
                         if expired {
-                            debug!(backlog.id = self.id, "backlog expired, setting last stage status to timeout and deleting it");
+                            debug!(
+                                backlog.id = self.id,
+                                "backlog expired, setting last stage status to timeout and deleting it"
+                            );
                             if let Err(e) = self.handle_expiration().await {
-                                debug!{backlog.id = self.id, "error updating status and deleting backlog: {}", e.to_string()}
+                                debug!{
+                                    backlog.id = self.id,
+                                    "error updating status and deleting backlog: {}", e.to_string()
+                                }
                             }
                         } else {
                             debug!(backlog.id = self.id, "backlog will expire in {} seconds", seconds_left);
@@ -526,16 +487,8 @@ impl Backlog {
     }
 
     pub fn get_rule(&self, stage: Option<u8>) -> Result<&DirectiveRule> {
-        let s = if let Some(v) = stage {
-            v
-        } else {
-            self.current_stage.load(Relaxed)
-        };
-        self.rules
-            .iter()
-            .filter(|v| v.stage == s)
-            .last()
-            .ok_or_else(|| anyhow!("cannot locate the current rule"))
+        let s = if let Some(v) = stage { v } else { self.current_stage.load(Relaxed) };
+        self.rules.iter().filter(|v| v.stage == s).last().ok_or_else(|| anyhow!("cannot locate the current rule"))
     }
 
     fn report_to_manager(&self, match_found: bool) -> Result<()> {
@@ -558,21 +511,16 @@ impl Backlog {
             // if flag is set, check if event match previous stage
             if self.all_rules_always_active && curr_rule.stage != 1 {
                 debug!("checking prev rules because all_rules_always_active is on");
-                let prev_rules = self
-                    .rules
-                    .iter()
-                    .filter(|v| v.stage < curr_rule.stage)
-                    .collect::<Vec<&DirectiveRule>>();
+                let prev_rules =
+                    self.rules.iter().filter(|v| v.stage < curr_rule.stage).collect::<Vec<&DirectiveRule>>();
                 for r in prev_rules {
                     if !r.does_event_match(&self.assets, event, true) {
                         continue;
                     }
                     // event match previous rule, processing it further here
-                    // just add the event to the stage, no need to process other steps in processMatchedEvent
-                    debug!(
-                        backlog.id = self.id,
-                        event.id, r.stage, "previous rule match"
-                    );
+                    // just add the event to the stage, no need to process other steps in
+                    // processMatchedEvent
+                    debug!(backlog.id = self.id, event.id, r.stage, "previous rule match");
                     self.append_and_write_event(event, Some(r.stage))?;
                     // also update alarm to sync any changes to customData
                     self.update_alarm(false).await?;
@@ -592,10 +540,7 @@ impl Backlog {
         if !curr_rule.sticky_different.is_empty() {
             let reader = curr_rule.sticky_diffdata.lock();
             if n_string == reader.sdiff_string.len() && n_int == reader.sdiff_int.len() {
-                debug!(
-                    "backlog can't find new unique value in stickydiff field {}",
-                    curr_rule.sticky_different
-                );
+                debug!("backlog can't find new unique value in stickydiff field {}", curr_rule.sticky_different);
                 _ = self.report_to_manager(false);
                 return Ok(());
             }
@@ -656,17 +601,9 @@ impl Backlog {
 
     fn update_risk(&self) -> Result<bool> {
         let reader = self.src_ips.lock();
-        let src_value = reader
-            .iter()
-            .map(|v| self.assets.get_value(v))
-            .max()
-            .unwrap_or_default();
+        let src_value = reader.iter().map(|v| self.assets.get_value(v)).max().unwrap_or_default();
         let reader = self.dst_ips.lock();
-        let dst_value = reader
-            .iter()
-            .map(|v| self.assets.get_value(v))
-            .max()
-            .unwrap_or_default();
+        let dst_value = reader.iter().map(|v| self.assets.get_value(v)).max().unwrap_or_default();
 
         let prior_risk = self.risk.load(Relaxed);
         let value = std::cmp::max(src_value, dst_value);
@@ -674,10 +611,7 @@ impl Backlog {
         let reliability = self.current_rule()?.reliability;
         let risk = (priority * reliability * value) / 25;
         if risk != prior_risk {
-            info!(
-                backlog.id = self.id,
-                "risk changed from {} to {}", prior_risk, risk
-            );
+            info!(backlog.id = self.id, "risk changed from {} to {}", prior_risk, risk);
             self.risk.swap(risk, Relaxed);
             Ok(true)
         } else {
@@ -765,10 +699,7 @@ impl Backlog {
             let mut w = target_rule.event_ids.lock();
             w.insert(event.id.clone());
             let ttl_events = w.len();
-            debug!(
-                stage = target_rule.stage,
-                "appended event {}/{}", ttl_events, target_rule.occurrence
-            );
+            debug!(stage = target_rule.stage, "appended event {}/{}", ttl_events, target_rule.occurrence);
         }
 
         const DEFAULT_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
@@ -790,22 +721,13 @@ impl Backlog {
         {
             let mut w = self.custom_data.lock();
             if !event.custom_data1.is_empty() {
-                w.insert(CustomData {
-                    label: event.custom_label1.clone(),
-                    content: event.custom_data1.clone(),
-                });
+                w.insert(CustomData { label: event.custom_label1.clone(), content: event.custom_data1.clone() });
             }
             if !event.custom_data2.is_empty() {
-                w.insert(CustomData {
-                    label: event.custom_label2.clone(),
-                    content: event.custom_data2.clone(),
-                });
+                w.insert(CustomData { label: event.custom_label2.clone(), content: event.custom_data2.clone() });
             }
             if !event.custom_data3.is_empty() {
-                w.insert(CustomData {
-                    label: event.custom_label3.clone(),
-                    content: event.custom_data3.clone(),
-                });
+                w.insert(CustomData { label: event.custom_label3.clone(), content: event.custom_data3.clone() });
             }
         }
 
@@ -862,27 +784,12 @@ impl Backlog {
     }
 
     fn append_siem_alarm_events(&self, e: &NormalizedEvent, stage: Option<u8>) -> Result<()> {
-        let s = if let Some(v) = stage {
-            v
-        } else {
-            self.current_stage.load(Relaxed)
-        };
-        let sae = SiemAlarmEvent {
-            id: self.id.clone(),
-            stage: s,
-            event_id: e.id.clone(),
-        };
+        let s = if let Some(v) = stage { v } else { self.current_stage.load(Relaxed) };
+        let sae = SiemAlarmEvent { id: self.id.clone(), stage: s, event_id: e.id.clone() };
         let s = serde_json::to_string(&sae)? + "\n";
-        trace!(
-            alarm.id = sae.id,
-            stage = sae.stage,
-            "appending siem_alarm_events"
-        );
+        trace!(alarm.id = sae.id, stage = sae.stage, "appending siem_alarm_events");
         if let Some(sender) = &self.log_tx {
-            sender.send(LogWriterMessage {
-                data: s,
-                file_type: FileType::AlarmEvent,
-            })?;
+            sender.send(LogWriterMessage { data: s, file_type: FileType::AlarmEvent })?;
         }
         Ok(())
     }
@@ -901,37 +808,25 @@ impl Backlog {
             if self.intels.is_some() {
                 debug!("querying threat intel plugins");
                 // dont fail alarm update if there's intel check err
-                _ = self
-                    .check_intel()
-                    .await
-                    .map_err(|e| error!(self.id, "intel check error: {:?}", e));
+                _ = self.check_intel().await.map_err(|e| error!(self.id, "intel check error: {:?}", e));
             }
             if self.vulns.is_some() {
                 debug!("querying vulnerability check plugins");
                 // dont fail alarm update if there's intel check err
-                _ = self
-                    .check_vuln()
-                    .await
-                    .map_err(|e| error!("vuln check error: {:?}", e));
+                _ = self.check_vuln().await.map_err(|e| error!("vuln check error: {:?}", e));
             }
         }
 
         let s = serde_json::to_string(&self)? + "\n";
 
         if let Some(sender) = &self.log_tx {
-            sender.send(LogWriterMessage {
-                data: s,
-                file_type: FileType::Alarm,
-            })?
+            sender.send(LogWriterMessage { data: s, file_type: FileType::Alarm })?
         }
         Ok(())
     }
 
     async fn check_intel(&self) -> Result<()> {
-        let intels = self
-            .intels
-            .as_ref()
-            .ok_or_else(|| anyhow!("intels is none"))?;
+        let intels = self.intels.as_ref().ok_or_else(|| anyhow!("intels is none"))?;
         let mut targets = HashSet::new();
         for s in [&self.src_ips, &self.dst_ips] {
             let r = s.lock();
@@ -950,10 +845,7 @@ impl Backlog {
     }
 
     async fn check_vuln(&self) -> Result<()> {
-        let vulns = self
-            .vulns
-            .as_ref()
-            .ok_or_else(|| anyhow!("vulns is none"))?;
+        let vulns = self.vulns.as_ref().ok_or_else(|| anyhow!("vulns is none"))?;
 
         let mut vs = VulnSearchTerm::default();
         for r in self.rules.iter() {
@@ -1024,9 +916,6 @@ impl VulnSearchTerm {
 mod test {
     use std::thread;
 
-    use crate::{directive, log_writer::LogWriter, rule::StickyDiffData};
-
-    use super::*;
     use chrono::Days;
     use tokio::{
         sync::{broadcast, mpsc},
@@ -1034,6 +923,9 @@ mod test {
         time::sleep,
     };
     use tracing_test::traced_test;
+
+    use super::*;
+    use crate::{directive, log_writer::LogWriter, rule::StickyDiffData};
 
     #[test]
     fn test_vuln_searchterm() {
@@ -1051,11 +943,8 @@ mod test {
 
     #[test]
     fn test_saved_reload() {
-        let directives = directive::load_directives(
-            true,
-            Some(vec!["directives".to_string(), "directive5".to_string()]),
-        )
-        .unwrap();
+        let directives =
+            directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
         let d = directives[0].clone();
         let evt = NormalizedEvent {
             plugin_id: 1337,
@@ -1066,14 +955,9 @@ mod test {
             ..Default::default()
         };
         let get_opt = || {
-            let asset =
-                Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-            let intels = Arc::new(
-                crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
-            );
-            let vulns = Arc::new(
-                crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap(),
-            );
+            let asset = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
+            let intels = Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+            let vulns = Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
             let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
             let (bp_tx, _) = mpsc::channel::<()>(1);
             let (log_tx, _) = crossbeam_channel::bounded(1);
@@ -1136,43 +1020,34 @@ mod test {
             assert_eq!(*rule.sticky_diffdata.lock(), stickydiff_data);
         }
 
-        // should throw error if the saved backlog and the directive have the same ID but different title
+        // should throw error if the saved backlog and the directive have the same ID
+        // but different title
         let b = Backlog::new(&get_opt()).unwrap();
         let mut saveable = Backlog::saveable_version(Arc::new(b));
         saveable.title = "foo".to_string();
         let res = Backlog::runnable_version(get_opt(), saveable);
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("different title detected"));
+        assert!(res.unwrap_err().to_string().contains("different title detected"));
 
-        // should throw error if all rules in the saved backlog already have a status (i.e. finished or timeout)
+        // should throw error if all rules in the saved backlog already have a status
+        // (i.e. finished or timeout)
         let b = Backlog::new(&get_opt()).unwrap();
         let mut saveable = Backlog::saveable_version(Arc::new(b));
         for rule in saveable.rules.iter_mut() {
             rule.status = Arc::new(Mutex::new("finished".to_string()));
         }
         let res = Backlog::runnable_version(get_opt(), saveable);
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("skipping this backlog"));
+        assert!(res.unwrap_err().to_string().contains("skipping this backlog"));
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_backlog() {
-        let directives = directive::load_directives(
-            true,
-            Some(vec!["directives".to_string(), "directive5".to_string()]),
-        )
-        .unwrap();
+        let directives =
+            directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
         let d = directives[0].clone();
         let asset = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let intels =
-            Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
-        let vulns =
-            Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+        let intels = Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+        let vulns = Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
         let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
         let (event_tx, event_rx) = broadcast::channel(10);
         let (bp_tx, _) = mpsc::channel::<()>(1);
@@ -1235,9 +1110,7 @@ mod test {
         let cloned = arc_backlog.clone();
 
         let _detached = task::spawn(async move {
-            _ = cloned
-                .start(event_rx, Some(evt_cloned), resptime_tx, 1)
-                .await;
+            _ = cloned.start(event_rx, Some(evt_cloned), resptime_tx, 1).await;
         });
 
         // these matching event should increase level from 2 to 3 to 4, and raise risk
@@ -1277,21 +1150,16 @@ mod test {
     #[tokio::test]
     #[traced_test]
     async fn test_all_rules_always_active_n_stickydiff() {
-        let directives = directive::load_directives(
-            true,
-            Some(vec!["directives".to_string(), "directive6".to_string()]),
-        )
-        .unwrap();
+        let directives =
+            directive::load_directives(true, Some(vec!["directives".to_string(), "directive6".to_string()])).unwrap();
         let d = directives[0].clone();
         let asset = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
 
-        let mut intel_plugin =
-            crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap();
+        let mut intel_plugin = crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap();
         intel_plugin.checkers = Arc::new(vec![]); // disable, we're not testing this
         let intels = Arc::new(intel_plugin);
 
-        let mut vuln_plugin =
-            crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap();
+        let mut vuln_plugin = crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap();
         vuln_plugin.checkers = Arc::new(vec![]); // disable, we're not testing this
         let vulns = Arc::new(vuln_plugin);
 
@@ -1336,9 +1204,7 @@ mod test {
         };
         let backlog = Backlog::new(&opt).unwrap();
         let _detached = task::spawn(async move {
-            _ = backlog
-                .start(event_rx, Some(evt_cloned), resptime_tx, 1)
-                .await;
+            _ = backlog.start(event_rx, Some(evt_cloned), resptime_tx, 1).await;
         });
 
         evt.id = "2".to_string();
@@ -1357,7 +1223,8 @@ mod test {
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("event doesn't match"));
-        // these matching event should be captured by first rule, but only when there's uniq SRC_PORT (sticky_different)
+        // these matching event should be captured by first rule, but only when there's
+        // uniq SRC_PORT (sticky_different)
 
         // this should increase risk to 1 (Low)
         evt.plugin_sid = 2;
@@ -1369,9 +1236,7 @@ mod test {
         evt.id = "7".to_string();
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(1000)).await;
-        assert!(logs_contain(
-            "backlog can't find new unique value in stickydiff field"
-        ));
+        assert!(logs_contain("backlog can't find new unique value in stickydiff field"));
 
         evt.src_port = 31313;
         event_tx.send(evt.clone()).unwrap();
@@ -1391,17 +1256,12 @@ mod test {
     #[tokio::test]
     #[traced_test]
     async fn test_expired() {
-        let directives = directive::load_directives(
-            true,
-            Some(vec!["directives".to_string(), "directive5".to_string()]),
-        )
-        .unwrap();
+        let directives =
+            directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
         let d = directives[0].clone();
         let asset = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
-        let intels =
-            Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
-        let vulns =
-            Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+        let intels = Arc::new(crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap());
+        let vulns = Arc::new(crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap());
         let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
         let (_, event_rx) = broadcast::channel(10);
         let (bp_tx, _bp_rx) = mpsc::channel::<()>(8);

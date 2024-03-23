@@ -9,7 +9,7 @@
 # Rustfmt configuration
 # https://github.com/rust-lang/rustfmt/blob/HEAD/Configurations.md
 
-max_width = 100
+max_width = 120
 
 # Set the default settings again to always apply the proper formatting without
 # being affected by the editor settings.

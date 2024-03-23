@@ -1,9 +1,10 @@
+use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
+
 use anyhow::Result;
 use async_trait::async_trait;
 use glob::glob;
 use mini_moka::sync::Cache;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fmt, fs, net::IpAddr, sync::Arc, time::Duration};
 use tracing::{debug, info, instrument};
 
 use crate::utils;
@@ -56,11 +57,7 @@ impl fmt::Debug for IntelPlugin {
 
 impl IntelPlugin {
     #[instrument(name = "intel_checkers")]
-    pub async fn run_checkers(
-        &self,
-        check_private_ip: bool,
-        targets: HashSet<IpAddr>,
-    ) -> Result<HashSet<IntelResult>> {
+    pub async fn run_checkers(&self, check_private_ip: bool, targets: HashSet<IpAddr>) -> Result<HashSet<IntelResult>> {
         let mut set = HashSet::new();
         for c in self.checkers.iter() {
             for ip in targets.iter() {
@@ -72,11 +69,8 @@ impl IntelPlugin {
                     debug!("returning intel result from cache for {}", ip);
                     v
                 } else {
-                    let v = tokio::time::timeout(
-                        Duration::from_secs(INTEL_MAX_SECONDS),
-                        c.plugin.check_ip(*ip),
-                    )
-                    .await??;
+                    let v =
+                        tokio::time::timeout(Duration::from_secs(INTEL_MAX_SECONDS), c.plugin.check_ip(*ip)).await??;
                     debug!("obtained intel result for {}", ip);
                     v
                 };
@@ -117,20 +111,15 @@ pub fn load_intel(test_env: bool, subdir: Option<Vec<String>>) -> Result<IntelPl
         info!("loaded {} intel plugins", len);
     }
 
-    let cache = Cache::builder()
-        // Time to live (TTL): 30 minutes
-        .time_to_live(Duration::from_secs(30 * 60))
-        // Time to idle (TTI):  5 minutes
-        .time_to_idle(Duration::from_secs(5 * 60))
-        // Create the cache.
-        .build();
+    // Time to live (TTL): 30 minutes
+    // Time to idle (TTI):  5 minutes
+    // Create the cache.
+
+    let cache =
+        Cache::builder().time_to_live(Duration::from_secs(30 * 60)).time_to_idle(Duration::from_secs(5 * 60)).build();
 
     checkers.shrink_to_fit();
-    let res = IntelPlugin {
-        intel_sources: intels,
-        checkers: Arc::new(checkers),
-        cache,
-    };
+    let res = IntelPlugin { intel_sources: intels, checkers: Arc::new(checkers), cache };
     Ok(res)
 }
 
@@ -143,8 +132,8 @@ mod test {
     #[tokio::test]
     async fn test_intel() {
         let intels = load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap();
-        // uncommend the struct Debug impl and struct member var to see the intel_sources
-        // debug!("intels: {:?}", intels);
+        // uncommend the struct Debug impl and struct member var to see the
+        // intel_sources debug!("intels: {:?}", intels);
         assert!(intels.checkers.len() == 1); // wise, change this if there's anything else
         let mut set = HashSet::new();
         let ip1: IpAddr = "192.168.0.1".parse().unwrap();
@@ -158,31 +147,22 @@ mod test {
         let str_err = res.unwrap_err().to_string();
         assert!(str_err == "get request error" || str_err == "deadline has elapsed");
 
-        let mut server = mockito::Server::new_with_opts_async(mockito::ServerOpts {
-            port: 18081,
-            ..Default::default()
-        })
-        .await;
+        let mut server =
+            mockito::Server::new_with_opts_async(mockito::ServerOpts { port: 18081, ..Default::default() }).await;
         let _m1 = server
             .mock("GET", "/ip/1.0.0.1")
             .with_status(200)
-            .with_body(
-                r#"[{field: "description", len: 4, value: "blacklisted localnet -- testing only"}]"#
-            )
+            .with_body(r#"[{field: "description", len: 4, value: "blacklisted localnet -- testing only"}]"#)
             .create_async();
         let _m2 = server
             .mock("GET", "/ip/192.168.0.1")
             .with_status(200)
-            .with_body(
-                r#"[{field: "description", len: 37, value: "blacklisted localnet -- testing only"}]"#
-            )
+            .with_body(r#"[{field: "description", len: 37, value: "blacklisted localnet -- testing only"}]"#)
             .create_async();
         let _m3 = server
             .mock("GET", "/ip/1.0.0.2")
             .with_status(200)
-            .with_body(
-                r#"[{field: "description", len: 40, value: "blacklisted localnet -- testing only"}]"#
-            )
+            .with_body(r#"[{field: "description", len: 40, value: "blacklisted localnet -- testing only"}]"#)
             .create_async();
         join!(_m1, _m2, _m3);
 

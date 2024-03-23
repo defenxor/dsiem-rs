@@ -1,13 +1,11 @@
-use crate::services::alarm::{self, Alarm, MAX_EVENTS};
-use chrono::TimeZone;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use gloo_timers::callback::Timeout;
 use wasm_bindgen::JsCast;
-use web_sys::window;
-use web_sys::EventTarget;
-use web_sys::HtmlSelectElement;
+use web_sys::{window, EventTarget, HtmlSelectElement};
 use yew::prelude::*;
 use yew_hooks::prelude::*;
+
+use crate::services::alarm::{self, Alarm, MAX_EVENTS};
 
 #[derive(Properties, PartialEq)]
 pub struct DetailProps {
@@ -29,9 +27,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
         let alarm_id = a.id.clone();
         let index = a.perm_index.clone();
         let search_cfg = a.search_config.clone();
-        async move {
-            alarm::update_field(&search_cfg, index, alarm_id, "status".to_owned(), status).await
-        }
+        async move { alarm::update_field(&search_cfg, index, alarm_id, "status".to_owned(), status).await }
     });
 
     let update_tag = use_async({
@@ -155,8 +151,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
         let update_status = update_status.clone();
         Callback::from(move |e: Event| {
             let target: Option<EventTarget> = e.target();
-            let input: Option<HtmlSelectElement> =
-                target.and_then(|t| t.dyn_into::<HtmlSelectElement>().ok());
+            let input: Option<HtmlSelectElement> = target.and_then(|t| t.dyn_into::<HtmlSelectElement>().ok());
             if let Some(input) = input {
                 status_handle.set(input.value());
                 update_status.run();
@@ -169,8 +164,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
         let update_tag = update_tag.clone();
         Callback::from(move |e: Event| {
             let target: Option<EventTarget> = e.target();
-            let input: Option<HtmlSelectElement> =
-                target.and_then(|t| t.dyn_into::<HtmlSelectElement>().ok());
+            let input: Option<HtmlSelectElement> = target.and_then(|t| t.dyn_into::<HtmlSelectElement>().ok());
             if let Some(input) = input {
                 tag_handle.set(input.value());
                 update_tag.run();
@@ -191,11 +185,14 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             {
                 if *toast_show {
                     html! {
-                        <div id="myToast" class={classes!(*toast_border,"fixed", "right-10", "top-10", "px-5", "py-4", "border-r-8", "bg-white", "drop-shadow-lg")}>
-                        <p class={classes!("text-sm")}>
-                        {&*toast_text.clone()}
-                        </p>
-                         </div>
+                        <div id="myToast" class={classes!(*toast_border,
+                            "fixed", "right-10", "top-10", "px-5", "py-4",
+                            "border-r-8", "bg-white", "drop-shadow-lg"
+                        )}>
+                            <p class={classes!("text-sm")}>
+                            {&*toast_text.clone()}
+                            </p>
+                        </div>
                     }
                 } else {
                     html!{}
@@ -204,7 +201,9 @@ pub fn alarm_view(props: &DetailProps) -> Html {
 
             // title
             <div class={classes!("px-4", "py-5", "sm:px-6")}>
-                <h2 id="title" class={classes!("text-lg", "font-medium", "text-gray-900", "dark:text-white")}>{a.title.clone()}
+                <h2 id="title" class={classes!(
+                    "text-lg", "font-medium", "text-gray-900", "dark:text-white")}
+                >{a.title.clone()}
                 {
                     if update_status.loading || update_tag.loading {
                         html! {<span class={classes!("loading", "dots")}>{"\u{00a0}\u{00a0}\u{00a0}"}</span>}
@@ -216,8 +215,16 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             </div>
             <div class={classes!("px-4", "sm:px-6")}>
             <div class={classes!("relative","overflow-x-auto","sm:rounded-lg")}>
-            <table class={classes!("w-full","text-sm", "text-left", "text-gray-500", "dark:text-gray-400", "border-2", "dark:border-0")}>
-                <thead class={classes!("text-xs","text-gray-700", "uppercase", "bg-orange-100", "dark:bg-gray-700", "dark:text-gray-400")}>
+            <table class={classes!("w-full",
+                    "text-sm", "text-left",
+                    "text-gray-500", "dark:text-gray-400",
+                    "border-2", "dark:border-0"
+                )}>
+                <thead class={classes!("text-xs",
+                        "text-gray-700", "uppercase",
+                        "bg-orange-100", "dark:bg-gray-700",
+                        "dark:text-gray-400"
+                )}>
                     <tr>
                         <th scope="col" class={classes!("px-6","py-3")}>{"Alarm ID"}</th>
                         <th scope="col" class={classes!("px-6","py-3")}>{"Created"}</th>
@@ -261,7 +268,9 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                         </td>
                         <td class={classes!("px-6","py-4")}>{a.src_ips.clone()}</td>
                         <td class={classes!("px-6","py-4")}>{a.dst_ips.clone()}</td>
-                        <td class={classes!("px-6","py-4")}><button id="delete" onclick={on_delete}>{"Delete"}</button></td>
+                        <td class={classes!("px-6","py-4")}>
+                            <button id="delete" onclick={on_delete}>{"Delete"}</button>
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -274,8 +283,17 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             </div>
             <div class={classes!("px-4", "sm:px-6")}>
             <div class={classes!("relative","overflow-x-auto","sm:rounded-lg")}>
-            <table class={classes!("w-full","text-sm", "text-left", "text-gray-500", "dark:text-gray-400", "border-2", "dark:border-0")}>
-                <thead class={classes!("text-xs","text-gray-700", "uppercase", "bg-orange-100", "dark:bg-gray-700", "dark:text-gray-400")}>
+            <table class={classes!(
+                "w-full","text-sm",
+                "text-left", "text-gray-500",
+                "dark:text-gray-400", "border-2",
+                "dark:border-0"
+            )}>
+                <thead class={classes!(
+                    "text-xs","text-gray-700",
+                    "uppercase", "bg-orange-100",
+                    "dark:bg-gray-700", "dark:text-gray-400"
+                )}>
                     <tr>
                         <th scope="col" class={classes!("px-6","py-3")}>{"Corr. stage"}</th>
                         <th scope="col" class={classes!("px-6","py-3")}>{"Started"}</th>
@@ -294,21 +312,33 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                     {
                         a.rules.clone().into_iter().map(|r| {
                         html!{
-                            <tr key={r.stage} class={classes!("bg-white","border-b", "dark:bg-gray-900", "dark:border-gray-700")}>
-                                <td class={classes!("px-6","py-4")}><button class={classes!("btn","rounded")} onclick={ let stage = stage.clone();
-                                    Callback::from(move |_| stage.set(r.stage))}><u>{r.stage}</u></button></td>
+                            <tr key={r.stage} class={classes!(
+                                "bg-white","border-b",
+                                "dark:bg-gray-900", "dark:border-gray-700"
+                            )}>
+                                <td class={classes!("px-6","py-4")}>
+                                    <button class={classes!("btn","rounded")} onclick={
+                                        let stage = stage.clone();
+                                        Callback::from(move |_| stage.set(r.stage))
+                                    }>
+                                        <u>{r.stage}</u>
+                                    </button></td>
                                 <td class={classes!("px-6","py-4")}>{
                                     if r.start_time == 0 {
                                         html!{"-"}
                                     } else {
-                                        html!{Utc.timestamp_opt(r.start_time as i64, 0).unwrap().with_timezone(&chrono::Local)}
+                                        html!{Utc.timestamp_opt(r.start_time as i64, 0)
+                                            .unwrap()
+                                            .with_timezone(&chrono::Local)}
                                     }
                                 }</td>
                                 <td class={classes!("px-6","py-4")}>{
                                     if r.end_time == 0 {
                                         html!{"-"}
                                     } else {
-                                        html!{Utc.timestamp_opt(r.end_time as i64, 0).unwrap().with_timezone(&chrono::Local)}
+                                        html!{Utc.timestamp_opt(r.end_time as i64, 0)
+                                            .unwrap()
+                                            .with_timezone(&chrono::Local)}
                                     }
                                 }
                                 </td>
@@ -333,12 +363,25 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                 html!{
                 <div>
                 <div class={classes!("px-4", "py-5", "sm:px-6")}>
-                    <h5 class={classes!( "font-medium", "leading-6", "text-gray-900", "dark:text-white/75")}>{"Vulnerabilities"}</h5>
+                    <h5 class={classes!(
+                        "font-medium", "leading-6",
+                        "text-gray-900", "dark:text-white/75"
+                    )}>{"Vulnerabilities"}
+                    </h5>
                 </div>
                 <div class={classes!("px-4", "sm:px-6")}>
                 <div class={classes!("relative","overflow-x-auto","sm:rounded-lg")}>
-                <table class={classes!("w-full","text-sm", "text-left", "text-gray-500", "dark:text-gray-400", "border-2", "dark:border-0")}>
-                    <thead class={classes!("text-xs","text-gray-700", "uppercase", "bg-orange-100", "dark:bg-gray-700", "dark:text-gray-400")}>
+                <table class={classes!(
+                    "w-full", "text-sm",
+                    "text-left", "text-gray-500",
+                    "dark:text-gray-400", "border-2",
+                    "dark:border-0"
+                )}>
+                    <thead class={classes!(
+                        "text-xs", "text-gray-700",
+                        "uppercase", "bg-orange-100",
+                        "dark:bg-gray-700", "dark:text-gray-400"
+                    )}>
                         <tr>
                             <th scope="col" class={classes!("px-6","py-3")}>{"Provider"}</th>
                             <th scope="col" class={classes!("px-6","py-3")}>{"Term"}</th>
@@ -371,12 +414,26 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                 html!{
                 <div>
                 <div class={classes!("px-4", "py-5", "sm:px-6")}>
-                    <h5 class={classes!( "font-medium", "leading-6", "text-gray-900", "dark:text-white/75")}>{"Threat Intelligence"}</h5>
+                    <h5 class={classes!(
+                        "font-medium", "leading-6",
+                        "text-gray-900", "dark:text-white/75"
+                    )}>
+                    {"Threat Intelligence"}
+                    </h5>
                 </div>
                 <div class={classes!("px-4", "sm:px-6")}>
                 <div class={classes!("relative","overflow-x-auto","sm:rounded-lg")}>
-                <table class={classes!("w-full","text-sm", "text-left", "text-gray-500", "dark:text-gray-400", "border-2", "dark:border-0")}>
-                    <thead class={classes!("text-xs","text-gray-700", "uppercase", "bg-orange-100", "dark:bg-gray-700", "dark:text-gray-400")}>
+                <table class={classes!(
+                    "w-full", "text-sm",
+                    "text-left", "text-gray-500",
+                    "dark:text-gray-400", "border-2",
+                    "dark:border-0"
+                )}>
+                    <thead class={classes!(
+                        "text-xs", "text-gray-700",
+                        "uppercase", "bg-orange-100",
+                        "dark:bg-gray-700", "dark:text-gray-400"
+                    )}>
                         <tr>
                             <th scope="col" class={classes!("px-6","py-3")}>{"Provider"}</th>
                             <th scope="col" class={classes!("px-6","py-3")}>{"Term"}</th>
@@ -409,12 +466,26 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                 html!{
                 <div>
                 <div class={classes!("px-4", "py-5", "sm:px-6")}>
-                    <h5 class={classes!( "font-medium", "leading-6", "text-gray-900", "dark:text-white/75")}>{"Custom Data"}</h5>
+                    <h5 class={classes!(
+                        "font-medium", "leading-6",
+                        "text-gray-900", "dark:text-white/75"
+                    )}>
+                    {"Custom Data"}
+                    </h5>
                 </div>
                 <div class={classes!("px-4", "sm:px-6")}>
                 <div class={classes!("relative","overflow-x-auto","sm:rounded-lg")}>
-                <table class={classes!("w-full","text-sm", "text-left", "text-gray-500", "dark:text-gray-400", "border-2", "dark:border-0")}>
-                    <thead class={classes!("text-xs","text-gray-700", "uppercase", "bg-orange-100", "dark:bg-gray-700", "dark:text-gray-400")}>
+                <table class={classes!(
+                    "w-full", "text-sm",
+                    "text-left", "text-gray-500",
+                    "dark:text-gray-400", "border-2",
+                    "dark:border-0"
+                )}>
+                    <thead class={classes!(
+                        "text-xs", "text-gray-700",
+                        "uppercase", "bg-orange-100",
+                        "dark:bg-gray-700", "dark:text-gray-400"
+                    )}>
                         <tr>
                             <th scope="col" class={classes!("px-6","py-3")}>{"Label"}</th>
                             <th scope="col" class={classes!("px-6","py-3")}>{"Content"}</th>
@@ -446,7 +517,9 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                 {
                     if a.max_events_reached {
                         html! {
-                            <span class={classes!("text-red-500", "mt-2")}>{ format!("Max number of events to load: {}", MAX_EVENTS )}</span>
+                            <span class={classes!("text-red-500", "mt-2")}>
+                                { format!("Max number of events to load: {}", MAX_EVENTS )}
+                            </span>
                         }
                     } else {
                         html!{}
@@ -457,8 +530,17 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             <div class={classes!("relative","overflow-x-auto","sm:rounded-lg")}>
             { if a.events.clone().into_iter().any(|e| e.stage == *stage) {
                 html!{
-            <table class={classes!("w-full","text-sm", "text-left", "text-gray-500", "dark:text-gray-400", "border-2", "dark:border-0")}>
-                <thead class={classes!("text-xs","text-gray-700", "uppercase", "bg-orange-100", "dark:bg-gray-700", "dark:text-gray-400")}>
+            <table class={classes!(
+                "w-full", "text-sm",
+                "text-left", "text-gray-500",
+                "dark:text-gray-400", "border-2",
+                "dark:border-0"
+            )}>
+                <thead class={classes!(
+                    "text-xs", "text-gray-700",
+                    "uppercase", "bg-orange-100",
+                    "dark:bg-gray-700", "dark:text-gray-400"
+                )}>
                     <tr>
                         <th scope="col" class={classes!("px-6","py-3")}>{"Event ID"}</th>
                         <th scope="col" class={classes!("px-6","py-3")}>{"Timestamp"}</th>
@@ -477,7 +559,9 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                     {
                         a.events.clone().into_iter().filter(|e| e.stage == *stage).map(|e| {
                         html!{
-                            <tr key={e.event_id.clone()} class={classes!("bg-white","border-b", "dark:bg-gray-900", "dark:border-gray-700")}>
+                            <tr key={e.event_id.clone()}
+                                class={classes!("bg-white","border-b", "dark:bg-gray-900", "dark:border-gray-700")
+                            }>
                                 <td class={classes!("px-6","py-4")}>{e.event_id}</td>
                                 <td class={classes!("px-6","py-4")}>{e.timestamp.with_timezone(&chrono::Local)}</td>
                                 <td class={classes!("px-6","py-4")}>{e.title}</td>
