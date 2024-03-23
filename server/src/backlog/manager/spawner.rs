@@ -172,15 +172,6 @@ pub fn spawn_ondemand(
                             let span = Span::current();
                             debug!(directive.id = id, "spawner creating new backlog manager");
 
-                            let mut m = mgr_opt.clone();
-                            m.backlog_option.directive =
-                                directives.iter()
-                                    .filter(|d| d.id == id)
-                                    .take(1)
-                                    .last()
-                                    .unwrap()
-                                    .to_owned();
-
                             // however, there is still period of time between:
                             // 1. a new backlog manager created below but hasn't insert its directive id into the cache
                             //    yet before the filter receive another matching event
@@ -193,20 +184,26 @@ pub fn spawn_ondemand(
                             // if the rx is locked
 
                             if Arc::strong_count(&i.upstream_rx) == 1 {
+
                                 let rx = Arc::clone(&i.upstream_rx);
+                                let mut m = mgr_opt.clone();
+                                m.backlog_option.directive =
+                                    directives.iter()
+                                        .find(|d| d.id == id)
+                                        .unwrap()
+                                        .to_owned();
                                 let b = BacklogManager::new(m, rx);
+
                                 let (ready_tx, ready_rx) = oneshot::channel::<()>();
                                 set.spawn(async move {
                                     let _detached = b.start(ready_tx).instrument(span).await;
                                 });
 
                                 if !task::block_in_place(|| {
-                                    if let Err(e) = ready_rx.blocking_recv() {
+                                    ready_rx.blocking_recv().map_err(|e| {
                                         error!(directive.id = id, "spawner failed to start backlog manager: {}", e);
-                                        false
-                                    } else {
-                                        true
-                                    }
+                                        e
+                                    }).is_ok()
                                 }) {
                                     // exit closure without notifying filter. oneshot channel should then be
                                     // closed and filter should recover
@@ -217,14 +214,12 @@ pub fn spawn_ondemand(
                                     "existing backlog manager still locking the receive channel, abort creating new one"
                                 );
                             }
-                            if let Err(e) = tx.send(()) {
-                                // the filter should be able to recover
-                                error!(
+                            tx.send(())
+                                .map_err(|_| { error!(
                                     directive.id = id,
-                                    "spawner failed to notify filter that backlog manager is ready: {:?}",
-                                    e
-                                );
-                            };
+                                    "spawner failed to notify filter that backlog manager is ready")
+                                })
+                                .ok();
                         });
                     }
                 }
