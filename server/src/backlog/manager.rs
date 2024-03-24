@@ -354,17 +354,20 @@ impl BacklogManager {
 
                     // new backlog, error here should means fatal for this directive and we should exit
 
-                    let res = self.new_backlog(&event);
-                    if let Err(e) = res {
-                        error!(directive.id = self.id, event.id, "exiting, cannot create new backlog: {}", e);
-                        break; // main loop
-                    };
-
-                    if let Ok(Some(b)) = res {
-                        let arced = Arc::new(b);
-                        let clone = Arc::clone(&arced);
-                        backlogs.push(arced);
-                        let _detached = self.start_backlog(Some(event.clone()), clone).await;
+                    match self.new_backlog(&event) {
+                        Ok(Some(b)) => {
+                            let arced = Arc::new(b);
+                            let clone = Arc::clone(&arced);
+                            backlogs.push(arced);
+                            let _detached = self.start_backlog(Some(event.clone()), clone).await;
+                        }
+                        Ok(None) => {
+                            debug!(directive.id = self.id, event.id, "cannot create new backlog due to non-fatal error, continuing");
+                        }
+                        Err(e) => {
+                            error!(directive.id = self.id, event.id, "exiting, cannot create new backlog due to fatal error: {}", e);
+                            break;
+                        }
                     }
                 },
             }
@@ -389,15 +392,10 @@ impl BacklogManager {
         }
         debug!(directive.id = self.id, event.id, "creating new backlog");
 
-        let mut opt = self.get_backlog_opt();
-        opt.event = Some(Arc::new(event.clone()));
-        let res = Backlog::new(&opt);
-        match res {
-            Ok(b) => Ok(Some(b)),
-            Err(err) => {
-                error!(directive.id = self.id, event.id, "cannot create new backlog: {}", err);
-                Ok(None)
-            }
-        }
+        let opt = BacklogOpt { event: Some(Arc::new(event.clone())), ..self.get_backlog_opt() };
+        let res = Backlog::new(&opt)
+            .map_err(|e| error!(directive.id = self.id, event.id, "cannot create new backlog: {}", e))
+            .ok();
+        Ok(res)
     }
 }
