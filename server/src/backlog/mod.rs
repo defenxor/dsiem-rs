@@ -214,13 +214,19 @@ impl Backlog {
         };
         if let Some(v) = &o.event {
             if backlog.title.contains("SRC_IP") {
-                let src: String =
-                    if let Ok(hostname) = backlog.assets.get_name(&v.src_ip) { hostname } else { v.src_ip.to_string() };
+                let src = if let Some(hostname) = backlog.assets.get_name(&v.src_ip) {
+                    hostname
+                } else {
+                    v.src_ip.to_string()
+                };
                 backlog.title = backlog.title.replace("SRC_IP", &src);
             }
             if backlog.title.contains("DST_IP") {
-                let dst: String =
-                    if let Ok(hostname) = backlog.assets.get_name(&v.dst_ip) { hostname } else { v.dst_ip.to_string() };
+                let dst = if let Some(hostname) = backlog.assets.get_name(&v.dst_ip) {
+                    hostname
+                } else {
+                    v.dst_ip.to_string()
+                };
                 backlog.title = backlog.title.replace("DST_IP", &dst);
             }
 
@@ -282,15 +288,7 @@ impl Backlog {
             }
         }
         backlog.highest_stage = backlog.rules.iter().map(|v| v.stage).max().unwrap_or_default();
-        let lowest_stage = loaded
-            .rules
-            .iter()
-            .filter(|v| {
-                let r = v.status.lock();
-                r.is_empty()
-            })
-            .map(|x| x.stage)
-            .min();
+        let lowest_stage = loaded.rules.iter().filter(|v| v.status.lock().is_empty()).map(|x| x.stage).min();
         if let Some(v) = lowest_stage {
             /* uncomment this block if directive rules are applied to backlog, which for now isn't
             if v > backlog.highest_stage {
@@ -306,9 +304,9 @@ impl Backlog {
             debug!(backlog.id, "loaded with current_stage: {}, highest_stage: {}", v, backlog.highest_stage);
             backlog.current_stage = AtomicU8::new(v);
         } else {
-            let e = anyhow!("cannot determine the current stage, skipping this backlog");
-            error!(backlog.id, "{}", e.to_string());
-            return Err(e);
+            let msg = "cannot determine the current stage, skipping this backlog";
+            error!(backlog.id, msg);
+            return Err(anyhow!(msg));
         }
 
         Ok(backlog)
@@ -488,12 +486,11 @@ impl Backlog {
 
     pub fn get_rule(&self, stage: Option<u8>) -> Result<&DirectiveRule> {
         let s = if let Some(v) = stage { v } else { self.current_stage.load(Relaxed) };
-        self.rules.iter().filter(|v| v.stage == s).last().ok_or_else(|| anyhow!("cannot locate the current rule"))
+        self.rules.iter().find(|v| v.stage == s).ok_or_else(|| anyhow!("cannot locate the current rule"))
     }
 
     fn report_to_manager(&self, match_found: bool) -> Result<()> {
-        self.found_channel.tx.send(match_found)?;
-        Ok(())
+        Ok(self.found_channel.tx.send(match_found)?)
     }
 
     pub async fn process_new_event(&self, event: &NormalizedEvent, max_delay: i64) -> Result<()> {
@@ -610,13 +607,12 @@ impl Backlog {
         let priority = self.priority;
         let reliability = self.current_rule()?.reliability;
         let risk = (priority * reliability * value) / 25;
-        if risk != prior_risk {
+        let risk_different = risk != prior_risk;
+        if risk_different {
             info!(backlog.id = self.id, "risk changed from {} to {}", prior_risk, risk);
             self.risk.swap(risk, Relaxed);
-            Ok(true)
-        } else {
-            Ok(false)
         }
+        Ok(risk_different)
     }
 
     fn update_risk_class(&self) {
@@ -677,20 +673,19 @@ impl Backlog {
     }
 
     fn delete(&self) -> Result<()> {
-        self.delete_channel.tx.send(true)?;
-        Ok(())
+        Ok(self.delete_channel.tx.send(true)?)
     }
 
     fn increase_stage(&self) -> bool {
         let stage = self.current_stage.load(Relaxed);
-        if stage < self.highest_stage {
+        let should_increase = stage < self.highest_stage;
+        if should_increase {
             self.current_stage.fetch_add(1, Relaxed);
             info!("stage increased to {}", stage + 1);
-            true
         } else {
             info!("stage is at the highest level");
-            false
         }
+        should_increase
     }
 
     fn append_and_write_event(&self, event: &NormalizedEvent, stage: Option<u8>) -> Result<()> {
@@ -733,8 +728,7 @@ impl Backlog {
 
         self.set_ports(event);
         self.set_update_time();
-        self.append_siem_alarm_events(event, stage)?;
-        Ok(())
+        self.append_siem_alarm_events(event, stage)
     }
 
     fn set_ports(&self, e: &NormalizedEvent) {
@@ -867,8 +861,7 @@ impl Backlog {
             let s = ip.to_string() + ":" + &port.to_string();
             {
                 let r = self.vulnerabilities.lock();
-                let found = r.iter().filter(|v| v.term == s).last();
-                if found.is_some() {
+                if r.iter().any(|v| v.term == s) {
                     continue;
                 }
             }
@@ -895,20 +888,16 @@ struct VulnSearchTerm {
 
 impl VulnSearchTerm {
     fn add(&mut self, ip_set: HashSet<&str>, ports: HashSet<&str>, evt_port: u16) {
-        for z in ip_set {
-            if let Ok(ip) = z.parse::<IpAddr>() {
-                if evt_port != 0 {
-                    self.terms.insert((ip, evt_port));
-                }
-                for y in ports.clone() {
-                    if let Ok(port) = y.parse::<u16>() {
-                        if port != 0 {
-                            self.terms.insert((ip, port));
-                        }
-                    }
-                }
+        ip_set.iter().filter_map(|z| z.parse::<IpAddr>().ok()).for_each(|ip| {
+            if evt_port != 0 {
+                self.terms.insert((ip, evt_port));
             }
-        }
+            ports.iter().filter_map(|y| y.parse::<u16>().ok()).for_each(|port| {
+                if port != 0 {
+                    self.terms.insert((ip, port));
+                }
+            });
+        });
     }
 }
 
