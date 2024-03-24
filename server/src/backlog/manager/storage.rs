@@ -36,7 +36,7 @@ pub async fn save(test_env: bool, directive_id: u64, source: Vec<Arc<Backlog>>) 
     let backlog_dir = utils::log_dir(test_env)?.join("backlogs");
     create_dir_all(&backlog_dir).await?;
     let filename = directive_id.to_string() + ".json";
-    let mut file = OpenOptions::new().create(true).write(true).open(backlog_dir.join(filename)).await?;
+    let mut file = OpenOptions::new().create(true).truncate(true).write(true).open(backlog_dir.join(filename)).await?;
 
     let mut backlogs = vec![];
     for b in source.into_iter() {
