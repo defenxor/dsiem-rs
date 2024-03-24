@@ -1,6 +1,15 @@
 FROM rust:slim
+
+ARG DSIEM_NIGHTLY_RUST
+RUN [ ! -z "$DSIEM_NIGHTLY_RUST" ] && \
+  rustup toolchain install nightly && \
+  rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+
 COPY . .
 WORKDIR /ctx
 RUN cd server && cargo fetch
-RUN RUSTFLAGS="-C target-feature=+crt-static" cargo build --target x86_64-unknown-linux-gnu --release
+
+ARG DSIEM_DYNAMIC_LIBGCC
+RUN ./scripts/build-glibc.sh
+
 RUN rm -rf target/release && mv target/x86_64-unknown-linux-gnu/release target/release
