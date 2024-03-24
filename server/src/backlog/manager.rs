@@ -362,10 +362,17 @@ impl BacklogManager {
                             let _detached = self.start_backlog(Some(event.clone()), clone).await;
                         }
                         Ok(None) => {
-                            debug!(directive.id = self.id, event.id, "cannot create new backlog due to non-fatal error, continuing");
+                            debug!(
+                                directive.id = self.id, event.id,
+                                "cannot create new backlog due to non-fatal error, continuing"
+                            );
                         }
                         Err(e) => {
-                            error!(directive.id = self.id, event.id, "exiting, cannot create new backlog due to fatal error: {}", e);
+                            error!(
+                                directive.id = self.id, event.id,
+                                "exiting, cannot create new backlog due to fatal error: {}",
+                                e
+                            );
                             break;
                         }
                     }
