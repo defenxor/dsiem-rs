@@ -1042,8 +1042,7 @@ mod test {
         let (bp_tx, _) = mpsc::channel::<()>(1);
         let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
-        let mut log_writer = LogWriter::new(true).unwrap();
-        let log_tx = log_writer.sender.clone();
+        let (mut log_writer, log_tx) = LogWriter::new(true).unwrap();
 
         let _ = thread::spawn(move || {
             log_writer.listener().unwrap();
@@ -1157,8 +1156,7 @@ mod test {
         let (bp_tx, _) = mpsc::channel::<()>(1);
         let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
-        let mut log_writer = LogWriter::new(true).unwrap();
-        let log_tx = log_writer.sender.clone();
+        let (mut log_writer, log_tx) = LogWriter::new(true).unwrap();
         let _ = thread::spawn(move || {
             log_writer.listener().unwrap();
         });
@@ -1257,8 +1255,7 @@ mod test {
         let (resptime_tx, _resptime_rx) = mpsc::channel::<f64>(128);
 
         info!("about to start blocking");
-        let mut log_writer = LogWriter::new(true).unwrap();
-        let log_tx = log_writer.sender.clone();
+        let (mut log_writer, log_tx) = LogWriter::new(true).unwrap();
         let _ = thread::spawn(move || {
             log_writer.listener().unwrap();
         });
