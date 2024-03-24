@@ -108,11 +108,10 @@ impl Filter {
             _ = h.join();
         }
 
-        info!("manager exiting");
-
         // tell all others to exit if they havent
         _ = self.option.cancel_tx.send(());
 
+        info!("exiting filter main thread");
         Ok(())
     }
 

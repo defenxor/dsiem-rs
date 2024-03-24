@@ -89,7 +89,7 @@ impl Watchdog {
             tokio::select! {
                 biased;
                 _ = cancel_rx.recv() => {
-                  info!("cancel signal received, exiting watchdog thread");
+                  info!("exiting watchdog thread");
                   break;
                 }
                 Some(v) = resptime_rx.recv() => {
@@ -258,6 +258,6 @@ mod test {
 
         cancel_tx.send(()).unwrap();
         sleep(Duration::from_millis(2000)).await;
-        assert!(logs_contain("cancel signal received"));
+        assert!(logs_contain("exiting watchdog thread"));
     }
 }
