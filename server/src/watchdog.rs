@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use metered::hdr_histogram::HdrHistogram;
@@ -17,6 +21,7 @@ use crate::{
 };
 
 pub const REPORT_INTERVAL_IN_SECONDS: u64 = 10;
+const RESET_EPS_EVERY_SECONDS: u64 = 60;
 const UNIT_MULTIPLIER: f64 = 1000000.0; // nano to milli
 
 #[derive(Default)]
@@ -61,15 +66,24 @@ impl Watchdog {
             }
             for s in &[
                 "dsiem_queue_length",
-                "dsiem_ttl_directives",
-                "dsiem_active_directives",
+                "dsiem_directives_total",
+                "dsiem_directives_active",
+                "dsiem_events",
+                "dsiem_events_matched",
                 "dsiem_backlogs",
-                "dsiem_matched_events",
+                "dsiem_backlogs_timedout",
             ] {
                 meter.upsert_u64(s, None)?;
             }
             meter.start()?;
         }
+
+        let round = |x: f64, decimals: u32| -> f64 {
+            let y = (10i64).pow(decimals) as f64;
+            (x * y).round() / y
+        };
+
+        let mut eps_timer_start = Instant::now();
 
         loop {
             tokio::select! {
@@ -90,10 +104,8 @@ impl Watchdog {
                 _ = report.tick() => {
 
                     let eps = round(opt.eps.metrics.count.throughput.histogram().mean(), 2);
+                    let events_count = opt.eps.metrics.count.hit_count.get();
                     let queue_length = opt.event_tx.len();
-
-                    // irrelevant for non preload_directives mode
-                    // let ttl_directives = report_map.len();
 
                     let active_directives =
                         report_map.iter().filter(|&(_, (x, _, _))|*x > 0).count();
@@ -112,28 +124,43 @@ impl Watchdog {
                     };
 
                     if let Some(ref mut meter) = meter {
-                    meter.upsert_f64("dsiem_eps", Some(eps))?;
-                    meter.upsert_f64("dsiem_avg_proc_time_ms", Some(avg_proc_time_ms))?;
-                    meter.upsert_u64("dsiem_queue_length", Some(queue_length as u64))?;
-                    meter.upsert_u64("dsiem_ttl_directives", Some(opt.ttl_directives as u64))?;
-                    meter.upsert_u64("dsiem_active_directives", Some(active_directives as u64))?;
-                    meter.upsert_u64("dsiem_backlogs", Some(backlogs as u64))?;
-                    meter.upsert_u64("dsiem_matched_events", Some(matched_events as u64))?;
+                        meter.upsert_f64("dsiem_eps", Some(eps))?;
+                        meter.upsert_f64("dsiem_avg_proc_time_ms", Some(avg_proc_time_ms))?;
+                        meter.upsert_u64("dsiem_queue_length", Some(queue_length as u64))?;
+                        meter.upsert_u64("dsiem_directives_total", Some(opt.ttl_directives as u64))?;
+                        meter.upsert_u64("dsiem_directives_active", Some(active_directives as u64))?;
+                        meter.upsert_u64("dsiem_events", Some(events_count))?;
+                        meter.upsert_u64("dsiem_events_matched", Some(matched_events as u64))?;
+                        meter.upsert_u64("dsiem_backlogs", Some(backlogs as u64))?;
+                        meter.upsert_u64("dsiem_backlogs_timedout", Some(timedout_backlogs as u64))?;
                     }
 
                     let rounded_avg_proc_time_ms = (avg_proc_time_ms * 1000.0).round() / 1000.0;
 
                     info!(
-                    eps,
-                    queue_length,
-                    avg_proc_time_ms =  rounded_avg_proc_time_ms,
-                    ttl_directives = opt.ttl_directives,
-                    active_directives,
-                    matched_events,
-                    backlogs,
-                    timedout_backlogs,
-                    "watchdog report"
+                        eps,
+                        queue_length,
+                        avg_proc_time_ms =  rounded_avg_proc_time_ms,
+                        directives_ttl = opt.ttl_directives,
+                        directives_active = active_directives,
+                        events_rcvd = events_count,
+                        events_matched = matched_events,
+                        backlogs,
+                        backlogs_timedout = timedout_backlogs,
+                        "watchdog report"
                     );
+
+                    if events_count != 0 {
+                        eps_timer_start = Instant::now();
+                    } else if eps_timer_start.elapsed().as_secs() >= RESET_EPS_EVERY_SECONDS && eps > 0.01 {
+                        // this injects 1 event to wind down the histogram if there's no events
+                        // for a period of RESET_EPS_EVERY_SECONDS.
+                        opt.eps.count();
+                        eps_timer_start = Instant::now();
+                    }
+
+                    // reset, this only counts received events since last report
+                    opt.eps.metrics.count.hit_count.set(0);
 
                     if queue_length != 0 && avg_proc_time_ms > max_proc_time_ms {
                     warn!(
@@ -150,11 +177,6 @@ impl Watchdog {
         }
         Ok(())
     }
-}
-
-fn round(x: f64, decimals: u32) -> f64 {
-    let y = (10i64).pow(decimals) as f64;
-    (x * y).round() / y
 }
 
 #[cfg(test)]
