@@ -313,9 +313,15 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         false => Some(LazyLoaderConfig::new(n, (sargs.dir_idle_timeout * 60) as u64)),
     };
 
-    let mut log_writer = LogWriter::new(test_env)?;
-    let log_tx = log_writer.sender.clone();
-    let _ = thread::spawn(move || log_writer.listener());
+    let (mut log_writer, log_tx) = LogWriter::new(test_env)?;
+    let cancel_tx_clone = cancel_tx.clone();
+    let _handle_filewriter = thread::spawn(move || {
+        // this could exit because the channel is closed by shutdown process initiated
+        // from other threads, or fatal file access/write errors. Either way,
+        // we're exiting the process.
+        _ = log_writer.listener();
+        _ = cancel_tx_clone.send(());
+    });
 
     let load_param = validator::load_param(sargs.max_queue, sargs.max_eps);
 
@@ -329,30 +335,30 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         n
     );
 
-    let opt = parser::ParserOpt {
-        test_env,
-        reload_backlogs: sargs.reload_backlogs,
-        lazy_loader: lazy_loader.clone(),
-        assets,
-        intels,
-        vulns,
-        max_delay,
-        min_alarm_lifetime,
-        backpressure_tx: bp_tx,
-        resptime_tx,
-        cancel_tx: cancel_tx.clone(),
-        med_risk_max: sargs.med_risk_max,
-        med_risk_min: sargs.med_risk_min,
-        default_status: sargs.status[0].clone(),
-        default_tag: sargs.tags[0].clone(),
-        intel_private_ip: sargs.intel_private_ip,
-        report_tx,
-        load_param: load_param.clone(),
-        log_tx,
+    let (filter_targets, manager_spawner, id_tx) = {
+        let opt = parser::ParserOpt {
+            test_env,
+            reload_backlogs: sargs.reload_backlogs,
+            lazy_loader: lazy_loader.clone(),
+            assets,
+            intels,
+            vulns,
+            max_delay,
+            min_alarm_lifetime,
+            backpressure_tx: bp_tx,
+            resptime_tx,
+            cancel_tx: cancel_tx.clone(),
+            med_risk_max: sargs.med_risk_max,
+            med_risk_min: sargs.med_risk_min,
+            default_status: sargs.status[0].clone(),
+            default_tag: sargs.tags[0].clone(),
+            intel_private_ip: sargs.intel_private_ip,
+            report_tx,
+            load_param: load_param.clone(),
+            log_tx,
+        };
+        parser::targets_and_spawner_from_directives(&directives, sargs.preload_directives, &opt)
     };
-
-    let (filter_targets, manager_spawner, id_tx) =
-        parser::targets_and_spawner_from_directives(&directives, sargs.preload_directives, &opt);
 
     // start manager spawner first before filter
 
@@ -376,10 +382,18 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     });
 
     if listen {
+        // manager or spawner will be closed first by cancel signal,
+        // wherever it comes from
         _ = handle_manager.join();
+        // cancel signal will also close messenger, which will close recv() in filter
+        // and causing it to initiate ordely exit
         if let Ok(Err(e)) = handle_filter.join() {
             return Err(e);
         }
+        // this currently doesn't return despite all other threads have exited
+        // regardless, we're exiting this function which guarantees that all
+        // senders will be dropped
+        // _ = _handle_filewriter.join();
     } else {
         thread::sleep(Duration::from_secs(1));
     }

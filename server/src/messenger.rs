@@ -179,7 +179,7 @@ impl Worker {
                     }
                 },
                 _ = opt.cancel_rx.recv() => {
-                    info!("cancel signal received, exiting worker thread");
+                    info!("exiting messenger thread");
                     break;
                 },
             }
@@ -306,7 +306,7 @@ mod test {
 
         _ = cancel_tx.send(());
         sleep(Duration::from_millis(1000)).await;
-        assert!(logs_contain("cancel signal received"));
+        assert!(logs_contain("exiting messenger thread"));
     }
 
     #[tokio::test]

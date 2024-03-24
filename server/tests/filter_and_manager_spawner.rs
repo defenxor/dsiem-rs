@@ -90,8 +90,7 @@ async fn run_manager(
     let span = Span::current();
     let tx_clone = event_tx.clone();
 
-    let mut log_writer = LogWriter::new(true).unwrap();
-    let log_tx = log_writer.sender.clone();
+    let (mut log_writer, log_tx) = LogWriter::new(true).unwrap();
 
     let preload_directives = lazy_loader.is_none();
 
@@ -215,7 +214,7 @@ async fn test_filter_and_loader_preload_dirs() {
     sleep(Duration::from_millis(4000)).await;
     drop(event_tx);
     sleep(Duration::from_millis(500)).await;
-    assert!(logs_contain("manager exiting"));
+    assert!(logs_contain("exiting filter main thread"));
 
     _ = manager_handle.await;
 }
@@ -322,7 +321,7 @@ async fn test_filter_and_loader_no_preload_dirs() {
     drop(event_tx);
     sleep(Duration::from_millis(5000)).await;
 
-    assert!(logs_contain("manager exiting"));
+    assert!(logs_contain("exiting filter main thread"));
 
     _ = manager_handle.await;
 
