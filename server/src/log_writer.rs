@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Result;
 use parking_lot::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::utils;
 
@@ -69,7 +69,6 @@ impl LogWriter {
             return Err(anyhow::anyhow!("missing file {}", message.file_type));
         }
         lock.write_all(message.data.as_bytes())?;
-        lock.flush()?;
         Ok(())
     }
 
@@ -80,7 +79,8 @@ impl LogWriter {
                 e
             })?;
             if let Err(e) = self.write(&msg) {
-                error!("log writer error: {}, will try to re-create/open it", e);
+                // this also happens on first time file creation, so not always unexpected
+                warn!("log writer error: {}, will try to re-create/open it", e);
                 let file = LogWriter::init_file(&self.log_dir, &msg.file_type.to_string()).map_err(|e| {
                     error!("cannot initialize {}: {}", &msg.file_type, e);
                     e
@@ -93,6 +93,9 @@ impl LogWriter {
                         self.alarm_file = file.clone();
                     }
                 }
+                if let Err(e) = self.write(&msg) {
+                    error!("log writer: skipping entry, still can't write to {}: {}", msg.file_type, e);
+                }
             }
         }
     }
@@ -103,24 +106,76 @@ impl LogWriter {
 mod tests {
     use std::{io::Read, thread, time::Duration};
 
+    use tracing::Span;
+    use tracing_test::traced_test;
+
     use super::*;
 
     #[test]
+    #[traced_test]
     fn test_log_writer() {
+        let log_dir = utils::log_dir(true).unwrap();
+
+        let clean_up = || {
+            for file_name in [ALARM_LOG, ALARM_EVENT_LOG] {
+                let file_path = log_dir.join(file_name);
+                _ = fs::remove_file(&file_path);
+            }
+        };
+        clean_up();
+
         let data = "meivosh8aThua2aefiu5ci3Nohkeew".to_string();
         let (mut writer, sender) = LogWriter::new(true).unwrap();
 
+        let span = Span::current();
         _ = thread::spawn(move || {
+            let _guard = span.entered();
             _ = writer.listener();
         });
 
-        sender.send(LogWriterMessage { file_type: FileType::Alarm, data: data.clone() }).unwrap();
+        for (file_type, file_name) in [(FileType::Alarm, ALARM_LOG), (FileType::AlarmEvent, ALARM_EVENT_LOG)] {
+            let msg = LogWriterMessage { file_type, data: data.clone() };
 
-        thread::sleep(Duration::from_secs(1));
-        let log_dir = utils::log_dir(true).unwrap();
-        let mut alarm_file = OpenOptions::new().read(true).open(log_dir.join(ALARM_LOG)).unwrap();
-        let mut res = String::new();
-        alarm_file.read_to_string(&mut res).unwrap();
-        assert!(res.contains(&data));
+            let file_path = log_dir.join(file_name);
+            info!("testing using file: {:?}", file_path);
+
+            // send a message and verify content is written to file
+            sender.send(msg.clone()).unwrap();
+            thread::sleep(Duration::from_millis(500));
+
+            let mut file = OpenOptions::new().read(true).open(&file_path).unwrap();
+            let mut res = String::new();
+            file.read_to_string(&mut res).unwrap();
+            assert!(res.contains(&data));
+
+            // simulate file deletion, should be re-created
+            fs::remove_file(log_dir.join(file_name)).unwrap();
+            sender.send(msg.clone()).unwrap();
+            thread::sleep(Duration::from_millis(500));
+
+            let res = OpenOptions::new().read(true).open(&file_path);
+            assert!(res.is_ok());
+
+            let expected = format!("log writer error: missing file {}", file_name);
+            logs_assert(|lines: &[&str]| match lines.iter().filter(|line| line.contains(&expected)).count() {
+                1 => Ok(()),
+                n => Err(format!("Expected 1 matching logs, but found {}", n)),
+            });
+
+            /*
+                # simulate inaccessible file, doesn't work because writer still has the file open
+                # with prev permissions
+
+                let mut perms = fs::metadata(&file_path).unwrap().permissions();
+                perms.set_readonly(true);
+                fs::set_permissions(&file_path, perms).unwrap();
+
+                info!("writing to read-only file {:?}", file_path);
+                sender.send(msg.clone()).unwrap();
+                logs_contain("cannot initialize");
+            */
+        }
+
+        clean_up();
     }
 }
