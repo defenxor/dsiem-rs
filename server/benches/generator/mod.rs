@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use arcstr::ArcStr;
 use dsiem::rule::{SIDPair, TaxoPair};
 use rand::{distributions::Alphanumeric, Rng};
 
@@ -27,10 +28,16 @@ pub fn gen_taxopairs(correct_pair: TaxoPair, n: u64) -> Vec<TaxoPair> {
         } else {
             // use one of the correct product for the 2nd half
             let pos = rand::thread_rng().gen_range(0..correct_pair.product.len());
-            vec![correct_pair.product[pos].clone()]
+            vec![correct_pair.product[pos].to_string()]
         };
         let category: String = rand::thread_rng().sample_iter(&Alphanumeric).take(10).map(char::from).collect();
-        pairs.push(TaxoPair { product, category });
+        let mut p: Vec<ArcStr> = vec![];
+
+        for i in product {
+            let a = ArcStr::from(i.as_str());
+            p.push(a)
+        }
+        pairs.push(TaxoPair { product: p, category: category.into() });
     }
     pairs.push(correct_pair);
     pairs

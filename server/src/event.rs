@@ -1,5 +1,6 @@
 use std::{collections::HashMap, net::IpAddr, str::FromStr};
 
+use arcstr::ArcStr;
 use chrono::prelude::*;
 use serde::Serialize;
 use serde_derive::Deserialize;
@@ -12,8 +13,8 @@ pub struct NormalizedEvent {
     #[serde(rename(deserialize = "event_id", serialize = "event_id"))]
     pub id: String,
     pub timestamp: DateTime<Utc>,
-    pub sensor: String,
-    pub title: String,
+    pub sensor: ArcStr,
+    pub title: ArcStr,
     pub src_ip: IpAddr,
     pub dst_ip: IpAddr,
 
@@ -23,33 +24,33 @@ pub struct NormalizedEvent {
     #[serde(default)]
     pub plugin_sid: u64,
     #[serde(default)]
-    pub product: String,
+    pub product: ArcStr,
     #[serde(default)]
-    pub category: String,
+    pub category: ArcStr,
 
     // optionals
     #[serde(default)]
-    pub subcategory: String,
+    pub subcategory: ArcStr,
     #[serde(default)]
     pub src_port: u16,
     #[serde(default)]
     pub dst_port: u16,
     #[serde(default)]
-    pub protocol: String,
+    pub protocol: ArcStr,
     #[serde(default)]
     pub conn_id: u64,
     #[serde(default)]
-    pub custom_data1: String,
+    pub custom_data1: ArcStr,
     #[serde(default)]
-    pub custom_label1: String,
+    pub custom_label1: ArcStr,
     #[serde(default)]
-    pub custom_data2: String,
+    pub custom_data2: ArcStr,
     #[serde(default)]
-    pub custom_label2: String,
+    pub custom_label2: ArcStr,
     #[serde(default)]
-    pub custom_data3: String,
+    pub custom_data3: ArcStr,
     #[serde(default)]
-    pub custom_label3: String,
+    pub custom_label3: ArcStr,
     #[serde(default)]
     pub rcvd_time: i64, // for backpressure control
     #[serde(default)]
@@ -65,21 +66,21 @@ impl Default for NormalizedEvent {
             dst_ip: IpAddr::from_str("0.0.0.0").unwrap(),
             src_port: 0,
             dst_port: 0,
-            sensor: "".to_owned(),
-            protocol: "".to_owned(),
-            title: "".to_owned(),
+            sensor: "".into(),
+            protocol: "".into(),
+            title: "".into(),
             conn_id: 0,
             plugin_id: 0,
             plugin_sid: 0,
-            product: "".to_owned(),
-            category: "".to_owned(),
-            subcategory: "".to_owned(),
-            custom_data1: "".to_owned(),
-            custom_label1: "".to_owned(),
-            custom_data2: "".to_owned(),
-            custom_label2: "".to_owned(),
-            custom_data3: "".to_owned(),
-            custom_label3: "".to_owned(),
+            product: "".into(),
+            category: "".into(),
+            subcategory: "".into(),
+            custom_data1: "".into(),
+            custom_label1: "".into(),
+            custom_data2: "".into(),
+            custom_label2: "".into(),
+            custom_data3: "".into(),
+            custom_label3: "".into(),
             rcvd_time: 0,
             carrier: HashMap::new(),
         }
@@ -110,7 +111,7 @@ mod test {
 
         e.id = "foo".to_owned();
         assert!(!e.valid());
-        e.title = "bar".to_owned();
+        e.title = "bar".into();
         assert!(!e.valid());
         e.timestamp = Utc::now();
         assert!(!e.valid());
@@ -118,7 +119,7 @@ mod test {
         assert!(!e.valid());
         e.dst_ip = IpAddr::from_str("0.0.0.0").unwrap();
         assert!(!e.valid());
-        e.sensor = "qux".to_owned();
+        e.sensor = "qux".into();
         assert!(!e.valid());
 
         e.plugin_id = 1001;
@@ -133,9 +134,9 @@ mod test {
         e.plugin_id = 0;
         assert!(!e.valid());
 
-        e.product = "iptables".to_owned();
+        e.product = "iptables".into();
         assert!(!e.valid());
-        e.category = "Firewall".to_owned();
+        e.category = "Firewall".into();
         assert!(e.valid());
 
         let s = r#"

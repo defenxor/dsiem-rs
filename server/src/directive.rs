@@ -5,6 +5,7 @@ use regex::Regex;
 use serde_derive::Deserialize;
 extern crate glob;
 use anyhow::{anyhow, Result};
+use arcstr::ArcStr;
 use glob::glob;
 use tracing::{info, warn};
 
@@ -19,14 +20,14 @@ const DIRECTIVES_GLOB: &str = "directives_*.json";
 #[derive(Deserialize, Debug, Clone)]
 pub struct Directive {
     pub id: u64,
-    pub name: String,
+    pub name: ArcStr,
     pub priority: u8,
     #[serde(default)]
     pub disabled: bool,
     #[serde(default)]
     pub all_rules_always_active: bool,
-    pub kingdom: String,
-    pub category: String,
+    pub kingdom: ArcStr,
+    pub category: ArcStr,
     pub rules: Vec<rule::DirectiveRule>,
     #[serde(rename(deserialize = "sticky_different"))]
     #[serde(default)]
@@ -53,10 +54,10 @@ impl Directive {
                 // addresses from event
                 if self.all_rules_always_active {
                     if r.from == "ANY" || r.from == "HOME_NET" || r.from == "!HOME_NET" {
-                        r.from = e.src_ip.to_string();
+                        r.from = e.src_ip.to_string().into();
                     }
                     if r.to == "ANY" || r.to == "HOME_NET" || r.to == "!HOME_NET" {
-                        r.to = e.dst_ip.to_string();
+                        r.to = e.dst_ip.to_string().into();
                     }
                 }
                 // reference isn't allowed on first rule so we'll skip the rest
@@ -72,40 +73,40 @@ impl Directive {
                 let vmin1 = usize::from(v - 1);
                 let refs = &self.rules[vmin1].from;
                 r.from = if refs != "ANY" && refs != "HOME_NET" && refs != "!HOME_NET" {
-                    refs.to_string()
+                    refs.to_string().into()
                 } else {
-                    e.src_ip.to_string()
+                    e.src_ip.to_string().into()
                 };
             }
             if let Ok(v) = utils::ref_to_digit(&r.to) {
                 let refs = &self.rules[usize::from(v - 1)].to;
                 r.to = if refs != "ANY" && refs != "HOME_NET" && refs != "!HOME_NET" {
-                    refs.to_string()
+                    refs.to_string().into()
                 } else {
-                    e.dst_ip.to_string()
+                    e.dst_ip.to_string().into()
                 };
             }
             if let Ok(v) = utils::ref_to_digit(&r.port_from) {
                 let refs = &self.rules[usize::from(v - 1)].port_from;
-                r.port_from = if refs != "ANY" { refs.to_string() } else { e.src_port.to_string() };
+                r.port_from = if refs != "ANY" { refs.to_string().into() } else { e.src_port.to_string().into() };
             }
             if let Ok(v) = utils::ref_to_digit(&r.port_to) {
                 let refs = &self.rules[usize::from(v - 1)].port_to;
-                r.port_to = if refs != "ANY" { refs.to_string() } else { e.dst_port.to_string() };
+                r.port_to = if refs != "ANY" { refs.to_string().into() } else { e.dst_port.to_string().into() };
             }
 
             // references in custom data
             if let Ok(v) = utils::ref_to_digit(&r.custom_data1) {
                 let refs = &self.rules[usize::from(v - 1)].custom_data1;
-                r.custom_data1 = if refs != "ANY" { refs.to_string() } else { e.custom_data1.clone() };
+                r.custom_data1 = if refs != "ANY" { refs.to_string().into() } else { e.custom_data1.clone() };
             }
             if let Ok(v) = utils::ref_to_digit(&r.custom_data2) {
                 let refs = &self.rules[usize::from(v - 1)].custom_data2;
-                r.custom_data2 = if refs != "ANY" { refs.to_string() } else { e.custom_data2.clone() };
+                r.custom_data2 = if refs != "ANY" { refs.to_string().into() } else { e.custom_data2.clone() };
             }
             if let Ok(v) = utils::ref_to_digit(&r.custom_data3) {
                 let refs = &self.rules[usize::from(v - 1)].custom_data3;
-                r.custom_data3 = if refs != "ANY" { refs.to_string() } else { e.custom_data3.clone() };
+                r.custom_data3 = if refs != "ANY" { refs.to_string().into() } else { e.custom_data3.clone() };
             }
             result.push(r);
         }
@@ -172,14 +173,14 @@ fn validate_rules(rules: &Vec<rule::DirectiveRule>) -> Result<()> {
     Ok(())
 }
 
-fn validate_fromto(s: String, is_first_rule: bool, highest_stage: u8) -> Result<(), String> {
+fn validate_fromto(s: ArcStr, is_first_rule: bool, highest_stage: u8) -> Result<(), String> {
     if s == "ANY" || s == "HOME_NET" || s == "!HOME_NET" {
         return Ok(());
     }
     if s.is_empty() {
         return Err("empty string".to_string());
     }
-    if is_reference(s.clone()) {
+    if is_reference(&s) {
         if is_first_rule {
             return Err("first rule cannot have reference".to_string());
         }
@@ -195,11 +196,11 @@ fn validate_fromto(s: String, is_first_rule: bool, highest_stage: u8) -> Result<
     Ok(())
 }
 
-fn validate_port(s: String, is_first_rule: bool, highest_stage: u8) -> Result<(), String> {
+fn validate_port(s: ArcStr, is_first_rule: bool, highest_stage: u8) -> Result<(), String> {
     if s == "ANY" {
         return Ok(());
     }
-    if is_reference(s.clone()) {
+    if is_reference(&s) {
         if is_first_rule {
             return Err("first rule cannot have reference".to_string());
         }
@@ -216,19 +217,19 @@ fn validate_port(s: String, is_first_rule: bool, highest_stage: u8) -> Result<()
     Ok(())
 }
 
-fn is_reference(str: String) -> bool {
+fn is_reference(str: &str) -> bool {
     str.starts_with(':')
 }
 
-fn validate_reference(r: String, highest_stage: u8) -> Result<(), String> {
+fn validate_reference(r: ArcStr, highest_stage: u8) -> Result<(), String> {
     let re = Regex::new(r"^:[1-9][0-9]?$").map_err(|e| e.to_string())?;
     if !re.is_match(&r) {
-        return Err(r + " is not a valid reference");
+        return Err(format!("{} is not a valid reference", r));
     }
 
     if let Ok(n) = ref_to_digit(&r) {
         if n > highest_stage {
-            return Err(r + " is not a valid reference");
+            return Err(format!("{} is not a valid reference", r));
         }
     }
     Ok(())

@@ -371,9 +371,9 @@ mod test {
         event.plugin_sid = 50001;
         event.src_ip = "192.168.0.2".parse().unwrap();
         event.dst_ip = "0.0.0.0".parse().unwrap();
-        event.sensor = "foo".to_owned();
+        event.sensor = "foo".into();
         event.id = "foo".to_owned();
-        event.title = "bar".to_owned();
+        event.title = "bar".into();
         event.timestamp = chrono::Utc::now();
 
         let res = handle_event_message(&assets, &event_tx, &event).await;

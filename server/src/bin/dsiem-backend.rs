@@ -1,6 +1,7 @@
 use std::{process::ExitCode, sync::Arc, thread, time::Duration};
 
 use anyhow::{anyhow, Result};
+use arcstr::ArcStr;
 use clap::{arg, command, Args, Parser, Subcommand};
 use dsiem::{
     asset::NetworkAssets,
@@ -80,7 +81,7 @@ struct ServeArgs {
         value_delimiter = ',',
         default_value = "Open,In-Progress,Closed"
     )]
-    status: Vec<String>,
+    status: Vec<ArcStr>,
     /// Alarm tags to use, the first one will be assigned to new alarms
     #[arg(
         short('t'),
@@ -91,7 +92,7 @@ struct ServeArgs {
         value_delimiter = ',',
         default_value = "Identified Threat,False Positive,Valid Threat,Security Incident"
     )]
-    tags: Vec<String>,
+    tags: Vec<ArcStr>,
     /// Minimum alarm risk value to be classified as Medium risk. Lower value
     /// than this will be classified as Low risk
     #[arg(long = "med_risk_min", value_name = "2 to 8", env = "DSIEM_MEDRISKMIN", default_value_t = 3)]

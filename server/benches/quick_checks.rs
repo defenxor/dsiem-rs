@@ -63,8 +63,7 @@ pub fn quick_check_taxo_rule_with_rayon(pairs: &[TaxoPair], e: &NormalizedEvent)
 }
 
 fn bench_quick_check_taxo_rule(c: &mut Criterion) {
-    let correct_pair =
-        TaxoPair { product: vec!["Suricata".to_string(), "Snort".to_string()], category: "Firewall".to_string() };
+    let correct_pair = TaxoPair { product: vec!["Suricata".into(), "Snort".into()], category: "Firewall".into() };
     let event = NormalizedEvent {
         product: correct_pair.product[1].clone(),
         category: correct_pair.category.clone(),

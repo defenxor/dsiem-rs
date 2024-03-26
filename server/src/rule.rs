@@ -1,6 +1,7 @@
 use std::{collections::HashSet, net::IpAddr, sync::Arc};
 
 use anyhow::Result;
+use arcstr::ArcStr;
 use cidr::IpCidr;
 use parking_lot::Mutex;
 use serde::{Deserializer, Serializer};
@@ -50,8 +51,8 @@ pub struct DirectiveRule {
     pub name: String,
     pub stage: u8,
     pub occurrence: usize,
-    pub from: String,
-    pub to: String,
+    pub from: ArcStr,
+    pub to: ArcStr,
     #[serde(default)]
     pub plugin_id: u64,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -59,18 +60,18 @@ pub struct DirectiveRule {
     pub plugin_sid: Vec<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
-    pub product: Vec<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    pub product: Vec<ArcStr>,
+    #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub category: String,
+    pub category: ArcStr,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
-    pub subcategory: Vec<String>,
+    pub subcategory: Vec<ArcStr>,
     #[serde(rename(deserialize = "type", serialize = "type"))]
     pub rule_type: RuleType,
-    pub port_from: String,
-    pub port_to: String,
-    pub protocol: String,
+    pub port_from: ArcStr,
+    pub port_to: ArcStr,
+    pub protocol: ArcStr,
     pub reliability: u8,
     pub timeout: u32,
     #[serde(skip_serializing_if = "is_locked_zero_or_less")]
@@ -81,28 +82,28 @@ pub struct DirectiveRule {
     pub end_time: Arc<Mutex<i64>>,
     #[serde(skip_serializing_if = "is_locked_string_empty")]
     #[serde(default)]
-    pub status: Arc<Mutex<String>>,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    pub status: Arc<Mutex<ArcStr>>,
+    #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub sticky_different: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    pub sticky_different: ArcStr,
+    #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub custom_data1: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    pub custom_data1: ArcStr,
+    #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub custom_label1: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    pub custom_label1: ArcStr,
+    #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub custom_data2: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    pub custom_data2: ArcStr,
+    #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub custom_label2: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    pub custom_label2: ArcStr,
+    #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub custom_data3: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    pub custom_data3: ArcStr,
+    #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub custom_label3: String,
+    pub custom_label3: ArcStr,
     #[serde(skip)]
     pub sticky_diffdata: Arc<Mutex<StickyDiffData>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,7 +120,7 @@ fn is_locked_zero_or_less(num: &Arc<Mutex<i64>>) -> bool {
     *r <= 0
 }
 // This is only used for serialize
-fn is_locked_string_empty(s: &Arc<Mutex<String>>) -> bool {
+fn is_locked_string_empty(s: &Arc<Mutex<ArcStr>>) -> bool {
     let r = s.lock();
     r.is_empty()
 }
@@ -429,8 +430,8 @@ pub struct SIDPair {
 }
 #[derive(Clone, Debug)]
 pub struct TaxoPair {
-    pub product: Vec<String>,
-    pub category: String,
+    pub product: Vec<ArcStr>,
+    pub category: ArcStr,
 }
 
 // GetQuickCheckPairs returns SIDPairs and TaxoPairs for a given set of
@@ -563,11 +564,8 @@ mod test {
     fn test_get_quick_check_pairs() {
         let r1 = DirectiveRule { plugin_id: 1, plugin_sid: vec![1, 2, 3], ..Default::default() };
 
-        let r2 = DirectiveRule {
-            product: vec!["checkpoint".to_string()],
-            category: "firewall".to_string(),
-            ..Default::default()
-        };
+        let r2 =
+            DirectiveRule { product: vec!["checkpoint".into()], category: "firewall".into(), ..Default::default() };
         let rules = vec![r1.clone(), r2];
         let (p, q) = get_quick_check_pairs(&rules);
         assert!(!p.is_empty());
@@ -599,18 +597,15 @@ mod test {
     #[test]
     fn test_quick_check_taxo_rule() {
         let pair = vec![
-            TaxoPair {
-                category: "firewall".to_owned(),
-                product: vec!["checkpoint".to_owned(), "fortigate".to_owned()],
-            },
-            TaxoPair { category: "waf".to_owned(), product: vec!["f5".to_owned(), "modsec".to_owned()] },
+            TaxoPair { category: "firewall".into(), product: vec!["checkpoint".into(), "fortigate".into()] },
+            TaxoPair { category: "waf".into(), product: vec!["f5".into(), "modsec".into()] },
         ];
         let mut event =
-            NormalizedEvent { product: "checkpoint".to_owned(), category: "firewall".to_owned(), ..Default::default() };
+            NormalizedEvent { product: "checkpoint".into(), category: "firewall".into(), ..Default::default() };
         assert!(quick_check_taxo_rule(&pair, &event));
-        event.category = "waf".to_string();
+        event.category = "waf".into();
         assert!(!quick_check_taxo_rule(&pair, &event));
-        event.product = "pf".to_string();
+        event.product = "pf".into();
         assert!(!quick_check_taxo_rule(&pair, &event))
     }
 
@@ -705,22 +700,22 @@ mod test {
             rule_type: RuleType::PluginRule,
             plugin_id: 1001,
             plugin_sid: vec![50001],
-            product: vec!["IDS".to_string()],
-            category: "Malware".to_string(),
-            subcategory: vec!["C&C Communication".to_string()],
-            from: "HOME_NET".to_string(),
-            to: "ANY".to_string(),
-            port_from: "ANY".to_string(),
-            port_to: "ANY".to_string(),
-            protocol: "ANY".to_string(),
+            product: vec!["IDS".into()],
+            category: "Malware".into(),
+            subcategory: vec!["C&C Communication".into()],
+            from: "HOME_NET".into(),
+            to: "ANY".into(),
+            port_from: "ANY".into(),
+            port_to: "ANY".into(),
+            protocol: "ANY".into(),
             ..Default::default()
         };
         let mut e1 = NormalizedEvent {
             plugin_id: 1001,
             plugin_sid: 50001,
-            product: "IDS".to_string(),
-            category: "Malware".to_string(),
-            subcategory: "C&C Communication".to_string(),
+            product: "IDS".into(),
+            category: "Malware".into(),
+            subcategory: "C&C Communication".into(),
             src_ip: IpAddr::from_str("192.168.0.1").unwrap(),
             dst_ip: IpAddr::from_str("8.8.8.200").unwrap(),
             src_port: 31337,
@@ -739,19 +734,19 @@ mod test {
         r3.rule_type = RuleType::TaxonomyRule;
 
         let mut r4 = r3.clone();
-        r4.category = "Scanning".to_string();
+        r4.category = "Scanning".into();
 
         let mut r5 = r1.clone();
         r5.plugin_id = 1002;
 
         let mut r6 = r3.clone();
-        r6.product = vec!["Firewall".to_string()];
+        r6.product = vec!["Firewall".into()];
 
         let mut r7 = r3.clone();
         r7.subcategory = vec![];
 
         let mut r8 = r3.clone();
-        r8.subcategory = vec!["Firewall Allow".to_string()];
+        r8.subcategory = vec!["Firewall Allow".into()];
 
         // unsupported type
         // let mut r9 = r1.clone();
@@ -764,73 +759,73 @@ mod test {
         let r10 = r1.clone();
 
         let mut r11 = r1.clone();
-        r11.from = "!HOME_NET".to_string();
+        r11.from = "!HOME_NET".into();
 
         let mut r12 = r1.clone();
-        r12.from = "192.168.0.10".to_string();
+        r12.from = "192.168.0.10".into();
 
         let mut r13 = r1.clone();
-        r13.to = "HOME_NET".to_string();
+        r13.to = "HOME_NET".into();
 
         let mut e3 = e1.clone();
         e3.dst_ip = e1.src_ip;
         let mut r14 = r1.clone();
-        r14.to = "!HOME_NET".to_string();
+        r14.to = "!HOME_NET".into();
 
         let mut r15 = r1.clone();
-        r15.to = "192.168.0.10".to_string();
+        r15.to = "192.168.0.10".into();
 
         // port_from and port_to
         let mut r16 = r1.clone();
-        r16.port_from = "1337".to_string();
+        r16.port_from = "1337".into();
 
         let mut r17 = r1.clone();
-        r17.port_to = "1337".to_string();
+        r17.port_to = "1337".into();
 
         // rules with custom data
 
         let mut rc1 = r1.clone();
-        rc1.custom_data1 = "deny".to_string();
+        rc1.custom_data1 = "deny".into();
         let ec1 = e1.clone();
 
         let rc2 = rc1.clone();
         let mut ec2 = ec1.clone();
-        ec2.custom_data1 = "deny".to_string();
+        ec2.custom_data1 = "deny".into();
 
         let mut rc3 = rc1.clone();
         let ec3 = ec2.clone();
-        rc3.custom_data2 = "malware".to_string();
+        rc3.custom_data2 = "malware".into();
 
         let rc4 = rc3.clone();
         let mut ec4 = ec3.clone();
-        ec4.custom_data2 = "malware".to_string();
+        ec4.custom_data2 = "malware".into();
 
         let rc5 = rc4.clone();
         let mut ec5 = ec4.clone();
-        ec5.custom_data2 = "exploit".to_string();
+        ec5.custom_data2 = "exploit".into();
 
         let mut rc6 = rc5.clone();
         let ec6 = ec5.clone();
-        rc6.custom_data3 = "7000".to_string();
+        rc6.custom_data3 = "7000".into();
 
         let rc7 = rc6.clone();
         let mut ec7 = ec6.clone();
-        ec7.custom_data3 = "7000".to_string();
+        ec7.custom_data3 = "7000".into();
 
         let rc8 = rc7.clone();
         let mut ec8 = ec7.clone();
-        ec8.custom_data2 = "malware".to_string();
+        ec8.custom_data2 = "malware".into();
 
         let mut rc9 = rc8.clone();
         let ec9 = ec8.clone();
-        rc9.custom_data2 = "!malware".to_string();
+        rc9.custom_data2 = "!malware".into();
 
         // StickyDiff rules
         // TODO: add the appropriate test that test the length of stickyDiffData
         // before and after
 
         let mut rs1 = r1.clone();
-        rs1.sticky_different = "PLUGIN_SID".to_string();
+        rs1.sticky_different = "PLUGIN_SID".into();
         let s1 = StickyDiffData { sdiff_int: vec![50001], ..Default::default() };
 
         let s2 = s1.clone();
@@ -838,95 +833,95 @@ mod test {
 
         let s3 = StickyDiffData { sdiff_int: vec![50001], sdiff_string: vec!["192.168.0.1".to_string()] };
         let mut rs3 = rs1.clone();
-        rs3.sticky_different = "SRC_IP".to_string();
+        rs3.sticky_different = "SRC_IP".into();
 
         let mut s4 = s3.clone();
         s4.sdiff_string.push("8.8.8.200".to_string());
         let mut rs4 = rs1.clone();
-        rs4.sticky_different = "DST_IP".to_string();
+        rs4.sticky_different = "DST_IP".into();
 
         let s8 = StickyDiffData { sdiff_int: vec![31337], ..Default::default() };
         let mut rs8 = r1.clone().reset_arc_fields();
-        rs8.sticky_different = "SRC_PORT".to_string();
+        rs8.sticky_different = "SRC_PORT".into();
 
         let mut s9 = s8.clone();
         s9.sdiff_int.push(80);
         let mut rs9 = rs8.clone();
-        rs9.sticky_different = "DST_PORT".to_string();
+        rs9.sticky_different = "DST_PORT".into();
 
-        let s10 = StickyDiffData { sdiff_string: vec!["foo".to_string()], ..Default::default() };
+        let s10 = StickyDiffData { sdiff_string: vec!["foo".into()], ..Default::default() };
         let mut rs10 = r1.clone().reset_arc_fields();
-        rs10.custom_data1 = "foo".to_string();
-        e1.custom_data1 = "foo".to_string();
-        rs10.sticky_different = "CUSTOM_DATA1".to_string();
+        rs10.custom_data1 = "foo".into();
+        e1.custom_data1 = "foo".into();
+        rs10.sticky_different = "CUSTOM_DATA1".into();
 
         let mut s11 = s10.clone();
         s11.sdiff_string.push("bar".to_string());
         let mut rs11 = rs10.clone();
-        rs11.custom_data2 = "bar".to_string();
-        e1.custom_data2 = "bar".to_string();
-        rs11.sticky_different = "CUSTOM_DATA2".to_string();
+        rs11.custom_data2 = "bar".into();
+        e1.custom_data2 = "bar".into();
+        rs11.sticky_different = "CUSTOM_DATA2".into();
 
         let mut s12 = s11.clone();
         let mut rs12 = rs11.clone();
-        s12.sdiff_string.push("baz".to_string());
-        rs12.custom_data3 = "baz".to_string();
-        e1.custom_data3 = "baz".to_string();
-        rs12.sticky_different = "CUSTOM_DATA3".to_string();
+        s12.sdiff_string.push("baz".into());
+        rs12.custom_data3 = "baz".into();
+        e1.custom_data3 = "baz".into();
+        rs12.sticky_different = "CUSTOM_DATA3".into();
 
         let s13 = s12.clone();
         let mut rs13 = rs12.clone();
-        rs13.custom_data3 = "qux".to_string();
-        rs13.sticky_different = "CUSTOM_DATA3".to_string();
+        rs13.custom_data3 = "qux".into();
+        rs13.sticky_different = "CUSTOM_DATA3".into();
 
         // custom_data1 test
         let mut rany1 = r1.clone();
-        rany1.custom_data1 = "ANY".to_string();
+        rany1.custom_data1 = "ANY".into();
 
         let mut rany2 = rany1.clone();
-        rany2.custom_data1 = "".to_string();
+        rany2.custom_data1 = "".into();
 
         let mut rany3 = rany1.clone();
-        rany3.custom_data1 = "quas".to_string();
+        rany3.custom_data1 = "quas".into();
 
         let mut rany4 = rany1.clone();
-        rany4.custom_data1 = "foo".to_string();
+        rany4.custom_data1 = "foo".into();
 
         // custom_data2 test
         let mut rany5 = r1.clone();
-        rany5.custom_data2 = "ANY".to_string();
+        rany5.custom_data2 = "ANY".into();
 
         let mut rany6 = rany5.clone();
-        rany6.custom_data2 = "".to_string();
+        rany6.custom_data2 = "".into();
 
         let mut rany7 = rany5.clone();
-        rany7.custom_data2 = "quas".to_string();
+        rany7.custom_data2 = "quas".into();
 
         let mut rany8 = rany5.clone();
-        rany8.custom_data2 = "bar".to_string();
+        rany8.custom_data2 = "bar".into();
 
         // custom_data3 test
         let mut rany9 = r1.clone();
-        rany9.custom_data3 = "ANY".to_string();
+        rany9.custom_data3 = "ANY".into();
 
         let mut rany10 = rany9.clone();
-        rany10.custom_data3 = "".to_string();
+        rany10.custom_data3 = "".into();
 
         let mut rany11 = rany9.clone();
-        rany11.custom_data3 = "quas".to_string();
+        rany11.custom_data3 = "quas".into();
 
         let mut rany12 = rany9.clone();
-        rany12.custom_data3 = "qux".to_string();
+        rany12.custom_data3 = "qux".into();
 
         let mut eany1 = e1.clone();
-        eany1.custom_data1 = "foo".to_string();
-        eany1.custom_data2 = "bar".to_string();
-        eany1.custom_data3 = "qux".to_string();
+        eany1.custom_data1 = "foo".into();
+        eany1.custom_data2 = "bar".into();
+        eany1.custom_data3 = "qux".into();
 
         let mut eany2 = eany1.clone();
-        eany2.custom_data1 = "".to_string();
-        eany2.custom_data2 = "".to_string();
-        eany2.custom_data3 = "".to_string();
+        eany2.custom_data1 = "".into();
+        eany2.custom_data2 = "".into();
+        eany2.custom_data3 = "".into();
 
         let table = vec![
             ((1, e1.clone(), r1), true),
@@ -1044,11 +1039,11 @@ mod test {
             rule_type: RuleType::PluginRule,
             plugin_id: 1001,
             plugin_sid: vec![50001],
-            from: "ANY".to_string(),
-            to: "ANY".to_string(),
-            port_from: "ANY".to_string(),
-            port_to: "ANY".to_string(),
-            protocol: "ANY".to_string(),
+            from: "ANY".into(),
+            to: "ANY".into(),
+            port_from: "ANY".into(),
+            port_to: "ANY".into(),
+            protocol: "ANY".into(),
             ..Default::default()
         };
         let mut e = NormalizedEvent {
@@ -1063,8 +1058,8 @@ mod test {
 
         let a = NetworkAssets::from_string(r#"{ "assets": [] }"#.to_string()).unwrap();
         for (validator, (case_id, rule_customdata, event_customdata), expected) in table_test!(table) {
-            r.custom_data1 = rule_customdata.to_string();
-            e.custom_data1 = event_customdata.to_string();
+            r.custom_data1 = rule_customdata.into();
+            e.custom_data1 = event_customdata.into();
             let actual = r.does_event_match(&a, &e, true);
 
             validator

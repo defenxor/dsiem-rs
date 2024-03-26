@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arcstr::ArcStr;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::{
@@ -26,8 +27,8 @@ pub struct ParserOpt {
     pub intels: Arc<IntelPlugin>,
     pub vulns: Arc<VulnPlugin>,
     pub intel_private_ip: bool,
-    pub default_status: String,
-    pub default_tag: String,
+    pub default_status: ArcStr,
+    pub default_tag: ArcStr,
     pub min_alarm_lifetime: i64,
     pub med_risk_min: u8,
     pub med_risk_max: u8,
