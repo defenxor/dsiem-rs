@@ -59,8 +59,8 @@ fn get_parser_opt(
         backpressure_tx,
         cancel_tx: c,
         resptime_tx,
-        default_status: "Open".to_string(),
-        default_tag: "Identified Threat".to_string(),
+        default_status: "Open".into(),
+        default_tag: "Identified Threat".into(),
         med_risk_min: 3,
         med_risk_max: 6,
         report_tx: r,
@@ -151,8 +151,8 @@ async fn test_filter_and_loader_preload_dirs() {
         id: "0a".to_string(),
         plugin_id: 31337,
         plugin_sid: 2,
-        custom_label1: "label".to_string(),
-        custom_data1: "data".to_string(),
+        custom_label1: "label".into(),
+        custom_data1: "data".into(),
         ..Default::default()
     };
 
@@ -252,8 +252,8 @@ async fn test_filter_and_loader_no_preload_dirs() {
         id: "0a".to_string(),
         plugin_id: 31337,
         plugin_sid: 2,
-        custom_label1: "label".to_string(),
-        custom_data1: "data".to_string(),
+        custom_label1: "label".into(),
+        custom_data1: "data".into(),
         ..Default::default()
     };
 
@@ -401,8 +401,8 @@ async fn test_filter_and_loader_directives_timeout() {
         id: "0a".to_string(),
         plugin_id: 31337,
         plugin_sid: 2,
-        custom_label1: "label".to_string(),
-        custom_data1: "data".to_string(),
+        custom_label1: "label".into(),
+        custom_data1: "data".into(),
         ..Default::default()
     };
 
