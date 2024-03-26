@@ -153,26 +153,20 @@ impl Filter {
             };
 
             // heuristic to filter out events that are not worth processing
-            let mut found = false;
-            if event.plugin_id != 0
+            let found = (event.plugin_id != 0
                 && event.plugin_sid != 0
                 && sid_cache_enabled
-                && sid_cache.get(&(event.plugin_id, event.plugin_sid)).is_some()
-            {
-                found = true;
-            }
-
-            // check this only when there's no plugin rule match
-            if !found
-                && !event.product.is_empty()
-                && !event.category.is_empty()
-                && taxo_cache_enabled
-                && taxo_cache.get(&(event.product.clone(), event.category.clone())).is_some()
-            {
-                found = true;
-            }
+                && sid_cache.get(&(event.plugin_id, event.plugin_sid)).is_some())
+                || (
+                    // check this only when there's no plugin rule match
+                    !event.product.is_empty()
+                        && !event.category.is_empty()
+                        && taxo_cache_enabled
+                        && taxo_cache.get(&(event.product.clone(), event.category.clone())).is_some()
+                );
 
             if !found {
+                // log level should match with its pair in messenger
                 trace!(event.id, "event doesn't match any rule, skipping");
                 continue;
             }
