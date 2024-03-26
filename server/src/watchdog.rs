@@ -66,9 +66,9 @@ impl Watchdog {
             }
             for s in &[
                 "dsiem_queue_length",
-                "dsiem_directives_total",
+                "dsiem_directives_ttl",
                 "dsiem_directives_active",
-                "dsiem_events",
+                "dsiem_events_rcvd",
                 "dsiem_events_matched",
                 "dsiem_backlogs",
                 "dsiem_backlogs_timedout",
@@ -127,9 +127,9 @@ impl Watchdog {
                         meter.upsert_f64("dsiem_eps", Some(eps))?;
                         meter.upsert_f64("dsiem_avg_proc_time_ms", Some(avg_proc_time_ms))?;
                         meter.upsert_u64("dsiem_queue_length", Some(queue_length as u64))?;
-                        meter.upsert_u64("dsiem_directives_total", Some(opt.ttl_directives as u64))?;
+                        meter.upsert_u64("dsiem_directives_ttl", Some(opt.ttl_directives as u64))?;
                         meter.upsert_u64("dsiem_directives_active", Some(active_directives as u64))?;
-                        meter.upsert_u64("dsiem_events", Some(events_count))?;
+                        meter.upsert_u64("dsiem_events_rcvd", Some(events_count))?;
                         meter.upsert_u64("dsiem_events_matched", Some(matched_events as u64))?;
                         meter.upsert_u64("dsiem_backlogs", Some(backlogs as u64))?;
                         meter.upsert_u64("dsiem_backlogs_timedout", Some(timedout_backlogs as u64))?;
