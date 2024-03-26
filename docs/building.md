@@ -31,12 +31,12 @@
   Or to build the release version:
 
   ```shell
-  ./scripts/build-musl.sh
+  ./scripts/build-glibc.sh
   ```
   
   The result will be in:
-  - `./target/x86_64-unknown-linux-musl/release/dsiem-frontend`.
-  - `./target/x86_64-unknown-linux-musl/release/dsiem-backend`.
+  - `./target/x86_64-unknown-linux-gnu/release/dsiem-frontend`.
+  - `./target/x86_64-unknown-linux-gnu/release/dsiem-backend`.
 
 - To build the web UI:
   
@@ -45,10 +45,34 @@
   ```
   The result will be in `./web/dist` directory.
 
-- To build the docker image:
+## Building the docker image
 
+  Use the helper script `dockerbuild.sh` as follows:
   ```shell
-  ./scripts/dockerbuild.sh defenxor/dsiem-rs
+  ./scripts/dockerbuild.sh defenxor/dsiem-rs [base_image]
   ```
-  The result will be an image named `defenxor/dsiem-rs`.
 
+  Where base image can be one of `wolfi`, `alpine`, `ubuntu`, or `alpine_musl`.
+  
+  The result will be an image named `defenxor/dsiem-rs` with the appropriate tag. By-default, using `wolfi` will also tag the result as `latest`.
+
+## Extra environment variables
+
+  Both `build-glibc.sh` and `dockerbuild.sh` observe the following environment variables:
+  
+  - `DSIEM_DYNAMIC_LIBGCC`: if set, this will build binaries that are dynamically linked 
+  to libgcc, which means the environment must provide a compatible version. The image produced by `dockerbuild.sh` should already fulfil this extra requirement.
+
+  - `DSIEM_NIGHTLY_RUST`: if set, the build process will use rust nightly toolchain with a few extra options activated, namely [`build-std`](https://doc.rust-lang.org/cargo/reference/unstable.html#build-std) and [`sanitizer`](https://doc.rust-lang.org/beta/unstable-book/compiler-flags/sanitizer.html).
+  
+    > [!Note]
+    > Sanitizer requires dynamically linked libgcc, so it will only be used if `DSIEM_DYNAMIC_LIBGCC` is set.
+
+  Examples:
+  
+  ```shell
+  DSIEM_DYNAMIC_LIBGCC=1 DSIEM_NIGHTLY_RUST=1 ./scripts/build-glibc.sh
+  ```
+  ```shell
+  DSIEM_NIGHTLY_RUST=1 ./scripts/dockerbuild.sh defenxor/dsiem-rs alpine
+  ```
