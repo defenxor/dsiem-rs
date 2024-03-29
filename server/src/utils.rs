@@ -39,12 +39,11 @@ pub fn web_dir(test_env: bool) -> Result<PathBuf, std::io::Error> {
     Ok(dir)
 }
 
-pub fn ref_to_digit(v: &str) -> Result<u8, String> {
+pub fn ref_to_digit(v: &str) -> Option<u8> {
     if !v.starts_with(':') {
-        return Err("doesn't begin with :".to_string());
+        return None;
     }
-    let n = v.replace(':', "").parse::<u8>().map_err(|e| e.to_string())?;
-    Ok(n)
+    v.replace(':', "").parse::<u8>().ok()
 }
 
 pub fn generate_id() -> String {
@@ -56,10 +55,8 @@ mod test {
     use super::*;
     #[test]
     fn test_ref_to_digit() {
-        let res = ref_to_digit("foo");
-        assert!(res.unwrap_err().contains("doesn't begin with :"));
-        let res = ref_to_digit(":1");
-        assert_eq!(res.unwrap(), 1);
+        assert!(ref_to_digit("foo").is_none());
+        assert_eq!(ref_to_digit(":1").unwrap(), 1);
     }
     #[test]
     fn test_generate_id() {

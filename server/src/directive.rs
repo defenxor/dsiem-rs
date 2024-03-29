@@ -1,6 +1,5 @@
-use std::{fs, str::FromStr, sync::Arc};
+use std::{fs, str::FromStr};
 
-use parking_lot::Mutex;
 use regex::Regex;
 use serde_derive::Deserialize;
 extern crate glob;
@@ -10,8 +9,7 @@ use glob::glob;
 use tracing::{info, warn};
 
 use crate::{
-    event::NormalizedEvent,
-    rule::{self, DirectiveRule, RuleType},
+    rule::{self, RuleType},
     utils::{self, ref_to_digit},
 };
 
@@ -39,82 +37,6 @@ pub struct Directives {
     pub directives: Vec<Directive>,
 }
 
-impl Directive {
-    pub fn init_backlog_rules(&self, e: &NormalizedEvent) -> Vec<DirectiveRule> {
-        let mut result = vec![];
-
-        for (i, rule) in self.rules.iter().enumerate() {
-            // all arc fields must be reset
-            let mut r = rule.clone().reset_arc_fields();
-
-            if i == 0 {
-                r.start_time = Arc::new(Mutex::new(e.timestamp.timestamp()));
-
-                // if flag is active, replace ANY and HOME_NET on the first rule with specific
-                // addresses from event
-                if self.all_rules_always_active {
-                    if r.from == "ANY" || r.from == "HOME_NET" || r.from == "!HOME_NET" {
-                        r.from = e.src_ip.to_string().into();
-                    }
-                    if r.to == "ANY" || r.to == "HOME_NET" || r.to == "!HOME_NET" {
-                        r.to = e.dst_ip.to_string().into();
-                    }
-                }
-                // reference isn't allowed on first rule so we'll skip the rest
-                result.push(r);
-                continue;
-            }
-
-            // for the rest, refer to the referenced stage if its not ANY or HOME_NET or
-            // !HOME_NET if the reference is ANY || HOME_NET || !HOME_NET
-            // then refer to event if its in the format of :refs
-
-            if let Ok(v) = utils::ref_to_digit(&r.from) {
-                let vmin1 = usize::from(v - 1);
-                let refs = &self.rules[vmin1].from;
-                r.from = if refs != "ANY" && refs != "HOME_NET" && refs != "!HOME_NET" {
-                    refs.to_string().into()
-                } else {
-                    e.src_ip.to_string().into()
-                };
-            }
-            if let Ok(v) = utils::ref_to_digit(&r.to) {
-                let refs = &self.rules[usize::from(v - 1)].to;
-                r.to = if refs != "ANY" && refs != "HOME_NET" && refs != "!HOME_NET" {
-                    refs.to_string().into()
-                } else {
-                    e.dst_ip.to_string().into()
-                };
-            }
-            if let Ok(v) = utils::ref_to_digit(&r.port_from) {
-                let refs = &self.rules[usize::from(v - 1)].port_from;
-                r.port_from = if refs != "ANY" { refs.to_string().into() } else { e.src_port.to_string().into() };
-            }
-            if let Ok(v) = utils::ref_to_digit(&r.port_to) {
-                let refs = &self.rules[usize::from(v - 1)].port_to;
-                r.port_to = if refs != "ANY" { refs.to_string().into() } else { e.dst_port.to_string().into() };
-            }
-
-            // references in custom data
-            if let Ok(v) = utils::ref_to_digit(&r.custom_data1) {
-                let refs = &self.rules[usize::from(v - 1)].custom_data1;
-                r.custom_data1 = if refs != "ANY" { refs.to_string().into() } else { e.custom_data1.clone() };
-            }
-            if let Ok(v) = utils::ref_to_digit(&r.custom_data2) {
-                let refs = &self.rules[usize::from(v - 1)].custom_data2;
-                r.custom_data2 = if refs != "ANY" { refs.to_string().into() } else { e.custom_data2.clone() };
-            }
-            if let Ok(v) = utils::ref_to_digit(&r.custom_data3) {
-                let refs = &self.rules[usize::from(v - 1)].custom_data3;
-                r.custom_data3 = if refs != "ANY" { refs.to_string().into() } else { e.custom_data3.clone() };
-            }
-            result.push(r);
-        }
-        result.shrink_to_fit();
-        result
-    }
-}
-
 fn validate_rules(rules: &Vec<rule::DirectiveRule>) -> Result<()> {
     let mut stages: Vec<u8> = vec![];
     let highest_stage = rules.iter().fold(std::u8::MIN, |a, b| a.max(b.stage));
@@ -130,6 +52,8 @@ fn validate_rules(rules: &Vec<rule::DirectiveRule>) -> Result<()> {
         }
         if r.stage == 1 && r.occurrence != 1 {
             return Err(anyhow!("rule stage 1 must have occurrence = 1"));
+        } else if r.occurrence < 1 {
+            return Err(anyhow!("rule stage {} occurrence must be >= 1", r.stage));
         }
         if r.rule_type == RuleType::PluginRule {
             if r.plugin_id < 1 {
@@ -227,7 +151,7 @@ fn validate_reference(r: ArcStr, highest_stage: u8) -> Result<(), String> {
         return Err(format!("{} is not a valid reference", r));
     }
 
-    if let Ok(n) = ref_to_digit(&r) {
+    if let Some(n) = ref_to_digit(&r) {
         if n > highest_stage {
             return Err(format!("{} is not a valid reference", r));
         }
@@ -338,20 +262,5 @@ mod test {
                 }
             }
         }
-    }
-
-    #[test]
-    fn test_init_backlog_rules() {
-        let dir_path = vec!["directives".to_owned(), "directive3".to_owned()];
-        let o = load_directives(true, Some(dir_path)).unwrap();
-        let d = o.first().unwrap();
-        let e = NormalizedEvent {
-            src_ip: "192.168.0.1".parse().unwrap(),
-            dst_ip: "8.8.8.1".parse().unwrap(),
-
-            ..Default::default()
-        };
-        let r = d.init_backlog_rules(&e);
-        assert_eq!(r.len(), 3);
     }
 }

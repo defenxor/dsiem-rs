@@ -231,7 +231,7 @@ impl Backlog {
                 backlog.title = backlog.title.replace("DST_IP", &dst).into();
             }
 
-            backlog.rules = o.directive.init_backlog_rules(v.as_ref());
+            backlog.rules = o.directive.rules.clone();
             backlog.highest_stage = backlog.rules.iter().map(|v| v.stage).max().unwrap_or_default();
         }
         let delete_tx = o.delete_tx.as_ref().ok_or_else(|| anyhow!("delete_tx is none"))?;
@@ -400,7 +400,7 @@ impl Backlog {
         }
         let mut expiration_checker = interval(Duration::from_secs(10));
         let mut delete_rx = self.delete_channel.rx.clone();
-        debug!(self.id, "enter running state");
+        debug!(backlog.id = self.id, "enter running state");
         self.set_state(BacklogState::Running);
         loop {
             tokio::select! {
@@ -505,14 +505,14 @@ impl Backlog {
             n_int = reader.sdiff_int.len();
         }
 
-        if !curr_rule.does_event_match(&self.assets, event, true) {
+        if !curr_rule.does_event_match(&self.assets, event, &self.rules, true) {
             // if flag is set, check if event match previous stage
             if self.all_rules_always_active && curr_rule.stage != 1 {
                 debug!("checking prev rules because all_rules_always_active is on");
                 let prev_rules =
                     self.rules.iter().filter(|v| v.stage < curr_rule.stage).collect::<Vec<&DirectiveRule>>();
                 for r in prev_rules {
-                    if !r.does_event_match(&self.assets, event, true) {
+                    if !r.does_event_match(&self.assets, event, &self.rules, true) {
                         continue;
                     }
                     // event match previous rule, processing it further here
@@ -634,6 +634,16 @@ impl Backlog {
 
     async fn process_matched_event(&self, event: &NormalizedEvent) -> Result<()> {
         self.append_and_write_event(event, None)?;
+
+        // set rule's first_event if there's none yet, and set rule's start_time based
+        // on it.
+        let current_rule = self.current_rule()?;
+        if !current_rule.is_first_event_set() {
+            debug!("setting first event for stage {}", self.current_stage.load(Relaxed));
+            current_rule.set_first_event(event.clone())?;
+            self.set_rule_starttime(event.timestamp)?;
+        }
+
         // exit early if the newly added event hasnt caused events_count == occurrence
         // for the current stage
         if !self.is_stage_reach_max_event_count()? {
@@ -664,9 +674,12 @@ impl Backlog {
         debug!("stage max event count reached, increasing stage and updating alarm");
         // increase stage.
         if self.increase_stage() {
-            // set rule startTime for the new stage
+            // set rule startTime for the new stage, this will reset/be-updated when the new
+            // stage receives its first matching event above.
+            // for non-stage 1, we set it here so expiration time can be calculated without
+            // depending on whether the new stage will receive a matching event or not.
             self.set_rule_starttime(event.timestamp)?;
-            // stageIncreased, update alarm to publish new stage startTime
+            // stage Increased, update alarm to publish new stage startTime
             self.update_alarm(true).await?;
         }
 
@@ -717,22 +730,13 @@ impl Backlog {
         {
             let mut w = self.custom_data.lock();
             if !event.custom_data1.is_empty() {
-                w.insert(CustomData {
-                    label: event.custom_label1.clone().into(),
-                    content: event.custom_data1.clone().into(),
-                });
+                w.insert(CustomData { label: event.custom_label1.clone(), content: event.custom_data1.clone() });
             }
             if !event.custom_data2.is_empty() {
-                w.insert(CustomData {
-                    label: event.custom_label2.clone().into(),
-                    content: event.custom_data2.clone().into(),
-                });
+                w.insert(CustomData { label: event.custom_label2.clone(), content: event.custom_data2.clone() });
             }
             if !event.custom_data3.is_empty() {
-                w.insert(CustomData {
-                    label: event.custom_label3.clone().into(),
-                    content: event.custom_data3.clone().into(),
-                });
+                w.insert(CustomData { label: event.custom_label3.clone(), content: event.custom_data3.clone() });
             }
         }
 
@@ -1068,12 +1072,12 @@ mod test {
             dst_ip: "192.168.0.2".parse().unwrap(),
             src_port: 31337,
             dst_port: 80,
-            custom_label1: "label".into(),
-            custom_data1: "data".into(),
-            custom_label2: "label".into(),
-            custom_data2: "data".into(),
-            custom_label3: "label".into(),
-            custom_data3: "data".into(),
+            custom_label1: "label1".into(),
+            custom_data1: "data1".into(),
+            custom_label2: "label2".into(),
+            custom_data2: "data2".into(),
+            custom_label3: "label3".into(),
+            custom_data3: "data3".into(),
             rcvd_time: now - 10000,
             ..Default::default()
         };

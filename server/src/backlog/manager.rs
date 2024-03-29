@@ -393,7 +393,12 @@ impl BacklogManager {
             .find(|v| v.stage == 1)
             .ok_or_else(|| anyhow!("directive {} doesn't have first stage", self.id))?;
 
-        if !first_rule.does_event_match(&self.option.backlog_option.asset, event, false) {
+        if !first_rule.does_event_match(
+            &self.option.backlog_option.asset,
+            event,
+            &self.option.backlog_option.directive.rules,
+            false,
+        ) {
             debug!(directive.id = self.id, event.id, "event doesn't match first rule");
             return Ok(None);
         }
