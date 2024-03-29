@@ -324,7 +324,7 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         _ = cancel_tx_clone.send(());
     });
 
-    let load_param = validator::load_param(sargs.max_queue, sargs.max_eps);
+    let load_param = validator::load_param(max_queue, max_eps);
 
     info!(
         "backend started with max single event processing time: {} ms, queue limit: {} events, quick check threads: \
