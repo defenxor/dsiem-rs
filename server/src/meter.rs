@@ -14,7 +14,7 @@ use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     metrics::{
         reader::{DefaultAggregationSelector, DefaultTemporalitySelector},
-        MeterProvider as SdkMeterProvider, PeriodicReader,
+        PeriodicReader, SdkMeterProvider,
     },
     runtime, Resource,
 };
