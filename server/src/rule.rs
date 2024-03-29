@@ -1,4 +1,8 @@
-use std::{collections::HashSet, net::IpAddr, sync::Arc};
+use std::{
+    collections::HashSet,
+    net::IpAddr,
+    sync::{atomic::AtomicBool, Arc},
+};
 
 use anyhow::Result;
 use arcstr::ArcStr;
@@ -8,7 +12,7 @@ use serde::{Deserializer, Serializer};
 use serde_derive::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::{asset::NetworkAssets, event::NormalizedEvent};
+use crate::{asset::NetworkAssets, event::NormalizedEvent, utils::ref_to_digit};
 
 #[derive(PartialEq, Clone, Debug, Default)]
 pub enum RuleType {
@@ -112,6 +116,10 @@ pub struct DirectiveRule {
     pub event_ids: Arc<Mutex<HashSet<String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saved_event_ids: Option<HashSet<String>>, // saveable version of event_ids
+    #[serde(skip)]
+    first_event: Arc<Mutex<NormalizedEvent>>,
+    #[serde(skip)]
+    first_event_set_flag: Arc<AtomicBool>,
 }
 
 // This is only used for serialize
@@ -126,11 +134,29 @@ fn is_locked_string_empty(s: &Arc<Mutex<ArcStr>>) -> bool {
 }
 
 impl DirectiveRule {
-    pub fn does_event_match(&self, a: &NetworkAssets, e: &NormalizedEvent, mut_sdiff: bool) -> bool {
+    pub fn set_first_event(&self, e: NormalizedEvent) -> Result<()> {
+        if self.is_first_event_set() {
+            return Err(anyhow::anyhow!("first event is already set"));
+        };
+        let mut w = self.first_event.lock();
+        *w = e;
+        Ok(())
+    }
+    pub fn is_first_event_set(&self) -> bool {
+        self.first_event_set_flag.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn does_event_match(
+        &self,
+        a: &NetworkAssets,
+        e: &NormalizedEvent,
+        rules: &[DirectiveRule],
+        mut_sdiff: bool,
+    ) -> bool {
         if self.rule_type == RuleType::PluginRule {
-            plugin_rule_check(self, a, e, mut_sdiff)
+            plugin_rule_check(self, a, e, rules, mut_sdiff)
         } else {
-            taxonomy_rule_check(self, a, e, mut_sdiff)
+            taxonomy_rule_check(self, a, e, rules, mut_sdiff)
         }
     }
 
@@ -144,7 +170,55 @@ impl DirectiveRule {
     }
 }
 
-fn plugin_rule_check(r: &DirectiveRule, a: &NetworkAssets, e: &NormalizedEvent, mut_sdiff: bool) -> bool {
+fn ref_check(r: &DirectiveRule, e: &NormalizedEvent, rules: &[DirectiveRule]) -> bool {
+    // if any reference pointed by one of these doesn't match the event, return
+    // false
+    if let Some(v) = ref_to_digit(&r.from) {
+        if rules[usize::from(v - 1)].first_event.lock().src_ip != e.src_ip {
+            return false;
+        }
+    }
+    if let Some(v) = ref_to_digit(&r.to) {
+        if rules[usize::from(v - 1)].first_event.lock().dst_ip != e.dst_ip {
+            return false;
+        }
+    }
+    if let Some(v) = ref_to_digit(&r.port_from) {
+        if rules[usize::from(v - 1)].first_event.lock().src_port != e.src_port {
+            return false;
+        }
+    }
+    if let Some(v) = ref_to_digit(&r.port_to) {
+        if rules[usize::from(v - 1)].first_event.lock().dst_port != e.dst_port {
+            return false;
+        }
+    }
+    if let Some(v) = ref_to_digit(&r.custom_data1) {
+        let r = &rules[usize::from(v - 1)];
+        if rules[usize::from(v - 1)].first_event.lock().custom_data1 != e.custom_data1 {
+            return false;
+        }
+    }
+    if let Some(v) = ref_to_digit(&r.custom_data2) {
+        if rules[usize::from(v - 1)].first_event.lock().custom_data2 != e.custom_data2 {
+            return false;
+        }
+    }
+    if let Some(v) = ref_to_digit(&r.custom_data3) {
+        if rules[usize::from(v - 1)].first_event.lock().custom_data3 != e.custom_data3 {
+            return false;
+        }
+    }
+    true
+}
+
+fn plugin_rule_check(
+    r: &DirectiveRule,
+    a: &NetworkAssets,
+    e: &NormalizedEvent,
+    rules: &[DirectiveRule],
+    mut_sdiff: bool,
+) -> bool {
     if e.plugin_id != r.plugin_id {
         return false;
     }
@@ -161,10 +235,16 @@ fn plugin_rule_check(r: &DirectiveRule, a: &NetworkAssets, e: &NormalizedEvent, 
     if r.sticky_different == "PLUGIN_SID" {
         _ = is_int_stickydiff(e.plugin_sid, &r.sticky_diffdata, mut_sdiff);
     }
-    ip_port_check(r, a, e, mut_sdiff) && custom_data_check(r, e, mut_sdiff)
+    ip_port_check(r, a, e, mut_sdiff) && ref_check(r, e, rules) && custom_data_check(r, e, mut_sdiff)
 }
 
-fn taxonomy_rule_check(r: &DirectiveRule, a: &NetworkAssets, e: &NormalizedEvent, mut_sdiff: bool) -> bool {
+fn taxonomy_rule_check(
+    r: &DirectiveRule,
+    a: &NetworkAssets,
+    e: &NormalizedEvent,
+    rules: &[DirectiveRule],
+    mut_sdiff: bool,
+) -> bool {
     if r.category != e.category {
         return false;
     }
@@ -191,25 +271,28 @@ fn taxonomy_rule_check(r: &DirectiveRule, a: &NetworkAssets, e: &NormalizedEvent
             return false;
         }
     }
-    ip_port_check(r, a, e, mut_sdiff)
+    ip_port_check(r, a, e, mut_sdiff) && ref_check(r, e, rules) && custom_data_check(r, e, mut_sdiff)
 }
 
 fn custom_data_check(r: &DirectiveRule, e: &NormalizedEvent, mut_sdiff: bool) -> bool {
-    let r1 = if !r.custom_data1.is_empty() && r.custom_data1 != "ANY" {
+    // this only handles the case where the custom data is a specific string and
+    // empty, ANY, or reference to other rule
+
+    let r1 = if !r.custom_data1.is_empty() && r.custom_data1 != "ANY" && ref_to_digit(&r.custom_data1).is_none() {
         match_text(&r.custom_data1, &e.custom_data1)
         // match_text_case_insensitive(&r.custom_data1, &e.custom_data1) ||
         // is_string_match_csvrule(&r.custom_data1, &e.custom_data1)
     } else {
         true
     };
-    let r2 = if !r.custom_data2.is_empty() && r.custom_data2 != "ANY" {
+    let r2 = if !r.custom_data2.is_empty() && r.custom_data2 != "ANY" && ref_to_digit(&r.custom_data2).is_none() {
         match_text(&r.custom_data2, &e.custom_data2)
         // match_text_case_insensitive(&r.custom_data2, &e.custom_data2) ||
         // is_string_match_csvrule(&r.custom_data2, &e.custom_data2)
     } else {
         true
     };
-    let r3 = if !r.custom_data3.is_empty() && r.custom_data3 != "ANY" {
+    let r3 = if !r.custom_data3.is_empty() && r.custom_data3 != "ANY" && ref_to_digit(&r.custom_data3).is_none() {
         match_text(&r.custom_data3, &e.custom_data3)
         // match_text_case_insensitive(&r.custom_data3, &e.custom_data3) ||
         // is_string_match_csvrule(&r.custom_data3, &e.custom_data3)
@@ -243,7 +326,12 @@ fn ip_port_check(r: &DirectiveRule, a: &NetworkAssets, e: &NormalizedEvent, mut_
     }
     // covers  r.From == "IP", r.From == "IP1, IP2, !IP3", r.From == CIDR-netaddr,
     // r.From == "CIDR1, CIDR2, !CIDR3"
-    if r.from != "HOME_NET" && r.from != "!HOME_NET" && r.from != "ANY" && !is_ip_match_csvrule(&r.from, e.src_ip) {
+    if r.from != "HOME_NET"
+        && r.from != "!HOME_NET"
+        && r.from != "ANY"
+        && ref_to_digit(&r.from).is_none()
+        && !is_ip_match_csvrule(&r.from, e.src_ip)
+    {
         return false;
     }
 
@@ -256,14 +344,25 @@ fn ip_port_check(r: &DirectiveRule, a: &NetworkAssets, e: &NormalizedEvent, mut_
     }
     // covers  r.From == "IP", r.From == "IP1, IP2, !IP3", r.From == CIDR-netaddr,
     // r.From == "CIDR1, CIDR2, !CIDR3"
-    if r.to != "HOME_NET" && r.to != "!HOME_NET" && r.to != "ANY" && !is_ip_match_csvrule(&r.to, e.dst_ip) {
+    if r.to != "HOME_NET"
+        && r.to != "!HOME_NET"
+        && r.to != "ANY"
+        && ref_to_digit(&r.to).is_none()
+        && !is_ip_match_csvrule(&r.to, e.dst_ip)
+    {
         return false;
     }
 
-    if r.port_from != "ANY" && !is_string_match_csvrule(&r.port_from, &e.src_port.to_string()) {
+    if r.port_from != "ANY"
+        && ref_to_digit(&r.port_from).is_none()
+        && !is_string_match_csvrule(&r.port_from, &e.src_port.to_string())
+    {
         return false;
     }
-    if r.port_to != "ANY" && !is_string_match_csvrule(&r.port_to, &e.dst_port.to_string()) {
+    if r.port_to != "ANY"
+        && ref_to_digit(&r.port_to).is_none()
+        && !is_string_match_csvrule(&r.port_to, &e.dst_port.to_string())
+    {
         return false;
     }
 
@@ -346,8 +445,15 @@ fn is_ip_match_csvrule(rules_in_csv: &str, ip: IpAddr) -> bool {
             v = v.replace('!', "");
         }
         if !v.contains('/') {
-            v += "/32";
-        }
+            match ip {
+                IpAddr::V4(_) => {
+                    v += "/32";
+                }
+                IpAddr::V6(_) => {
+                    v += "/128";
+                }
+            }
+        };
         let res = v.parse();
         if res.is_err() {
             warn!("cannot parse CIDR {}: {:?}. make sure the directive is configured correctly", v, res.unwrap_err());
@@ -466,7 +572,7 @@ pub fn quick_check_plugin_rule(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
 // matchText match the given term against the subject, if the subject is a
 // comma-separated-values, split it into slice of strings, match its value one
 // by one, and returns if one of the value matches. otherwise, matchText will do
-// non case-sensitve match for the subject and term.
+// non case-sensitive match for the subject and term.
 fn match_text(subject: &str, term: &str) -> bool {
     if is_csv(subject) {
         return is_string_match_csvrule(subject, &term.to_string());
@@ -976,8 +1082,10 @@ mod test {
             ((136, eany2, rany12), false),
         ];
 
+        let rules = vec![]; // references aren't checked here
+
         for (validator, (case_id, event, rule), expected) in table_test!(table) {
-            let actual = rule.does_event_match(&a, &event, false);
+            let actual = rule.does_event_match(&a, &event, &rules, false);
 
             validator
                 .given(&format!("test_case: {}, ", case_id))
@@ -999,8 +1107,10 @@ mod test {
             ((113, e1, rs13, s13), false),
         ];
 
+        let rules = vec![]; // references aren't checked here
+
         for (validator, (case_id, event, rule, sticky_diff), expected) in table_test!(table_stickydiff) {
-            let actual = rule.does_event_match(&a, &event, true);
+            let actual = rule.does_event_match(&a, &event, &rules, true);
             let sticky_diff_actual: StickyDiffData;
             {
                 let r = rule.sticky_diffdata.lock();
@@ -1056,11 +1166,13 @@ mod test {
             ..Default::default()
         };
 
+        let rules = vec![]; // references aren't checked here
+
         let a = NetworkAssets::from_string(r#"{ "assets": [] }"#.to_string()).unwrap();
         for (validator, (case_id, rule_customdata, event_customdata), expected) in table_test!(table) {
             r.custom_data1 = rule_customdata.into();
             e.custom_data1 = event_customdata.into();
-            let actual = r.does_event_match(&a, &e, true);
+            let actual = r.does_event_match(&a, &e, &rules, true);
 
             validator
                 .given(&format!("test_case: {}, ", case_id))
