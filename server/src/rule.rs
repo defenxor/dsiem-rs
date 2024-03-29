@@ -153,6 +153,9 @@ impl DirectiveRule {
         rules: &[DirectiveRule],
         mut_sdiff: bool,
     ) -> bool {
+        if self.protocol != "ANY" && !self.protocol.is_empty() && self.protocol != e.protocol {
+            return false;
+        }
         if self.rule_type == RuleType::PluginRule {
             plugin_rule_check(self, a, e, rules, mut_sdiff)
         } else {
@@ -193,8 +196,12 @@ fn ref_check(r: &DirectiveRule, e: &NormalizedEvent, rules: &[DirectiveRule]) ->
             return false;
         }
     }
+    if let Some(v) = ref_to_digit(&r.protocol) {
+        if rules[usize::from(v - 1)].first_event.lock().protocol != e.protocol {
+            return false;
+        }
+    }
     if let Some(v) = ref_to_digit(&r.custom_data1) {
-        let r = &rules[usize::from(v - 1)];
         if rules[usize::from(v - 1)].first_event.lock().custom_data1 != e.custom_data1 {
             return false;
         }
