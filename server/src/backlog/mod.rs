@@ -639,7 +639,7 @@ impl Backlog {
         // on it.
         let current_rule = self.current_rule()?;
         if !current_rule.is_first_event_set() {
-            debug!("setting first event for stage {} to {:#?}", self.current_stage.load(Relaxed), event);
+            debug!("setting first event for stage {}", self.current_stage.load(Relaxed));
             current_rule.set_first_event(event.clone())?;
             self.set_rule_starttime(event.timestamp)?;
         }
