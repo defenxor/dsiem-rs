@@ -52,6 +52,8 @@ fn validate_rules(rules: &Vec<rule::DirectiveRule>) -> Result<()> {
         }
         if r.stage == 1 && r.occurrence != 1 {
             return Err(anyhow!("rule stage 1 must have occurrence = 1"));
+        } else if r.occurrence < 1 {
+            return Err(anyhow!("rule stage {} occurrence must be >= 1", r.stage));
         }
         if r.rule_type == RuleType::PluginRule {
             if r.plugin_id < 1 {
