@@ -85,7 +85,7 @@ impl Validator {
 
     pub fn load_param(max_queue: usize, max_eps: u32) -> OpLoadParameter {
         match max_queue {
-            UNBOUNDED_QUEUE_SIZE => OpLoadParameter {
+            0 | UNBOUNDED_QUEUE_SIZE => OpLoadParameter {
                 limit_cap: UNBOUNDED_QUEUE_SIZE,
                 max_wait: Duration::from_secs(DEADLOCK_TIMEOUT_IN_SECONDS),
                 queue_mode: QueueMode::Unbounded,
@@ -125,6 +125,12 @@ mod test {
 
         assert!(v::max_queue(0) == UNBOUNDED_QUEUE_SIZE);
         assert!(v::max_queue(1) == 1);
+
+        assert!(v::load_param(0, 100).limit_cap == UNBOUNDED_QUEUE_SIZE);
+        assert!(v::load_param(UNBOUNDED_QUEUE_SIZE, 100).limit_cap == UNBOUNDED_QUEUE_SIZE);
+        assert!(v::load_param(0, 100).queue_mode == QueueMode::Unbounded);
+        assert!(v::load_param(100, 100).limit_cap == 90);
+        assert!(v::load_param(100, 100).queue_mode == QueueMode::Bounded);
 
         assert!(v::thread_allocation(10, 100, 0).is_ok());
         assert!(v::thread_allocation(10, 100, 1).is_ok());
