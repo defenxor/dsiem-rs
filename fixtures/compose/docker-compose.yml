@@ -1,0 +1,25 @@
+version: "3"
+services:
+  nats:
+    container_name: dsiem-nats
+    image: nats:1.3.0-linux
+    ports:
+      - "42227:4222"
+  nesd:
+    container_name: dsiem-nesd
+    image: mmta/dsiem-nesd
+    ports:
+      - "18082:18082"
+    volumes:
+      - ./conf/nesd/csv:/csv
+    environment:
+      - NESD_CSVDIR=/csv
+      - NESD_PORT=18082
+  wise:
+    container_name: wise    
+    image: mmta/moloch-wise
+    ports:
+      - "18081:18081"
+    volumes:
+      - ./conf/wise/etc:/wiseService/etc
+    
