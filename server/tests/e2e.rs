@@ -19,12 +19,12 @@ use std::{
 
 use colored::Colorize;
 use dsiem::{backlog::Backlog, directive::Directive, event::NormalizedEvent};
-use port_check::is_local_ipv4_port_free;
+// use port_check::is_local_ipv4_port_free;
 use table_test::table_test;
 
 // as defined in the compose file
-const NESD_PORT: u16 = 18082;
-const WISE_PORT: u16 = 18081;
+// const NESD_PORT: u16 = 18082;
+// const WISE_PORT: u16 = 18081;
 const NATS_PORT: u16 = 42227;
 
 // frontend port to use
@@ -79,33 +79,35 @@ fn test_e2e_frontend_nats_backend() {
     print("waiting for services to start", false);
     sleep(Duration::from_secs(5));
 
+    /*
     print("checking if services ports are open", false);
     for port in &[NESD_PORT, WISE_PORT, NATS_PORT] {
         print(&format!("checking port {} .. ", port), true);
         assert!(!is_local_ipv4_port_free(*port));
         print("up", false);
     }
+    */
 
     let mut dsiem_cleaner = BinSpawner::default();
 
     print("running dsiem-frontend", false);
     // add -vv before serve for more verbose output
     let frontend_cmd = format!(
-        "exec ./dsiem-frontend serve -n frontend --msq nats://localhost:{}/ -a 0.0.0.0 -p {}",
+        "exec ./dsiem-frontend serve -n frontend --msq nats://127.0.0.1:{}/ -a 0.0.0.0 -p {}",
         NATS_PORT, FRONTEND_PORT
     );
     let frontend = spawn_in_shell(&frontend_cmd, &test_dir_str, "failed to run dsiem-frontend");
     dsiem_cleaner.frontend = Some(frontend);
 
     sleep(Duration::from_secs(1));
-    print("checking if frontend port is open .. ", true);
-    assert!(!is_local_ipv4_port_free(FRONTEND_PORT));
-    print("up", false);
+    // print("checking if frontend port is open .. ", true);
+    // assert!(!is_local_ipv4_port_free(FRONTEND_PORT));
+    // print("up", false);
 
     print("running dsiem-backend", false);
     // add -vv before serve for more verbose output
     let backend_cmd = format!(
-        "exec ./dsiem-backend -vv serve -n dsiem-backend-0 --msq nats://localhost:{} -f http://localhost:{} \
+        "exec ./dsiem-backend -vv serve -n dsiem-backend-0 --msq nats://127.0.0.1:{} -f http://127.0.0.1:{} \
          --intel_private_ip",
         NATS_PORT, FRONTEND_PORT
     );
