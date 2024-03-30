@@ -77,7 +77,7 @@ fn test_e2e_frontend_nats_backend() {
     assert!(run_in_shell("docker-compose up -d", &test_dir_str, "failed to run docker-compose up").success());
 
     print("waiting for services to start", false);
-    sleep(Duration::from_secs(1));
+    sleep(Duration::from_secs(3));
 
     print("checking if services ports are open", false);
     for port in &[NESD_PORT, WISE_PORT, NATS_PORT] {
