@@ -10,5 +10,6 @@
 !/configs/assets_testing.json
 /report.*
 /fixtures/*
-!/fixtures/config
+!/fixtures/configs
+!/fixtures/compose
 .vscode

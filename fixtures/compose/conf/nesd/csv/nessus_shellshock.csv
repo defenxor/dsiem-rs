@@ -1,0 +1,2 @@
+"Plugin ID","CVE","CVSS","Risk","Host","Protocol","Port","Name","Synopsis","Description","Solution","See Also","Plugin Output"
+77823,"CVE-2014-6271",9.8,"High","192.168.0.1","http",80,"Bash Remote Code Execution (Shellshock)","A system shell on the remote host is vulnerable to command injection.","The remote host is running a version of Bash that is vulnerable to command injection via environment variable manipulation. Depending on the configuration of the system, an attacker could remotely execute arbitrary code","Update Bash","http://www.nessus.org/u?dacf7829",
