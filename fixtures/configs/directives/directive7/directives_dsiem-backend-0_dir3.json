@@ -1,0 +1,66 @@
+{
+  "directives": [
+    {
+      "name": "Directive with taxonomy and plugin rules",
+      "kingdom": "Reconnaissance & Probing",
+      "category": "Misc Activity",
+      "disabled": false,
+      "all_rules_always_active": false,
+      "id": 3,
+      "priority": 5,
+      "rules": [
+        {
+          "name": "Allowed TCP traffic",
+          "type": "TaxonomyRule",
+          "product": [
+            "Firewall"
+          ],
+          "category": "Allowed traffic event",
+          "stage": 1,
+          "occurrence": 1,
+          "from": "ANY",
+          "to": "HOME_NET",
+          "port_from": "ANY",
+          "port_to": "80",
+          "protocol": "TCP",
+          "reliability": 1,
+          "timeout": 0
+        },
+        {
+          "name": "SQL injection attempt",
+          "type": "PluginRule",
+          "stage": 2,
+          "plugin_id": 1001,
+          "plugin_sid": [
+            2100387
+          ],
+          "occurrence": 3,
+          "from": ":1",
+          "to": ":1",
+          "port_from": "ANY",
+          "port_to": ":1",
+          "protocol": "HTTP",
+          "reliability": 5,
+          "timeout": 10
+        },
+        {
+          "name": "Database query error",
+          "type": "TaxonomyRule",
+          "stage": 3,
+          "occurrence": 10,
+          "product" : [
+            "MySQL", "PostgreSQL"
+          ],
+          "category": "query error event",
+          "from": "ANY",
+          "to": ":2",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ANY",
+          "reliability": 10,
+          "timeout": 60
+        }
+      ]
+    }
+  ]
+}

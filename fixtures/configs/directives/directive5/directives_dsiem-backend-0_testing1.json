@@ -25,7 +25,6 @@
           "protocol": "ANY",
           "reliability": 1,
           "timeout": 0,
-          "custom_label1": "ANY",
           "custom_data1": "ANY"
         },
         {
@@ -41,11 +40,8 @@
           "to": "ANY",
           "protocol": "ANY",
           "plugin_id": 1337,
-          "custom_label1": ":1",
           "custom_data1": ":1",
-          "custom_label2": "ANY",
           "custom_data2": "ANY",
-          "custom_label3": "ANY",
           "custom_data3": "ANY",
           "plugin_sid": [
             1,
@@ -66,10 +62,7 @@
           "protocol": "ANY",
           "plugin_id": 1337,
           "custom_data1": ":1",
-          "custom_label1": ":1",
-          "custom_label2": ":2",
           "custom_data2": ":2",
-          "custom_label3": ":2",
           "custom_data3": ":2",
           "plugin_sid": [
             1
@@ -89,10 +82,7 @@
           "protocol": "ANY",
           "plugin_id": 1337,
           "custom_data1": ":1",
-          "custom_label1": ":1",
-          "custom_label2": ":2",
           "custom_data2": ":2",
-          "custom_label3": ":2",
           "custom_data3": ":2",
           "plugin_sid": [
             1

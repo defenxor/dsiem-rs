@@ -1,0 +1,68 @@
+{
+  "directives": [
+    {
+      "name": "Directive with sticky_diff on dst_port",
+      "kingdom": "Reconnaissance & Probing",
+      "category": "Misc Activity",
+      "disabled": false,
+      "all_rules_always_active": false,
+      "id": 4,
+      "priority": 5,
+      "rules": [
+        {
+          "name": "Port scanning",
+          "type": "PluginRule",
+          "stage": 1,
+          "plugin_id": 1001,
+          "plugin_sid": [
+            2100390
+          ],
+          "occurrence": 1,
+          "from": "ANY",
+          "to": "HOME_NET",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "TCP",
+          "reliability": 1,
+          "timeout": 0
+        },
+        {
+          "name": "Port scanning to many ports",
+          "type": "PluginRule",
+          "stage": 2,
+          "sticky_different": "DST_PORT",
+          "plugin_id": 1001,
+          "plugin_sid": [
+            2100390
+          ],
+          "occurrence": 3,
+          "from": ":1",
+          "to": ":1",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ANY",
+          "reliability": 5,
+          "timeout": 10
+        },
+        {
+          "name": "Port scanning to many targets",
+          "type": "PluginRule",
+          "stage": 3,
+          "sticky_different": "DST_IP",
+          "plugin_id": 1001,
+          "plugin_sid": [
+            2100390
+          ],
+          "occurrence": 10,
+          "from": ":2",
+          "to": "HOME_NET",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ICMP",
+          "reliability": 10,
+          "timeout": 60
+        }
+      ]
+    }
+  ]
+}

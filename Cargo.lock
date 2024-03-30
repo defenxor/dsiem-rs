@@ -904,6 +904,7 @@ dependencies = [
  "chrono",
  "cidr",
  "clap",
+ "colored",
  "criterion",
  "crossbeam-channel",
  "ctrlc",
@@ -919,6 +920,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "parking_lot",
+ "port_check",
  "quick_cache",
  "rand",
  "ratelimit",
@@ -2245,6 +2247,12 @@ checksum = "38f6d39893cca0701371e3c27294f09797214b86f1fb951b89ade8ec04e2abab"
 dependencies = [
  "plotters-backend",
 ]
+
+[[package]]
+name = "port_check"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e956b3af7a0107123acd498bc9dde7113e452e0c3b156ba97381291241b0943e"
 
 [[package]]
 name = "portable-atomic"
