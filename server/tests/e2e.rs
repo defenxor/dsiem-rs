@@ -11,6 +11,7 @@ use std::{
     env::current_exe,
     fs,
     io::Write,
+    net::{IpAddr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::Command,
     thread::sleep,
@@ -19,12 +20,11 @@ use std::{
 
 use colored::Colorize;
 use dsiem::{backlog::Backlog, directive::Directive, event::NormalizedEvent};
-// use port_check::is_local_ipv4_port_free;
 use table_test::table_test;
 
 // as defined in the compose file
-// const NESD_PORT: u16 = 18082;
-// const WISE_PORT: u16 = 18081;
+const NESD_PORT: u16 = 18082;
+const WISE_PORT: u16 = 18081;
 const NATS_PORT: u16 = 42227;
 
 // frontend port to use
@@ -65,6 +65,12 @@ fn print(msg: &str, exclude_newline: bool) {
         println!("{}", msg.bold().green());
     }
 }
+
+fn local_listener_ready(port: u16) -> bool {
+    let addr = SocketAddr::from((IpAddr::V4("127.0.0.1".parse().unwrap()), port));
+    TcpStream::connect_timeout(&addr, Duration::from_secs(3)).is_ok()
+}
+
 #[test]
 fn test_e2e_frontend_nats_backend() {
     prep_files();
@@ -76,17 +82,15 @@ fn test_e2e_frontend_nats_backend() {
 
     assert!(run_in_shell("docker compose up -d", &test_dir_str, "failed to run docker compose up").success());
 
-    print("waiting for services to start", false);
-    sleep(Duration::from_secs(5));
+    print("waiting for docker services to start", false);
+    sleep(Duration::from_secs(1));
 
-    /*
     print("checking if services ports are open", false);
     for port in &[NESD_PORT, WISE_PORT, NATS_PORT] {
         print(&format!("checking port {} .. ", port), true);
-        assert!(!is_local_ipv4_port_free(*port));
+        assert!(local_listener_ready(*port));
         print("up", false);
     }
-    */
 
     let mut dsiem_cleaner = BinSpawner::default();
 
@@ -100,14 +104,14 @@ fn test_e2e_frontend_nats_backend() {
     dsiem_cleaner.frontend = Some(frontend);
 
     sleep(Duration::from_secs(1));
-    // print("checking if frontend port is open .. ", true);
-    // assert!(!is_local_ipv4_port_free(FRONTEND_PORT));
-    // print("up", false);
+    print("checking if frontend port is open .. ", true);
+    assert!(local_listener_ready(FRONTEND_PORT));
+    print("up", false);
 
     print("running dsiem-backend", false);
     // add -vv before serve for more verbose output
     let backend_cmd = format!(
-        "exec ./dsiem-backend -vv serve -n dsiem-backend-0 --msq nats://127.0.0.1:{} -f http://127.0.0.1:{} \
+        "exec ./dsiem-backend serve -n dsiem-backend-0 --msq nats://127.0.0.1:{} -f http://127.0.0.1:{} \
          --intel_private_ip",
         NATS_PORT, FRONTEND_PORT
     );
@@ -263,7 +267,6 @@ fn prep_files() {
         debug_dir.parent().unwrap().parent().unwrap().parent().unwrap()
     };
     let src_conf_dir = root_dir.join("fixtures").join("configs");
-    println!("src_conf_dir: {:?}", src_conf_dir);
     assert!(Path::exists(&src_conf_dir));
 
     // create configs dir
