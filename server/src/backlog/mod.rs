@@ -1,8 +1,8 @@
 use std::{
     collections::HashSet,
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{
-        atomic::{AtomicI64, AtomicU16, AtomicU8, Ordering::Relaxed},
+        atomic::{AtomicI64, AtomicU8, Ordering::Relaxed},
         Arc,
     },
     time::Duration,
@@ -86,13 +86,13 @@ pub struct Backlog {
     pub custom_data: Mutex<HashSet<CustomData>>,
 
     #[serde(skip)]
-    pub last_srcport: AtomicU16, // copied from event for vuln check
+    pub src_socketaddr: Mutex<HashSet<SocketAddr>>, // copied from event for vuln check
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub saved_last_srcport: Option<u16>, // saveable version of last_srcport
+    pub saved_src_socketaddr: Option<HashSet<SocketAddr>>, // saveable version of src_socketaddr
     #[serde(skip)]
-    pub last_dstport: AtomicU16, // copied from event for vuln check
+    pub dst_socketaddr: Mutex<HashSet<SocketAddr>>, // copied from event for vuln check
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub saved_last_dstport: Option<u16>, // saveable version of last_dstport
+    pub saved_dst_socketaddr: Option<HashSet<SocketAddr>>, // saveable version of dst_socketaddr
 
     #[serde(skip)]
     pub all_rules_always_active: bool, // copied from directive
@@ -273,11 +273,11 @@ impl Backlog {
         */
         backlog.rules = loaded.rules.clone();
 
-        if let Some(v) = loaded.saved_last_srcport {
-            backlog.last_srcport = AtomicU16::new(v);
+        if let Some(v) = loaded.saved_src_socketaddr {
+            backlog.src_socketaddr = Mutex::new(v);
         }
-        if let Some(v) = loaded.saved_last_dstport {
-            backlog.last_dstport = AtomicU16::new(v);
+        if let Some(v) = loaded.saved_dst_socketaddr {
+            backlog.dst_socketaddr = Mutex::new(v);
         }
 
         for r in backlog.rules.iter_mut() {
@@ -337,14 +337,15 @@ impl Backlog {
             ..Default::default()
         };
 
-        let r = running.last_dstport.load(Relaxed);
-        if r != 0 {
-            backlog.saved_last_dstport = Some(r);
+        let r = running.src_socketaddr.lock();
+        if !r.is_empty() {
+            backlog.saved_src_socketaddr = Some(r.clone());
         }
-        let r = running.last_srcport.load(Relaxed);
-        if r != 0 {
-            backlog.saved_last_srcport = Some(r);
+        let r = running.dst_socketaddr.lock();
+        if !r.is_empty() {
+            backlog.saved_dst_socketaddr = Some(r.clone());
         }
+
         for rule in backlog.rules.iter_mut() {
             let r = rule.sticky_diffdata.lock();
             if !r.sdiff_int.is_empty() || !r.sdiff_string.is_empty() {
@@ -728,6 +729,15 @@ impl Backlog {
         }
 
         {
+            let mut w = self.src_socketaddr.lock();
+            w.insert(SocketAddr::new(event.src_ip, event.src_port));
+        }
+        {
+            let mut w = self.dst_socketaddr.lock();
+            w.insert(SocketAddr::new(event.dst_ip, event.dst_port));
+        }
+
+        {
             let mut w = self.custom_data.lock();
             if !event.custom_data1.is_empty() {
                 w.insert(CustomData { label: event.custom_label1.clone(), content: event.custom_data1.clone() });
@@ -740,19 +750,10 @@ impl Backlog {
             }
         }
 
-        self.set_ports(event);
         self.set_update_time();
         self.append_siem_alarm_events(event, stage)
     }
 
-    fn set_ports(&self, e: &NormalizedEvent) {
-        if e.src_port != 0 {
-            self.last_srcport.swap(e.src_port, Relaxed);
-        }
-        if e.dst_port != 0 {
-            self.last_dstport.swap(e.dst_port, Relaxed);
-        }
-    }
     fn set_update_time(&self) {
         self.update_time.swap(Utc::now().timestamp(), Relaxed);
     }
@@ -820,7 +821,7 @@ impl Backlog {
             }
             if self.vulns.is_some() {
                 debug!("querying vulnerability check plugins");
-                // dont fail alarm update if there's intel check err
+                // dont fail alarm update if there's vuln check err
                 _ = self.check_vuln().await.map_err(|e| error!("vuln check error: {:?}", e));
             }
         }
@@ -856,15 +857,13 @@ impl Backlog {
         let vulns = self.vulns.as_ref().ok_or_else(|| anyhow!("vulns is none"))?;
 
         let mut vs = VulnSearchTerm::default();
-        for r in self.rules.iter() {
-            let ips: HashSet<&str> = r.from.split(',').collect();
-            let ports: HashSet<&str> = r.port_from.split(',').collect();
-            let port = self.last_srcport.load(Relaxed);
-            vs.add(ips, ports, port);
-            let ips: HashSet<&str> = r.to.split(',').collect();
-            let ports: HashSet<&str> = r.port_to.split(',').collect();
-            let port = self.last_dstport.load(Relaxed);
-            vs.add(ips, ports, port);
+        {
+            let r = self.src_socketaddr.lock();
+            vs.add_pair(&r);
+        }
+        {
+            let r = self.dst_socketaddr.lock();
+            vs.add_pair(&r);
         }
 
         let mut combined: HashSet<VulnResult> = HashSet::new();
@@ -901,23 +900,16 @@ struct VulnSearchTerm {
 }
 
 impl VulnSearchTerm {
-    fn add(&mut self, ip_set: HashSet<&str>, ports: HashSet<&str>, evt_port: u16) {
-        ip_set.iter().filter_map(|z| z.parse::<IpAddr>().ok()).for_each(|ip| {
-            if evt_port != 0 {
-                self.terms.insert((ip, evt_port));
-            }
-            ports.iter().filter_map(|y| y.parse::<u16>().ok()).for_each(|port| {
-                if port != 0 {
-                    self.terms.insert((ip, port));
-                }
-            });
-        });
+    fn add_pair(&mut self, socket_addr: &HashSet<SocketAddr>) {
+        socket_addr.iter().for_each(|x| {
+            self.terms.insert((x.ip(), x.port()));
+        })
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::thread;
+    use std::{str::FromStr, thread};
 
     use chrono::Days;
     use tokio::{
@@ -933,14 +925,12 @@ mod test {
     #[test]
     fn test_vuln_searchterm() {
         let mut vs = VulnSearchTerm::default();
-        let mut ipset = HashSet::new();
-        ipset.insert("192.168.0.1");
-        let mut ports = HashSet::new();
-        ports.insert("80");
-        let evt_port = 443;
-        vs.add(ipset.clone(), ports.clone(), evt_port);
-        assert!(vs.terms.len() == 2);
-        vs.add(ipset, ports, evt_port);
+        let mut socket_addr1 = HashSet::new();
+        socket_addr1.insert(SocketAddr::new(IpAddr::from_str("192.168.0.1").unwrap(), 80));
+        socket_addr1.insert(SocketAddr::new(IpAddr::from_str("192.168.0.1").unwrap(), 8080));
+        vs.add_pair(&socket_addr1);
+        vs.add_pair(&socket_addr1);
+        vs.add_pair(&socket_addr1);
         assert!(vs.terms.len() == 2);
     }
 
@@ -989,14 +979,13 @@ mod test {
         let mut stickydiff_data = StickyDiffData::default();
         stickydiff_data.sdiff_int.push(10);
         stickydiff_data.sdiff_string.push("foo".to_string());
-
-        let last_srcport = 31337;
-        let last_dstport = 80;
+        let mut saddr_set = HashSet::new();
+        saddr_set.insert(SocketAddr::new(IpAddr::from_str("192.168.0.1").unwrap(), 80));
 
         let mut b = Backlog::new(&get_opt()).unwrap();
         {
-            b.last_srcport.swap(last_srcport, Relaxed);
-            b.last_dstport.swap(last_dstport, Relaxed);
+            b.src_socketaddr = Mutex::new(saddr_set.clone());
+            b.dst_socketaddr = Mutex::new(saddr_set.clone());
             for rule in b.rules.iter_mut() {
                 let mut w = rule.sticky_diffdata.lock();
                 *w = stickydiff_data.clone();
@@ -1007,8 +996,9 @@ mod test {
 
         // saveable test
         let saveable = Backlog::saveable_version(Arc::new(b));
-        assert_eq!(saveable.saved_last_dstport, Some(last_dstport));
-        assert_eq!(saveable.saved_last_srcport, Some(last_srcport));
+        assert_eq!(saveable.saved_src_socketaddr, Some(saddr_set.clone()));
+        assert_eq!(saveable.saved_dst_socketaddr, Some(saddr_set));
+
         for rule in saveable.rules.iter() {
             assert_eq!(rule.saved_event_ids, Some(event_ids.clone()));
             assert_eq!(rule.saved_sticky_diffdata, Some(stickydiff_data.clone()));
@@ -1016,8 +1006,6 @@ mod test {
 
         // runable test, reverses saveable
         let runnable = Backlog::runnable_version(get_opt(), saveable).unwrap();
-        assert_eq!(runnable.last_srcport.load(Relaxed), last_srcport);
-        assert_eq!(runnable.last_dstport.load(Relaxed), last_dstport);
         for rule in runnable.rules.iter() {
             assert_eq!(*rule.event_ids.lock(), event_ids);
             assert_eq!(*rule.sticky_diffdata.lock(), stickydiff_data);

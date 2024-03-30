@@ -95,19 +95,10 @@ pub struct DirectiveRule {
     pub custom_data1: ArcStr,
     #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub custom_label1: ArcStr,
-    #[serde(skip_serializing_if = "ArcStr::is_empty")]
-    #[serde(default)]
     pub custom_data2: ArcStr,
     #[serde(skip_serializing_if = "ArcStr::is_empty")]
     #[serde(default)]
-    pub custom_label2: ArcStr,
-    #[serde(skip_serializing_if = "ArcStr::is_empty")]
-    #[serde(default)]
     pub custom_data3: ArcStr,
-    #[serde(skip_serializing_if = "ArcStr::is_empty")]
-    #[serde(default)]
-    pub custom_label3: ArcStr,
     #[serde(skip)]
     pub sticky_diffdata: Arc<Mutex<StickyDiffData>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,7 +144,14 @@ impl DirectiveRule {
         rules: &[DirectiveRule],
         mut_sdiff: bool,
     ) -> bool {
-        if self.protocol != "ANY" && !self.protocol.is_empty() && self.protocol != e.protocol {
+        // if protocol is a specific string, i.e. not ANY/empty/reference, then
+        // it must match the event's protocol. This is checked first because it
+        // is shared between plugin and taxonomy rules
+        if self.protocol != "ANY"
+            && !self.protocol.is_empty()
+            && ref_to_digit(&self.protocol).is_none()
+            && self.protocol != e.protocol
+        {
             return false;
         }
         if self.rule_type == RuleType::PluginRule {
