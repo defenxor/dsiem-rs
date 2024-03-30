@@ -36,7 +36,7 @@ struct ComposeCleaner {}
 impl Drop for ComposeCleaner {
     fn drop(&mut self) {
         let test_dir_str = get_test_dir().to_string_lossy().to_string();
-        assert!(run_in_shell("docker-compose down -v", &test_dir_str, "failed to run docker-compose down").success());
+        assert!(run_in_shell("docker compose down -v", &test_dir_str, "failed to run docker compose down").success());
     }
 }
 
@@ -74,10 +74,10 @@ fn test_e2e_frontend_nats_backend() {
 
     let _cleaner = ComposeCleaner {};
 
-    assert!(run_in_shell("docker-compose up -d", &test_dir_str, "failed to run docker-compose up").success());
+    assert!(run_in_shell("docker compose up -d", &test_dir_str, "failed to run docker compose up").success());
 
     print("waiting for services to start", false);
-    sleep(Duration::from_secs(3));
+    sleep(Duration::from_secs(5));
 
     print("checking if services ports are open", false);
     for port in &[NESD_PORT, WISE_PORT, NATS_PORT] {
