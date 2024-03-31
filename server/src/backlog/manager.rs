@@ -311,18 +311,25 @@ impl BacklogManager {
                         for b in backlogs.iter() {
                             let mut v = b.found_channel.locked_rx.lock().await;
                             if timeout(timeout_duration, v.changed()).await.is_ok() {
-                                if *v.borrow() {
-                                match_found = true;
+                                let val = v.borrow();
+                                if val.0 && val.1 == event.id {
+                                    match_found = true;
+                                    debug!(
+                                        directive.id = self.id,
+                                        event.id,
+                                        backlog.id = b.id,
+                                        "found existing backlog that consumes the event"
+                                    );
+                                    break;
+                                }
+                            } else {
+                                mgr_report.timedout_backlogs += 1;
                                 debug!(
                                     directive.id = self.id,
                                     event.id,
                                     backlog.id = b.id,
-                                    "found existing backlog that consumes the event"
+                                    "backlog timed out"
                                 );
-                                break;
-                                }
-                            } else {
-                                mgr_report.timedout_backlogs += 1;
                                 //if overload {
                                     // over capacity, no need to check for more timeouts
                                     // this mimics the non-blocking send in go when the queue is full
