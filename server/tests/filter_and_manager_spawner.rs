@@ -1,4 +1,4 @@
-use std::{sync::Arc, thread, time::Duration};
+use std::{str::FromStr, sync::Arc, thread, time::Duration};
 
 use backlog::manager;
 use dsiem::{
@@ -116,6 +116,172 @@ async fn run_manager(
 
         debug!("exiting filter and loader task");
     })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+#[traced_test]
+async fn test_concurrent_events_to_the_same_directive() {
+    let directives =
+        directive::load_directives(true, Some(vec!["directives".to_string(), "directive8".to_string()])).unwrap();
+    let (cancel_tx, _) = broadcast::channel::<()>(1);
+    let (report_tx, mut report_rx) = mpsc::channel::<filter::ManagerReport>(directives.len());
+
+    let span = Span::current();
+    let _report_receiver = task::spawn(
+        async move {
+            while report_rx.recv().await.is_some() {
+                debug!("report received");
+            }
+        }
+        .instrument(span),
+    );
+
+    let (event_tx, _) = broadcast::channel(1024);
+
+    let l = LazyLoaderConfig::new(directives.len(), 100).with_dirs_idle_timeout_checker_interval_sec(10);
+
+    // this function should be the only location where reload_backlogs is true,
+    // otherwise we risk having multiple tests trying to save/load/delete from disk
+
+    let manager_handle =
+        run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, Some(l.clone()))
+            .await;
+
+    sleep(Duration::from_millis(1000)).await;
+
+    // should create backlog 1
+    let mut evt = NormalizedEvent {
+        id: "1".to_string(),
+        plugin_id: 1002,
+        plugin_sid: 60122,
+        src_ip: std::net::IpAddr::from_str("8.8.8.8").unwrap(),
+        dst_ip: std::net::IpAddr::from_str("192.168.0.1").unwrap(),
+        ..Default::default()
+    };
+    event_tx.send(evt.clone()).unwrap();
+
+    // should create backlog 2, because backlog 1 has moved to stage 2 that pegs its
+    // dst_ip to 192.168.0.1
+    evt.id = "2".to_string();
+    evt.dst_ip = std::net::IpAddr::from_str("192.168.0.2").unwrap();
+    event_tx.send(evt.clone()).unwrap();
+    // these should be consumed by backlog 2
+    evt.id = "3".to_string();
+    event_tx.send(evt.clone()).unwrap();
+    evt.id = "4".to_string();
+    event_tx.send(evt.clone()).unwrap();
+
+    sleep(Duration::from_millis(2000)).await;
+
+    // assert that there's only 2 backlogs
+    logs_assert(|lines: &[&str]| match lines.iter().filter(|line| line.contains("total backlogs 2")).count() {
+        2 => Ok(()),
+        n => Err(format!("Expected two matching logs, but found {}", n)),
+    });
+    assert!(!logs_contain("total backlogs 3"));
+    logs_assert(|lines: &[&str]| {
+        match lines.iter().filter(|line| line.contains("found existing backlog that consumes the event")).count() {
+            2 => Ok(()),
+            n => Err(format!("Expected two matching logs, but found {}", n)),
+        }
+    });
+
+    // cancel signal, should also trigger saving to disk
+
+    _ = cancel_tx.send(());
+    sleep(Duration::from_millis(1000)).await;
+    logs_contain("backlogs saved");
+
+    drop(event_tx);
+    sleep(Duration::from_millis(5000)).await;
+
+    assert!(logs_contain("exiting filter main thread"));
+
+    _ = manager_handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+#[traced_test]
+async fn test_any_and_multiple_sid_on_2nd_stage() {
+    let directives =
+        directive::load_directives(true, Some(vec!["directives".to_string(), "directive9".to_string()])).unwrap();
+    let (cancel_tx, _) = broadcast::channel::<()>(1);
+    let (report_tx, mut report_rx) = mpsc::channel::<filter::ManagerReport>(directives.len());
+
+    let span = Span::current();
+    let _report_receiver = task::spawn(
+        async move {
+            while report_rx.recv().await.is_some() {
+                debug!("report received");
+            }
+        }
+        .instrument(span),
+    );
+
+    let (event_tx, _) = broadcast::channel(1024);
+
+    let l = LazyLoaderConfig::new(directives.len(), 100).with_dirs_idle_timeout_checker_interval_sec(10);
+
+    let manager_handle =
+        run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, Some(l.clone()))
+            .await;
+
+    sleep(Duration::from_millis(1000)).await;
+
+    // should create backlog 1
+    let mut evt = NormalizedEvent {
+        id: "1".to_string(),
+        plugin_id: 1002,
+        plugin_sid: 60122,
+        dst_port: 80,
+        src_ip: std::net::IpAddr::from_str("8.8.8.8").unwrap(),
+        dst_ip: std::net::IpAddr::from_str("192.168.0.1").unwrap(),
+        ..Default::default()
+    };
+    event_tx.send(evt.clone()).unwrap();
+
+    // these should match stage 2 of backlog 1
+    evt.id = "2".to_string();
+    evt.src_ip = std::net::IpAddr::from_str("9.9.9.9").unwrap();
+    evt.src_port = 31337;
+    event_tx.send(evt.clone()).unwrap();
+    evt.id = "3".to_string();
+    evt.src_ip = std::net::IpAddr::from_str("9.9.9.10").unwrap();
+    evt.src_port = 31338;
+    event_tx.send(evt.clone()).unwrap();
+    evt.id = "4".to_string();
+    evt.src_ip = std::net::IpAddr::from_str("9.9.9.11").unwrap();
+    evt.plugin_sid = 60123;
+    evt.src_port = 31339;
+    event_tx.send(evt.clone()).unwrap();
+
+    sleep(Duration::from_millis(2000)).await;
+
+    // assert that there's only 2 backlogs
+    logs_assert(|lines: &[&str]| match lines.iter().filter(|line| line.contains("total backlogs 1")).count() {
+        3 => Ok(()),
+        n => Err(format!("Expected two matching logs, but found {}", n)),
+    });
+    assert!(!logs_contain("total backlogs 2"));
+    logs_assert(|lines: &[&str]| {
+        match lines.iter().filter(|line| line.contains("found existing backlog that consumes the event")).count() {
+            3 => Ok(()),
+            n => Err(format!("Expected two matching logs, but found {}", n)),
+        }
+    });
+
+    // cancel signal, should also trigger saving to disk
+
+    _ = cancel_tx.send(());
+    sleep(Duration::from_millis(1000)).await;
+    logs_contain("backlogs saved");
+
+    drop(event_tx);
+    sleep(Duration::from_millis(5000)).await;
+
+    assert!(logs_contain("exiting filter main thread"));
+
+    _ = manager_handle.await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]

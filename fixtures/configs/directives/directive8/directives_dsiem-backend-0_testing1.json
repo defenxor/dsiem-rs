@@ -1,0 +1,100 @@
+{
+  "directives": [
+    {
+      "id": 333331,
+      "name": "Used by filter and manager spawner test",
+      "priority": 3,
+      "disabled": false,
+      "all_rules_always_active": false,
+      "kingdom": "Bruteforce",
+      "category": "level 5",
+      "rules": [
+        {
+          "name": "Logon failure",
+          "stage": 1,
+          "plugin_id": 1002,
+          "plugin_sid": [
+            60122
+          ],
+          "occurrence": 1,
+          "from": "ANY",
+          "to": "ANY",
+          "type": "PluginRule",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ANY",
+          "reliability": 1,
+          "timeout": 0
+        },
+        {
+          "name": "Logon failure",
+          "stage": 2,
+          "plugin_id": 1002,
+          "plugin_sid": [
+            60122
+          ],
+          "occurrence": 10,
+          "from": ":1",
+          "to": ":1",
+          "type": "PluginRule",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ANY",
+          "reliability": 3,
+          "timeout": 600
+        },
+        {
+          "name": "Logon failure",
+          "stage": 3,
+          "plugin_id": 1002,
+          "plugin_sid": [
+            60122
+          ],
+          "occurrence": 100,
+          "from": ":1",
+          "to": ":1",
+          "type": "PluginRule",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ANY",
+          "reliability": 5,
+          "timeout": 3600
+        },
+        {
+          "stage": 4,
+          "occurrence": 1000,
+          "reliability": 8,
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "timeout": 21600,
+          "name": "Logon failure",
+          "type": "PluginRule",
+          "from": ":1",
+          "to": ":1",
+          "protocol": "ANY",
+          "plugin_id": 1002,
+          "plugin_sid": [
+            60122
+          ]
+        },
+        {
+          "name": "Logon failure",
+          "stage": 5,
+          "plugin_id": 1002,
+          "plugin_sid": [
+            60122
+          ],
+          "occurrence": 10000,
+          "from": ":1",
+          "to": ":1",
+          "type": "PluginRule",
+          "port_from": "ANY",
+          "port_to": "ANY",
+          "protocol": "ANY",
+          "reliability": 10,
+          "timeout": 43200
+        }
+      ]
+    }    
+  ]
+}
