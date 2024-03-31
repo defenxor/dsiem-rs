@@ -160,13 +160,13 @@ impl Drop for DeleteChannel {
 
 #[derive(Debug)]
 pub struct FoundChannel {
-    tx: tokio::sync::watch::Sender<bool>,
-    pub locked_rx: tokio::sync::Mutex<tokio::sync::watch::Receiver<bool>>,
+    tx: tokio::sync::watch::Sender<(bool, ArcStr)>,
+    pub locked_rx: tokio::sync::Mutex<tokio::sync::watch::Receiver<(bool, ArcStr)>>,
 }
 
 impl Default for FoundChannel {
     fn default() -> Self {
-        let (tx, rx) = watch::channel(false);
+        let (tx, rx) = watch::channel((false, "".into()));
         FoundChannel { tx, locked_rx: tokio::sync::Mutex::new(rx) }
     }
 }
@@ -232,7 +232,12 @@ impl Backlog {
                 backlog.title = backlog.title.replace("DST_IP", &dst).into();
             }
 
-            backlog.rules = o.directive.rules.clone();
+            // warning: we can't simply clone the directive rules and assign it to backlog
+            // because the Arc fields will point to the same memory location
+            for r in o.directive.rules.clone() {
+                backlog.rules.push(r.reset_arc_fields());
+            }
+
             backlog.highest_stage = backlog.rules.iter().map(|v| v.stage).max().unwrap_or_default();
         }
         let delete_tx = o.delete_tx.as_ref().ok_or_else(|| anyhow!("delete_tx is none"))?;
@@ -431,7 +436,7 @@ impl Backlog {
                         let r = self.state.lock();
                         if *r != BacklogState::Running {
                             warn!(backlog.id = self.id, event.id, "event received, but backlog state is not running");
-                            _ = self.report_to_manager(false);
+                            _ = self.report_to_manager(false, &event.id);
                             continue;
                         }
                     }
@@ -492,8 +497,8 @@ impl Backlog {
         self.rules.iter().find(|v| v.stage == s).ok_or_else(|| anyhow!("cannot locate the current rule"))
     }
 
-    fn report_to_manager(&self, match_found: bool) -> Result<()> {
-        Ok(self.found_channel.tx.send(match_found)?)
+    fn report_to_manager(&self, match_found: bool, event_id: &str) -> Result<()> {
+        Ok(self.found_channel.tx.send((match_found, event_id.into()))?)
     }
 
     pub async fn process_new_event(&self, event: &NormalizedEvent, max_delay: i64) -> Result<()> {
@@ -525,14 +530,14 @@ impl Backlog {
                     // also update alarm to sync any changes to customData
                     self.update_alarm(false).await?;
                     debug!(event.id, r.stage, "previous rule consume event");
-                    _ = self.report_to_manager(true);
+                    _ = self.report_to_manager(true, &event.id);
                     return Ok(());
                     // no need to process further rules
                 }
             }
             debug!("event doesn't match");
 
-            _ = self.report_to_manager(false);
+            _ = self.report_to_manager(false, &event.id);
             return Ok(());
         }
 
@@ -541,14 +546,17 @@ impl Backlog {
             let reader = curr_rule.sticky_diffdata.lock();
             if n_string == reader.sdiff_string.len() && n_int == reader.sdiff_int.len() {
                 debug!("backlog can't find new unique value in stickydiff field {}", curr_rule.sticky_different);
-                _ = self.report_to_manager(false);
+                _ = self.report_to_manager(false, &event.id);
                 return Ok(());
             }
         }
 
         // event match current rule, processing it further here
         debug!("rule stage {} match event", curr_rule.stage);
-        _ = self.report_to_manager(true);
+        // skip reporting to manager if this is the first event
+        if curr_rule.stage != 1 {
+            _ = self.report_to_manager(true, &event.id);
+        }
 
         if !self.is_time_in_order(&event.timestamp) {
             // event is out of order, discard but prevent it from triggering new backlog

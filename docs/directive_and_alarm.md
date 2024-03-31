@@ -52,7 +52,7 @@ Notice the emphasis put on _first event_ above. If the from field in stage 2 con
 
 However, if the stage 2 from field contain `ANY` or `HOME_NET` or `!HOME_NET`, then the stage 3 from field that refers to it will only be evaluated against the SRC_IP of the _first event_ that matches stage 2. In other words, `:2` in stage 3 doesn't mean that events will be compared to all IP addresses from all events in stage 2.
 
-The full list of fields that support references are: `from`, `to`, `port_from`, `port_to`, `custom_data1`, `custom_data2`, and `custom_data3`.
+The full list of fields that support references are: `from`, `to`, `port_from`, `port_to`, `protocol`, `custom_data1`, `custom_data2`, and `custom_data3`.
 
 ## Directive and Rules Processing
 

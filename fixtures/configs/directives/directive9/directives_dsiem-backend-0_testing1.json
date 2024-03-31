@@ -1,0 +1,49 @@
+{
+  "directives": [
+    {
+      "id": 333332,
+      "name": "Used by filter and manager spawner test, ANY src_ip on the 2nd rule and multiple SIDs",
+      "priority": 3,
+      "disabled": false,
+      "all_rules_always_active": false,
+      "kingdom": "Bruteforce",
+      "category": "level 5",
+      "rules": [
+        {
+          "name": "HTTP inbound",
+          "stage": 1,
+          "plugin_id": 1002,
+          "plugin_sid": [
+            60122
+          ],
+          "occurrence": 1,
+          "from": "ANY",
+          "to": "HOME_NET",
+          "type": "PluginRule",
+          "port_from": "ANY",
+          "port_to": "80",
+          "protocol": "ANY",
+          "reliability": 1,
+          "timeout": 0
+        },
+        {
+          "name": "Logon failure",
+          "stage": 2,
+          "plugin_id": 1002,
+          "plugin_sid": [
+            60122, 60123, 60124
+          ],
+          "occurrence": 10,
+          "from": "ANY",
+          "to": ":1",
+          "type": "PluginRule",
+          "port_from": "ANY",
+          "port_to": ":1",
+          "protocol": "ANY",
+          "reliability": 3,
+          "timeout": 600
+        }
+      ]
+    }    
+  ]
+}
