@@ -27,7 +27,8 @@ use crate::{
     intel::{IntelPlugin, IntelResult},
     log_writer::{FileType, LogWriterMessage},
     rule::DirectiveRule,
-    tracer, utils,
+    tracer,
+    utils::{self, ref_to_digit},
     vuln::{VulnPlugin, VulnResult},
 };
 
@@ -826,7 +827,7 @@ impl Backlog {
             }
         }
 
-        let s = serde_json::to_string(&self)? + "\n";
+        let s = self.to_alarm_json()? + "\n";
 
         if let Some(sender) = &self.log_tx {
             sender.send(LogWriterMessage { data: s, file_type: FileType::Alarm })?
@@ -891,6 +892,67 @@ impl Backlog {
         debug!("found {} new vulnerability matches", difference.count());
         *w = combined;
         Ok(())
+    }
+
+    fn to_alarm_json(&self) -> Result<String> {
+        // this replaces the ref to digit in rules with the actual referred value
+        // before the alarm is serialized to json
+
+        let mut rules = vec![];
+
+        let referred_event = |stage: u8| -> Option<NormalizedEvent> {
+            self.rules.iter().find(|x| x.stage == stage && x.is_first_event_set()).map(|x| x.get_first_event())
+        };
+
+        for mut r in self.rules.clone() {
+            if let Some(v) = ref_to_digit(&r.from) {
+                if let Some(e) = referred_event(v) {
+                    r.from = e.src_ip.to_string().into();
+                }
+            }
+            if let Some(v) = ref_to_digit(&r.to) {
+                if let Some(e) = referred_event(v) {
+                    r.to = e.dst_ip.to_string().into();
+                }
+            }
+            if let Some(v) = ref_to_digit(&r.port_from) {
+                if let Some(e) = referred_event(v) {
+                    r.port_from = e.src_port.to_string().into();
+                }
+            }
+            if let Some(v) = ref_to_digit(&r.port_to) {
+                if let Some(e) = referred_event(v) {
+                    r.port_to = e.dst_port.to_string().into();
+                }
+            }
+            if let Some(v) = ref_to_digit(&r.protocol) {
+                if let Some(e) = referred_event(v) {
+                    r.protocol = e.protocol;
+                }
+            }
+            if let Some(v) = ref_to_digit(&r.custom_data1) {
+                if let Some(e) = referred_event(v) {
+                    r.custom_data1 = e.custom_data1;
+                }
+            }
+            if let Some(v) = ref_to_digit(&r.custom_data2) {
+                if let Some(e) = referred_event(v) {
+                    r.custom_data2 = e.custom_data2;
+                }
+            }
+            if let Some(v) = ref_to_digit(&r.custom_data3) {
+                if let Some(e) = referred_event(v) {
+                    r.custom_data3 = e.custom_data3;
+                }
+            }
+            rules.push(r);
+        }
+
+        let r_str = serde_json::to_value(&rules)?;
+        let mut d_str = serde_json::to_value(self)?;
+        d_str["rules"] = r_str;
+
+        Ok(serde_json::to_string(&d_str)?)
     }
 }
 
@@ -1135,6 +1197,10 @@ mod test {
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("reached max stage and occurrence"));
+
+        let s = arc_backlog.to_alarm_json().unwrap();
+
+        info!("alarm json:\n{}", s);
     }
 
     #[tokio::test]
