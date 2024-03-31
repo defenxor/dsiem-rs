@@ -125,6 +125,16 @@ fn is_locked_string_empty(s: &Arc<Mutex<ArcStr>>) -> bool {
 }
 
 impl DirectiveRule {
+    pub fn reset_arc_fields(mut self) -> Self {
+        self.start_time = Default::default();
+        self.end_time = Default::default();
+        self.status = Default::default();
+        self.sticky_diffdata = Default::default();
+        self.event_ids = Default::default();
+        self.first_event = Default::default();
+        self.first_event_set_flag = Default::default();
+        self
+    }
     pub fn set_first_event(&self, e: NormalizedEvent) -> Result<()> {
         if self.is_first_event_set() {
             return Err(anyhow::anyhow!("first event is already set"));
@@ -163,15 +173,6 @@ impl DirectiveRule {
         } else {
             taxonomy_rule_check(self, a, e, rules, mut_sdiff)
         }
-    }
-
-    pub fn reset_arc_fields(mut self) -> Self {
-        self.start_time = Default::default();
-        self.end_time = Default::default();
-        self.status = Default::default();
-        self.sticky_diffdata = Default::default();
-        self.event_ids = Default::default();
-        self
     }
 }
 
