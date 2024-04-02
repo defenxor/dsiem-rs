@@ -892,7 +892,7 @@ dependencies = [
 
 [[package]]
 name = "dsiem"
-version = "1.4.3"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "arcstr",
@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "dsiem-ui"
-version = "1.4.3"
+version = "1.5.0"
 dependencies = [
  "chrono",
  "gloo-console",

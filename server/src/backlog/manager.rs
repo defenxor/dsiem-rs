@@ -294,6 +294,10 @@ impl BacklogManager {
                     let mut backlogs = self.backlogs.write().await;
 
                     debug!(directive.id = self.id, event.id, "total backlogs {}", backlogs.len());
+                    // all backlogs should report not found before we create a new one
+                    // if there's one that matches, we should exit immediately and the notfound count will not
+                    //  match backlog.len(). the same is true when there's one that timed out
+                    let mut notfound_count = 0;
 
                     tracer::store_parent_into_event(&backlog_mgr_span, &mut event);
 
@@ -307,11 +311,13 @@ impl BacklogManager {
 
                         mgr_report.timedout_backlogs = 0;
 
+
                         // check the result, break as soon as there's a match
                         for b in backlogs.iter() {
                             let mut v = b.found_channel.locked_rx.lock().await;
                             if timeout(timeout_duration, v.changed()).await.is_ok() {
                                 let val = v.borrow();
+                                // found and event.id matches => no new backlog
                                 if val.0 && val.1 == event.id {
                                     match_found = true;
                                     debug!(
@@ -321,6 +327,10 @@ impl BacklogManager {
                                         "found existing backlog that consumes the event"
                                     );
                                     break;
+                                }
+                                if !val.0 && val.1 == event.id {
+                                    debug!("not found count: {}", notfound_count);
+                                    notfound_count += 1;
                                 }
                             } else {
                                 mgr_report.timedout_backlogs += 1;
@@ -349,11 +359,11 @@ impl BacklogManager {
                         continue;
                     }
 
-                    // timeout should not be treated as no match since it could trigger a duplicate backlog
-                    if mgr_report.timedout_backlogs > 0 {
+                    if notfound_count != backlogs.len() {
                         debug!(
-                            directive.id = self.id, event.id,
-                            "{} backlog timeouts, skip creating new backlog based on this event",
+                            directive.id = self.id,
+                            event.id,
+                            "not all backlogs reported not found (timed-out: {}), skip creating new backlog",
                             mgr_report.timedout_backlogs
                         );
                         continue;
