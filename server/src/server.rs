@@ -252,7 +252,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_event_handler() {
-        let eps_limiter = Arc::new(EpsLimiter::new(2, 2).unwrap());
+        let eps_limiter = Arc::new(EpsLimiter::new(4, 4).unwrap());
         let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(5);
         let mut app = app(true, true, eps_limiter, event_tx)
             .unwrap()
@@ -268,7 +268,7 @@ mod tests {
             .body(b)
             .unwrap();
         let response = app.ready().await.unwrap().call(request).await.expect("request failed");
-        assert!(response.status() == StatusCode::INTERNAL_SERVER_ERROR); // content accepted
+        assert!(response.status() == StatusCode::BAD_REQUEST);
 
         let evt = json!({
             "event_id": "id1",
@@ -312,6 +312,20 @@ mod tests {
             .unwrap();
         let response = app.ready().await.unwrap().call(request).await.expect("request failed");
         assert!(response.status() == StatusCode::OK); // event accepted
+
+        // test multiple events
+        let events = Vec::from([evt.clone(), evt.clone()]);
+        let b = Body::from(serde_json::to_vec(&events).unwrap());
+        let request = Request::builder()
+            .uri("/events")
+            .header(http::header::CONTENT_TYPE, "Application/Json")
+            .method(http::Method::POST)
+            .body(b)
+            .unwrap();
+        let response = app.ready().await.unwrap().call(request).await.expect("request failed");
+        assert!(response.status() == StatusCode::OK); // event accepted
+
+        // test eps limiter
 
         let b = Body::from(serde_json::to_vec(&evt).unwrap());
         let request = Request::builder()
