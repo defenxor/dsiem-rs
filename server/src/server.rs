@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast::Sender;
 use tower_http::{services::ServeDir, timeout::TimeoutLayer};
-use tracing::{debug, info, info_span, trace, warn};
+use tracing::{debug, error, info, info_span, trace, warn};
 
 use crate::{eps_limiter::EpsLimiter, event::NormalizedEvent, tracer, utils};
 
@@ -177,39 +177,59 @@ pub async fn config_delete_handler(
 pub async fn events_handler(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    JsonExtractor(mut event): JsonExtractor<NormalizedEvent>,
+    JsonExtractor(value): JsonExtractor<Value>,
 ) -> Result<(), AppError> {
-    if let Some(limiter) = &state.eps_limiter.as_ref().limiter {
-        let limiter = limiter.read().await;
-        debug!("max_tokens: {}, available: {}", limiter.max_tokens(), limiter.available());
-        if limiter.try_wait().is_err() {
-            return Err(AppError::new(StatusCode::TOO_MANY_REQUESTS, "EPS rate limit reached\n"));
+    let events = if !value.is_array() {
+        let event: NormalizedEvent = serde_json::from_value(value).map_err(|e| {
+            let s = e.to_string();
+            error!("cannot read event, json parse error: {}", s);
+            AppError::new(StatusCode::BAD_REQUEST, &s)
+        })?;
+        Vec::from([event])
+    } else {
+        serde_json::from_value(value).map_err(|e| {
+            let s = e.to_string();
+            error!("cannot read events, json parse error: {}", s);
+            AppError::new(StatusCode::BAD_REQUEST, &s)
+        })?
+    };
+
+    // println!("value: {}", serde_json::to_string_pretty(&value).unwrap());
+    debug!("received {} events from {}", events.len(), addr.to_string());
+
+    for mut event in events {
+        if let Some(limiter) = &state.eps_limiter.as_ref().limiter {
+            let limiter = limiter.read().await;
+            debug!("max_tokens: {}, available: {}", limiter.max_tokens(), limiter.available());
+            if limiter.try_wait().is_err() {
+                return Err(AppError::new(StatusCode::TOO_MANY_REQUESTS, "EPS rate limit reached\n"));
+            }
         }
+
+        state.conn_counter.as_ref().inc();
+        let conn_id = state.conn_counter.as_ref().get();
+        event.conn_id = conn_id as u64;
+
+        trace!("event received: {:?}", event);
+        let span = info_span!("frontend handler", conn.id = conn_id, event.id);
+        tracer::store_parent_into_event(&span, &mut event);
+
+        if !event.valid() {
+            warn!(event.id, "l337 or epic fail attempt from {} detected, discarding event", addr.to_string());
+            return Err(AppError::new(StatusCode::IM_A_TEAPOT, "Invalid event\n"));
+        }
+        let now = Utc::now();
+        if let Some(n) = now.timestamp_nanos_opt() {
+            event.rcvd_time = n;
+        }
+
+        debug!(event.id, conn.id = event.conn_id, "sending event to nats");
+
+        state
+            .event_tx
+            .send(event)
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, &format!("error sending to NATS: {}", e)))?;
     }
-
-    state.conn_counter.as_ref().inc();
-    let conn_id = state.conn_counter.as_ref().get();
-    event.conn_id = conn_id as u64;
-
-    trace!("event received: {:?}", event);
-    let span = info_span!("frontend handler", conn.id = conn_id, event.id);
-    tracer::store_parent_into_event(&span, &mut event);
-
-    if !event.valid() {
-        warn!(event.id, "l337 or epic fail attempt from {} detected, discarding event", addr.to_string());
-        return Err(AppError::new(StatusCode::IM_A_TEAPOT, "Invalid event\n"));
-    }
-    let now = Utc::now();
-    if let Some(n) = now.timestamp_nanos_opt() {
-        event.rcvd_time = n;
-    }
-
-    debug!(event.id, conn.id = event.conn_id, "sending event to nats");
-
-    state
-        .event_tx
-        .send(event)
-        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, &format!("error sending to NATS: {}", e)))?;
     Ok(())
 }
 
