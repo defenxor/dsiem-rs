@@ -2,7 +2,10 @@ use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{
-        atomic::{AtomicI64, AtomicU8, Ordering::Relaxed},
+        atomic::{
+            AtomicI64, AtomicU8,
+            Ordering::{Acquire, Relaxed, Release},
+        },
         Arc,
     },
     time::Duration,
@@ -330,8 +333,8 @@ impl Backlog {
             category: running.category.clone(),
             tag: running.tag.clone(),
             created_time: AtomicI64::new(running.created_time.load(Relaxed)),
-            update_time: AtomicI64::new(running.update_time.load(Relaxed)),
-            risk: AtomicU8::new(running.risk.load(Relaxed)),
+            update_time: AtomicI64::new(running.update_time.load(Acquire)),
+            risk: AtomicU8::new(running.risk.load(Acquire)),
             risk_class: (*running.risk_class.lock()).clone().into(),
             rules: running.rules.clone(),
             src_ips: (*running.src_ips.lock()).clone().into(),
@@ -474,7 +477,7 @@ impl Backlog {
     }
 
     fn is_time_in_order(&self, ts: &DateTime<Utc>) -> bool {
-        let reader = self.current_stage.load(Relaxed);
+        let reader = self.current_stage.load(Acquire);
         let prev_stage_ts = self
             .rules
             .iter()
@@ -493,7 +496,7 @@ impl Backlog {
     }
 
     pub fn get_rule(&self, stage: Option<u8>) -> Result<&DirectiveRule> {
-        let s = if let Some(v) = stage { v } else { self.current_stage.load(Relaxed) };
+        let s = if let Some(v) = stage { v } else { self.current_stage.load(Acquire) };
         self.rules.iter().find(|v| v.stage == s).ok_or_else(|| anyhow!("cannot locate the current rule"))
     }
 
@@ -613,7 +616,7 @@ impl Backlog {
         let reader = self.dst_ips.lock();
         let dst_value = reader.iter().map(|v| self.assets.get_value(v)).max().unwrap_or_default();
 
-        let prior_risk = self.risk.load(Relaxed);
+        let prior_risk = self.risk.load(Acquire);
         let value = std::cmp::max(src_value, dst_value);
         let priority = self.priority;
         let reliability = self.current_rule()?.reliability;
@@ -621,14 +624,14 @@ impl Backlog {
         let risk_different = risk != prior_risk;
         if risk_different {
             info!(backlog.id = self.id, "risk changed from {} to {}", prior_risk, risk);
-            self.risk.swap(risk, Relaxed);
+            self.risk.store(risk, Release);
         }
         Ok(risk_different)
     }
 
     fn update_risk_class(&self) {
         let mut w = self.risk_class.lock();
-        let risk = self.risk.load(Relaxed);
+        let risk = self.risk.load(Acquire);
         *w = if risk < self.med_risk_min {
             "Low".into()
         } else if risk >= self.med_risk_min && risk <= self.med_risk_max {
@@ -639,7 +642,7 @@ impl Backlog {
     }
 
     fn is_last_stage(&self) -> bool {
-        self.current_stage.load(Relaxed) == self.highest_stage
+        self.current_stage.load(Acquire) == self.highest_stage
     }
 
     async fn process_matched_event(&self, event: &NormalizedEvent) -> Result<()> {
@@ -701,15 +704,17 @@ impl Backlog {
     }
 
     fn increase_stage(&self) -> bool {
-        let stage = self.current_stage.load(Relaxed);
-        let should_increase = stage < self.highest_stage;
-        if should_increase {
-            self.current_stage.fetch_add(1, Relaxed);
-            info!("stage increased to {}", stage + 1);
-        } else {
-            info!("stage is at the highest level");
-        }
-        should_increase
+        self.current_stage
+            .fetch_update(Release, Acquire, |v| {
+                if v < self.highest_stage {
+                    info!("stage increased to {}", v + 1);
+                    Some(v + 1)
+                } else {
+                    info!("stage is at the highest level");
+                    None
+                }
+            })
+            .is_ok()
     }
 
     fn append_and_write_event(&self, event: &NormalizedEvent, stage: Option<u8>) -> Result<()> {
@@ -764,15 +769,18 @@ impl Backlog {
     }
 
     fn set_update_time(&self) {
-        self.update_time.swap(Utc::now().timestamp(), Relaxed);
+        self.update_time.store(Utc::now().timestamp(), Release);
     }
 
     fn set_created_time(&self) {
-        let created_time = self.created_time.load(Relaxed);
-        if created_time == 0 {
-            let updated_time = self.update_time.load(Relaxed);
-            self.created_time.swap(updated_time, Relaxed);
-        }
+        let _ = self.created_time.fetch_update(Relaxed, Relaxed, |v| {
+            if v == 0 {
+                let updated_time = self.update_time.load(Acquire);
+                Some(updated_time)
+            } else {
+                None
+            }
+        });
     }
 
     fn is_under_pressure(&self, rcvd_time: i64, max_delay: i64) -> bool {
@@ -802,7 +810,7 @@ impl Backlog {
     }
 
     fn append_siem_alarm_events(&self, e: &NormalizedEvent, stage: Option<u8>) -> Result<()> {
-        let s = if let Some(v) = stage { v } else { self.current_stage.load(Relaxed) };
+        let s = if let Some(v) = stage { v } else { self.current_stage.load(Acquire) };
         let sae = SiemAlarmEvent { id: self.id.clone(), stage: s, event_id: e.id.clone() };
         let s = serde_json::to_string(&sae)? + "\n";
         trace!(alarm.id = sae.id, stage = sae.stage, "appending siem_alarm_events");
@@ -813,7 +821,7 @@ impl Backlog {
     }
 
     async fn update_alarm(&self, check_intvuln: bool) -> Result<()> {
-        let risk = self.risk.load(Relaxed);
+        let risk = self.risk.load(Acquire);
         if risk == 0 {
             trace!("risk is zero, skip updating alarm");
             return Ok(());

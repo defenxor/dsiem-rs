@@ -141,11 +141,11 @@ impl DirectiveRule {
         };
         let mut w = self.first_event.lock();
         *w = e;
-        self.first_event_set_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.first_event_set_flag.store(true, std::sync::atomic::Ordering::Release);
         Ok(())
     }
     pub fn is_first_event_set(&self) -> bool {
-        self.first_event_set_flag.load(std::sync::atomic::Ordering::Relaxed)
+        self.first_event_set_flag.load(std::sync::atomic::Ordering::Acquire)
     }
     pub fn get_first_event(&self) -> NormalizedEvent {
         self.first_event.lock().clone()

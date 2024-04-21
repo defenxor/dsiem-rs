@@ -48,8 +48,3 @@ jobs:
           ./scripts/build-web.sh prod
           # for the server
           cargo build --release
-
-      # longer but more in line with the actual release process
-      # - name: test build process
-      #  run: |
-      #    ./scripts/dockerbuild.sh dsiem-rs
