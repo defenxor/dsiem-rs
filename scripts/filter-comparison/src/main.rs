@@ -6,10 +6,11 @@ use std::{
 use axum::{extract::State, routing::post, Json, Router};
 use dsiem::{
     directive::load_directives,
-    manager::FilterTarget,
+    event::NormalizedEvent,
+    filter::FilterTarget,
+    rule,
     rule::{SIDPair, TaxoPair},
 };
-use dsiem::{event::NormalizedEvent, rule};
 use rayon::prelude::*;
 use tokio::sync::{
     broadcast::{channel, Sender},
@@ -33,10 +34,7 @@ fn main() {
 
     let targets = get_targets();
 
-    let use_rayon = std::env::var("USE_RAYON")
-        .unwrap_or(false.to_string())
-        .parse::<bool>()
-        .unwrap();
+    let use_rayon = std::env::var("USE_RAYON").unwrap_or(false.to_string()).parse::<bool>().unwrap();
 
     let h = if use_rayon {
         thread::spawn(move || {
@@ -77,14 +75,7 @@ fn get_targets() -> Vec<FilterTarget> {
         let contains_pluginrule = !sid_pairs.is_empty();
         let contains_taxorule = !taxo_pairs.is_empty();
         let (tx, _) = mpsc::channel::<NormalizedEvent>(1);
-        let t = FilterTarget {
-            id: d.id,
-            tx,
-            sid_pairs,
-            taxo_pairs,
-            contains_pluginrule,
-            contains_taxorule,
-        };
+        let t = FilterTarget { id: d.id, tx, sid_pairs, taxo_pairs, contains_pluginrule, contains_taxorule };
         targets.push(t);
     }
     targets
@@ -115,22 +106,12 @@ fn quick_discard(p: &FilterTarget, event: &NormalizedEvent) -> bool {
 }
 
 fn processor_rayon(event_tx: Sender<NormalizedEvent>, targets: Vec<FilterTarget>) {
+    let pool_size =
+        std::env::var("RAYON_THREAD_POOL_SIZE").unwrap_or(RAYON_THREAD_POOL_SIZE.to_string()).parse::<usize>().unwrap();
 
-    let pool_size = std::env::var("RAYON_THREAD_POOL_SIZE")
-        .unwrap_or(RAYON_THREAD_POOL_SIZE.to_string())
-        .parse::<usize>()
-        .unwrap();
+    rayon::ThreadPoolBuilder::new().num_threads(pool_size).build_global().unwrap();
 
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(pool_size)
-        .build_global()
-        .unwrap();
-
-    info!(
-        "processing {} total directives with {} rayon threadpool",
-        targets.len(),
-        pool_size
-    );
+    info!("processing {} total directives with {} rayon threadpool", targets.len(), pool_size);
 
     let handle = thread::spawn(move || {
         let mut rx = event_tx.subscribe();
@@ -143,15 +124,9 @@ fn processor_rayon(event_tx: Sender<NormalizedEvent>, targets: Vec<FilterTarget>
                 }
             };
             debug!("processing event: {:?}", event);
-            let matched_dirs: Vec<&FilterTarget> = targets
-                .par_iter()
-                .filter(|p| !quick_discard_rayon(p, &event))
-                .collect();
-            debug!(
-                event.id,
-                "event matched rules in {} directive(s)",
-                matched_dirs.len()
-            );
+            let matched_dirs: Vec<&FilterTarget> =
+                targets.par_iter().filter(|p| !quick_discard_rayon(p, &event)).collect();
+            debug!(event.id, "event matched rules in {} directive(s)", matched_dirs.len());
         }
     });
 
@@ -159,11 +134,8 @@ fn processor_rayon(event_tx: Sender<NormalizedEvent>, targets: Vec<FilterTarget>
 }
 
 fn processor(event_tx: Sender<NormalizedEvent>, targets: Vec<FilterTarget>) {
-
-    let chunk_size = std::env::var("DIRECTIVES_PER_THREAD")
-        .unwrap_or(DIRECTIVES_PER_THREAD.to_string())
-        .parse::<usize>()
-        .unwrap();
+    let chunk_size =
+        std::env::var("DIRECTIVES_PER_THREAD").unwrap_or(DIRECTIVES_PER_THREAD.to_string()).parse::<usize>().unwrap();
 
     let r = targets.chunks(chunk_size).collect::<Vec<_>>();
     let mut chunks = vec![];
@@ -188,14 +160,8 @@ fn processor(event_tx: Sender<NormalizedEvent>, targets: Vec<FilterTarget>) {
                 }
             };
             debug!(thread.id = i, "processing event: {:?}", event);
-            let matched_dirs: Vec<&FilterTarget> =
-                c.iter().filter(|p| !quick_discard(p, &event)).collect();
-            debug!(
-                thread.id = i,
-                event.id,
-                "event matched rules in {} directive(s)",
-                matched_dirs.len()
-            );
+            let matched_dirs: Vec<&FilterTarget> = c.iter().filter(|p| !quick_discard(p, &event)).collect();
+            debug!(thread.id = i, event.id, "event matched rules in {} directive(s)", matched_dirs.len());
         });
         handles.push(h);
     }
