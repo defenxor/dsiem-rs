@@ -5,7 +5,8 @@ on:
     types:
       [opened, reopened, labeled, unlabeled, synchronize]
 permissions:
-  issues: write
+  contents: read
+  pull-requests: write
 jobs:
   label:
     runs-on: ubuntu-latest
