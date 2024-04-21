@@ -34,11 +34,13 @@ This design also decouples Dsiem code from Elastic stack specific libraries, eff
 
 ## So how to use Dsiem without Elastic stack?
 
-First use something else other than Logstash for normalizing your logs in accordance to Dsiem [normalized event specification](https://github.com/defenxor/dsiem-rs/blob/master/docs/dsiem_plugin.md#normalized-event). For instance, you can use [Fluentd](https://docs.fluentd.org/input) for this purpose.
+First use something else other than Logstash for normalizing your logs in accordance to Dsiem [normalized event specification](https://github.com/defenxor/dsiem-rs/blob/master/docs/dsiem_plugin.md#normalized-event). For instance, you can use [Vector](https://vector.dev/) for this purpose.
 
-Next, send those normalized events to Dsiem through HTTP. Again, should be possible with something like Fluentd [HTTP output](https://docs.fluentd.org/output/http).
+Next, send those normalized events to Dsiem through HTTP. For Vector, that means using those events as input to an [HTTP sink](https://vector.dev/docs/reference/configuration/sinks/http/).
 
-Finally, substitute Filebeat with something else to read Dsiem output (`siem_alarms.json`), and send it to the final storage or notification destination. In Fluentd this may involve the `tail` input and `json` parser plugins sending results to one of Fluentd [data output plugin](https://www.fluentd.org/dataoutputs).
+Finally, substitute Filebeat with something else to read Dsiem output (`siem_alarms.json`), and send it to the final storage or notification destination. The HTTP and Elasticsearch sinks in Vector do not support [`scripted upsert`](https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-update.html#scripted_upsert) in a way that Logstash does, so as a workaround there is a special-purpose [proxy](https://github.com/mmta/dsiem-esproxy) for this.
+
+A working example of Dsiem deployment without Logstash is provided [here](https://github.com/mmta/dsiem-esproxy/tree/master/examples/elasticsearch). There's also [another one](https://github.com/mmta/dsiem-esproxy/tree/master/examples/surrealdb) that also replaces Elasticseach with Surrealdb.
 
 ## Has this been used in production? Where is the stable version?
 
