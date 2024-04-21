@@ -8,7 +8,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use axum_extra::response::ErasedJson;
+use axum_extra::response::ErasedJson; // this is just for pretty printing
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -185,7 +185,7 @@ pub async fn events_handler(
             error!("cannot read event, json parse error: {}", s);
             AppError::new(StatusCode::BAD_REQUEST, &s)
         })?;
-        Vec::from([event])
+        [event].to_vec()
     } else {
         serde_json::from_value(value).map_err(|e| {
             let s = e.to_string();
