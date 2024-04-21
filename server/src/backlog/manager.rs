@@ -329,7 +329,6 @@ impl BacklogManager {
                                     break;
                                 }
                                 if !val.0 && val.1 == event.id {
-                                    debug!("not found count: {}", notfound_count);
                                     notfound_count += 1;
                                 }
                             } else {
