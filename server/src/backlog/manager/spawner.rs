@@ -50,7 +50,7 @@ pub struct SpawnerOnDemandOption {
 }
 
 pub enum Spawner {
-    OnDemand(Vec<Arc<BacklogManagerId>>, Box<SpawnerOnDemandOption>),
+    OnDemand(Vec<Arc<BacklogManagerId>>, SpawnerOnDemandOption),
     All(Vec<BacklogManager>),
 }
 
@@ -77,7 +77,7 @@ impl Spawner {
 
     pub fn run(self, rt: tokio::runtime::Handle) -> Result<thread::JoinHandle<()>> {
         match self {
-            Spawner::OnDemand(b, ondemand_opt) => spawn_ondemand(b, *ondemand_opt, rt),
+            Spawner::OnDemand(b, ondemand_opt) => spawn_ondemand(b, ondemand_opt, rt),
             Spawner::All(ref b) => spawn_all(b.to_vec(), rt),
         }
     }

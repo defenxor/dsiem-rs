@@ -39,7 +39,7 @@ pub struct Directives {
 
 fn validate_rules(rules: &Vec<rule::DirectiveRule>) -> Result<()> {
     let mut stages: Vec<u8> = vec![];
-    let highest_stage = rules.iter().fold(u8::MIN, |a, b| a.max(b.stage));
+    let highest_stage = rules.iter().fold(std::u8::MIN, |a, b| a.max(b.stage));
     for r in rules {
         if r.stage == 0 {
             return Err(anyhow!("rule stage cannot be zero"));
@@ -135,7 +135,7 @@ fn validate_port(s: ArcStr, is_first_rule: bool, highest_stage: u8) -> Result<()
     for s in slices {
         let n = s.replace('!', "").trim().parse::<u16>().map_err(|e| e.to_string())?;
         if !(1..=65535).contains(&n) {
-            return Err(format!("{n} is not a valid TCP/UDP port number"));
+            return Err(format!("{} is not a valid TCP/UDP port number", n));
         }
     }
     Ok(())
@@ -148,12 +148,12 @@ fn is_reference(str: &str) -> bool {
 fn validate_reference(r: ArcStr, highest_stage: u8) -> Result<(), String> {
     let re = Regex::new(r"^:[1-9][0-9]?$").map_err(|e| e.to_string())?;
     if !re.is_match(&r) {
-        return Err(format!("{r} is not a valid reference"));
+        return Err(format!("{} is not a valid reference", r));
     }
 
     if let Some(n) = ref_to_digit(&r) {
         if n > highest_stage {
-            return Err(format!("{r} is not a valid reference"));
+            return Err(format!("{} is not a valid reference", r));
         }
     }
     Ok(())

@@ -59,11 +59,11 @@ pub fn generate_normalized_event(rules: &[DirectiveRule]) -> Vec<NormalizedEvent
 
             e.custom_data2 =
                 use_ref_or_set(r.custom_data2.to_string(), ReferableField::CustomData2, &ref_events).parse().unwrap();
-            e.custom_label2 = if e.custom_data2.is_empty() { "".into() } else { "label2".into() };
+            e.custom_label2 = if e.custom_data1.is_empty() { "".into() } else { "label2".into() };
 
             e.custom_data3 =
                 use_ref_or_set(r.custom_data3.to_string(), ReferableField::CustomData3, &ref_events).parse().unwrap();
-            e.custom_label3 = if e.custom_data3.is_empty() { "".into() } else { "label3".into() };
+            e.custom_label3 = if e.custom_data1.is_empty() { "".into() } else { "label3".into() };
 
             e.title = if r.name.contains("SRC_IP") || r.name.contains("DST_IP") {
                 r.name.clone().replace("SRC_IP", &e.src_ip.to_string()).replace("DST_IP", &e.dst_ip.to_string()).into()
@@ -75,7 +75,9 @@ pub fn generate_normalized_event(rules: &[DirectiveRule]) -> Vec<NormalizedEvent
 
             res.push(e.clone());
             // this saves the first event that is generated for a stage
-            ref_events.entry(r.stage).or_insert(e);
+            if ref_events.get(&r.stage).is_none() {
+                ref_events.insert(r.stage, e);
+            }
         }
     }
     res
@@ -103,8 +105,8 @@ fn use_ref_or_set(val_in_rule: String, ftype: ReferableField, ref_map: &HashMap<
             ReferableField::PortTo => rand::random::<u16>().to_string(),
             ReferableField::Protocol => "TCP".to_string(),
             ReferableField::CustomData1 => format!("custom_data1_{}", nanoid!(5)),
-            ReferableField::CustomData2 => format!("custom_data2_{}", nanoid!(5)),
-            ReferableField::CustomData3 => format!("custom_data3_{}", nanoid!(5)),
+            ReferableField::CustomData2 => format!("custom_data1_{}", nanoid!(5)),
+            ReferableField::CustomData3 => format!("custom_data1_{}", nanoid!(5)),
         }
     } else if val_in_rule == "HOME_NET" {
         IP_IN_HOME_NET.to_string()

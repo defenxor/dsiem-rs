@@ -87,7 +87,7 @@ fn test_e2e_frontend_nats_backend() {
 
     print("checking if services ports are open", false);
     for port in &[NESD_PORT, WISE_PORT, NATS_PORT] {
-        print(&format!("checking port {port} .. "), true);
+        print(&format!("checking port {} .. ", port), true);
         assert!(local_listener_ready(*port));
         print("up", false);
     }
@@ -97,7 +97,8 @@ fn test_e2e_frontend_nats_backend() {
     print("running dsiem-frontend", false);
     // add -vv before serve for more verbose output
     let frontend_cmd = format!(
-        "exec ./dsiem-frontend serve -n frontend --msq nats://127.0.0.1:{NATS_PORT}/ -a 0.0.0.0 -p {FRONTEND_PORT}"
+        "exec ./dsiem-frontend serve -n frontend --msq nats://127.0.0.1:{}/ -a 0.0.0.0 -p {}",
+        NATS_PORT, FRONTEND_PORT
     );
     let frontend = spawn_in_shell(&frontend_cmd, &test_dir_str, "failed to run dsiem-frontend");
     dsiem_cleaner.frontend = Some(frontend);
@@ -110,8 +111,9 @@ fn test_e2e_frontend_nats_backend() {
     print("running dsiem-backend", false);
     // add -vv before serve for more verbose output
     let backend_cmd = format!(
-        "exec ./dsiem-backend serve -n dsiem-backend-0 --msq nats://127.0.0.1:{NATS_PORT} \
-         -f http://127.0.0.1:{FRONTEND_PORT} --intel_private_ip"
+        "exec ./dsiem-backend serve -n dsiem-backend-0 --msq nats://127.0.0.1:{} -f http://127.0.0.1:{} \
+         --intel_private_ip",
+        NATS_PORT, FRONTEND_PORT
     );
     let backend = spawn_in_shell(&backend_cmd, &test_dir_str, "failed to run dsiem-backend");
     dsiem_cleaner.backend = Some(backend);
@@ -120,7 +122,7 @@ fn test_e2e_frontend_nats_backend() {
     sleep(Duration::from_secs(3));
 
     test_directives_result(&directives);
-    print(&format!("\nDone, each directive log files available in {test_dir_str}/logs for more details\n"), false);
+    print(&format!("\nDone, each directive log files available in {}/logs for more details\n", test_dir_str), false);
 }
 
 fn test_directives_result(directives: &[Directive]) {
@@ -143,7 +145,7 @@ fn test_directives_result(directives: &[Directive]) {
         let actual = test_directive(dir_id, directives, &test_dir);
 
         validator
-            .given(&format!("directive id: {dir_id}, "))
+            .given(&format!("directive id: {}, ", dir_id))
             .when("test_directive")
             .then(&format!(
                 "it should be alarm entries: {}, risk: {}, intel_hits: {}, vulnerabilities: {}",
@@ -199,7 +201,7 @@ fn send_events_to_frontend(d: &Directive) {
         print("sending event:", false);
         println!("{}", serde_json::to_string(&e).unwrap());
         let client = reqwest::blocking::Client::new();
-        let res = client.post(format!("http://localhost:{FRONTEND_PORT}/events/")).json(&e).send().unwrap();
+        let res = client.post(&format!("http://localhost:{}/events/", FRONTEND_PORT)).json(&e).send().unwrap();
         sleep(Duration::from_millis(100));
         assert!(res.status().is_success());
     }
@@ -207,7 +209,7 @@ fn send_events_to_frontend(d: &Directive) {
 
 fn write_events_to_disk(dir_id: u64, events: &[NormalizedEvent]) {
     let test_dir = get_test_dir();
-    let filename = format!("siem_events_{dir_id}.json");
+    let filename = format!("siem_events_{}.json", dir_id);
     let file = test_dir.join("logs").join(filename);
     let mut f = fs::File::create(file).expect("failed to create events.json");
     for e in events {
@@ -222,13 +224,13 @@ fn load_directives(test_dir: &str) -> Vec<Directive> {
 }
 
 fn run_in_shell(cmd: &str, dir: &str, fail_msg: &str) -> std::process::ExitStatus {
-    let cmd = format!("cd {dir} && {cmd}");
+    let cmd = format!("cd {} && {}", dir, cmd);
     let out = Command::new("sh").arg("-c").arg(cmd).output().expect(fail_msg);
     out.status
 }
 
 fn spawn_in_shell(cmd: &str, dir: &str, fail_msg: &str) -> std::process::Child {
-    let cmd = format!("cd {dir} && {cmd}");
+    let cmd = format!("cd {} && {}", dir, cmd);
     let out = Command::new("sh").arg("-c").arg(cmd).spawn().expect(fail_msg);
     out
 }

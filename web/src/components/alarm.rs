@@ -53,7 +53,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             move |_| {
                 if !update_status.loading {
                     if let Some(error) = &update_status.error {
-                        toast_text.set(format!("Error changing status: {error}"));
+                        toast_text.set(format!("Error changing status: {}", error));
                         toast_border.set("border-red-500");
                         toast_show.set(true);
                         Timeout::new(3000, move || {
@@ -64,7 +64,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                     }
                     if let Some(result) = &update_status.data {
                         toast_border.set("border-green-500");
-                        toast_text.set(format!("changing status result: {result}"));
+                        toast_text.set(format!("changing status result: {}", result));
                         toast_show.set(true);
                         Timeout::new(3000, move || {
                             toast_show.set(false);
@@ -86,7 +86,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             move |_| {
                 if !update_tag.loading {
                     if let Some(error) = &update_tag.error {
-                        toast_text.set(format!("Error changing tag: {error}"));
+                        toast_text.set(format!("Error changing tag: {}", error));
                         toast_border.set("border-red-500");
                         toast_show.set(true);
                         Timeout::new(3000, move || {
@@ -97,7 +97,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                     }
                     if let Some(result) = &update_tag.data {
                         toast_border.set("border-green-500");
-                        toast_text.set(format!("changing tag result: {result}"));
+                        toast_text.set(format!("changing tag result: {}", result));
                         toast_show.set(true);
                         Timeout::new(3000, move || {
                             toast_show.set(false);
@@ -119,7 +119,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
             move |_| {
                 if !delete_alarm.loading {
                     if let Some(error) = &delete_alarm.error {
-                        toast_text.set(format!("Error deleting alarm: {error}"));
+                        toast_text.set(format!("Error deleting alarm: {}", error));
                         toast_border.set("border-red-500");
                         toast_show.set(true);
                         Timeout::new(3000, move || {
@@ -130,7 +130,7 @@ pub fn alarm_view(props: &DetailProps) -> Html {
                     }
                     if let Some(result) = &delete_alarm.data {
                         toast_border.set("border-green-500");
-                        toast_text.set(format!("Deleting alarm result: {result}"));
+                        toast_text.set(format!("Deleting alarm result: {}", result));
                         toast_show.set(true);
                         Timeout::new(3000, move || {
                             toast_show.set(false);
