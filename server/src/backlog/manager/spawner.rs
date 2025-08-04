@@ -49,6 +49,7 @@ pub struct SpawnerOnDemandOption {
     pub manager_option: Option<ManagerOpt>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Spawner {
     OnDemand(Vec<Arc<BacklogManagerId>>, SpawnerOnDemandOption),
     All(Vec<BacklogManager>),

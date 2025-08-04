@@ -129,7 +129,7 @@ mod test {
         let ip3: IpAddr = "8.8.8.8".parse().unwrap();
         let name = assets.get_name(&ip3);
         let networks = assets.get_asset_networks(&ip3);
-        println!("networks: {:?}", networks);
+        println!("networks: {networks:?}");
         assert!(networks.is_none());
         assert!(name.is_none());
         assert!(!assets.is_in_homenet(&ip3));
