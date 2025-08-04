@@ -198,7 +198,7 @@ async fn handle_event_message(
     _ = span.enter();
 
     if !e.valid() {
-        let err_text = format!("event {} is not valid, skipping it", id);
+        let err_text = format!("event {id} is not valid, skipping it");
         return Err(anyhow!(err_text));
     }
     if assets.is_whitelisted(&e.src_ip) {

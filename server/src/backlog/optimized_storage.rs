@@ -56,6 +56,7 @@ pub struct BacklogColdData {
     pub all_rules_always_active: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl OptimizedBacklogStorage {
     pub fn new(
         id: String,

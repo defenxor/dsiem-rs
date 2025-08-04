@@ -18,8 +18,6 @@ pub struct OrderedEventProcessor {
     config: OrderingConfig,
     // Per-backlog ordered queues to maintain sequence within each incident
     backlog_queues: Arc<RwLock<BTreeMap<String, OrderedEventQueue>>>,
-    // Global ordering buffer for new events
-    ordering_buffer: Arc<RwLock<OrderingBuffer>>,
     processing_semaphore: Arc<Semaphore>,
 }
 
@@ -105,7 +103,7 @@ impl OrderedEventQueue {
         }
 
         // Add to the ordered events map
-        self.events.entry(event.timestamp).or_insert_with(Vec::new).push(event);
+        self.events.entry(event.timestamp).or_default().push(event);
         Ok(())
     }
 
@@ -179,7 +177,7 @@ impl OrderedEventQueue {
 
         // Add the waited events to the main queue
         for event in events_to_reprocess {
-            self.events.entry(event.timestamp).or_insert_with(Vec::new).push(event);
+            self.events.entry(event.timestamp).or_default().push(event);
         }
     }
 
@@ -192,45 +190,6 @@ impl OrderedEventQueue {
             current_queue_size: self.events.values().map(|v| v.len()).sum(),
             buffered_out_of_order: self.out_of_order_buffer.len(),
         }
-    }
-}
-
-/// Global ordering buffer for new events before they're assigned to backlogs
-#[derive(Debug)]
-struct OrderingBuffer {
-    events: BTreeMap<DateTime<Utc>, Vec<NormalizedEvent>>,
-    last_processed: Option<DateTime<Utc>>,
-}
-
-impl OrderingBuffer {
-    fn new() -> Self {
-        Self { events: BTreeMap::new(), last_processed: None }
-    }
-
-    fn add_event(&mut self, event: NormalizedEvent) {
-        self.events.entry(event.timestamp).or_insert_with(Vec::new).push(event);
-    }
-
-    fn get_processable_events(&mut self, max_delay: Duration) -> Vec<NormalizedEvent> {
-        let cutoff_time = Utc::now() - chrono::Duration::from_std(max_delay).unwrap_or_default();
-        let mut processable = Vec::new();
-        let mut to_remove = Vec::new();
-
-        for (&timestamp, events) in self.events.iter() {
-            if timestamp <= cutoff_time {
-                processable.extend(events.clone());
-                to_remove.push(timestamp);
-                self.last_processed = Some(timestamp);
-            } else {
-                break;
-            }
-        }
-
-        for ts in to_remove {
-            self.events.remove(&ts);
-        }
-
-        processable
     }
 }
 
@@ -250,7 +209,6 @@ impl OrderedEventProcessor {
             processing_semaphore: Arc::new(Semaphore::new(config.max_concurrent_processing)),
             config,
             backlog_queues: Arc::new(RwLock::new(BTreeMap::new())),
-            ordering_buffer: Arc::new(RwLock::new(OrderingBuffer::new())),
         }
     }
 
@@ -310,9 +268,7 @@ impl OrderedEventProcessor {
         // For immediate processing, we still respect ordering but process synchronously
         let backlog_id = self.determine_backlog_id(&events[0]).await;
 
-        let mut processable_events = Vec::new();
-
-        {
+        let processable_events = {
             let mut queues = self.backlog_queues.write().await;
 
             // Get or create the queue for this backlog
@@ -324,11 +280,12 @@ impl OrderedEventProcessor {
             }
 
             // Get all processable events immediately
-            processable_events = queue.get_processable_events(&self.config);
-        }
+            queue.get_processable_events(&self.config)
+        };
 
         // Process the events in order
         if !processable_events.is_empty() {
+            let mut processable_events = processable_events;
             processable_events.sort_by_key(|event| event.timestamp);
             processor(processable_events).await?;
         }
@@ -411,6 +368,16 @@ impl OrderedEventProcessor {
     /// Update configuration at runtime
     pub async fn update_config(&mut self, new_config: OrderingConfig) {
         self.config = new_config;
+    }
+}
+
+impl Clone for OrderedEventProcessor {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            backlog_queues: self.backlog_queues.clone(),
+            processing_semaphore: self.processing_semaphore.clone(),
+        }
     }
 }
 
@@ -516,16 +483,5 @@ mod tests {
 
         let stats = processor.get_all_queue_stats().await;
         assert!(!stats.is_empty());
-    }
-}
-
-impl Clone for OrderedEventProcessor {
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-            backlog_queues: self.backlog_queues.clone(),
-            ordering_buffer: self.ordering_buffer.clone(),
-            processing_semaphore: self.processing_semaphore.clone(),
-        }
     }
 }
