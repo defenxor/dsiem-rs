@@ -1,4 +1,4 @@
-ARG trunk_version=0.19.1
+ARG trunk_version=0.21.14
 ARG text_spinners_version=1.0.5
 
 FROM node:current-slim as css_builder
@@ -7,10 +7,17 @@ WORKDIR /
 COPY ./ctx/web ./web
 WORKDIR /web
 ENV NODE_ENV=production
-RUN npx -y tailwindcss -c ./tailwind.config.js -o ./tailwind.css --minify
+RUN apt-get update && apt-get install -y wget
+# Download Tailwind standalone binary
+RUN wget https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64 \
+    && chmod +x tailwindcss-linux-x64 \
+    && mv tailwindcss-linux-x64 /usr/local/bin/tailwindcss
+
+RUN tailwindcss -c ./tailwind.config.js -o ./tailwind.css --minify
+RUN rm -rf node_modules package.json
 RUN npm init -y && npm install -y text-spinners@${text_spinners_version}
 
-FROM rust:slim
+FROM rust:1.88-slim
 ARG trunk_version
 WORKDIR /
 
@@ -26,4 +33,4 @@ RUN apt-get update && apt-get install -y wget
 ADD https://github.com/trunk-rs/trunk/releases/download/v${trunk_version}/trunk-x86_64-unknown-linux-gnu.tar.gz /tmp/
 RUN tar -xzf /tmp/trunk-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin
 RUN rustup target add wasm32-unknown-unknown
-RUN trunk build --public-url /ui --release index.html
+RUN trunk build --public-url /ui --release true index.html
