@@ -3,7 +3,7 @@ use std::{collections::HashSet, net::IpAddr};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use super::{VulnChecker, VulnResult};
 
@@ -31,12 +31,19 @@ impl VulnChecker for Nesd {
 
         trace!(url, "nesd vuln check");
 
-        let text =
-            reqwest::get(url).await.context("get request error")?.text().await.context("error obtaining text")?;
+        let resp = reqwest::get(&url).await.context("get request error")?;
+        let status = resp.status();
+        let text = resp.text().await.context("error obtaining text")?;
 
         trace!(text, "nesd vuln check");
 
         let mut results: HashSet<VulnResult> = HashSet::new();
+
+        if status.as_u16() == 418 {
+            // HTTP 418: I'm a teapot
+            debug!(url, "nesd returned HTTP 418, indicating error in request, likely due to invalid IP or port");
+            return Ok(results);
+        }
 
         if text == "no vulnerability found\n" {
             return Ok(results);
