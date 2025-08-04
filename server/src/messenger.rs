@@ -198,7 +198,7 @@ async fn handle_event_message(
     _ = span.enter();
 
     if !e.valid() {
-        let err_text = format!("event {} is not valid, skipping it", id);
+        let err_text = format!("event {id} is not valid, skipping it");
         return Err(anyhow!(err_text));
     }
     if assets.is_whitelisted(&e.src_ip) {
@@ -296,7 +296,7 @@ mod test {
         assert!(logs_contain("overload = true signal sent to frontend"));
         assert!(logs_contain("last under pressure signal is still active"));
 
-        let client = nats_client(nats_url, &5).await.context(format!("cannot connect to {}", nats_url)).unwrap();
+        let client = nats_client(nats_url, &5).await.context(format!("cannot connect to {nats_url}")).unwrap();
 
         let evt = NormalizedEvent { id: "1".to_string(), ..Default::default() };
         let payload_str = serde_json::to_string(&evt).unwrap();
@@ -330,7 +330,7 @@ mod test {
         sleep(Duration::from_millis(3000)).await;
         assert!(logs_contain("listening for new back pressure signal"));
 
-        let client = nats_client(nats_url, &5).await.context(format!("cannot connect to {}", nats_url)).unwrap();
+        let client = nats_client(nats_url, &5).await.context(format!("cannot connect to {nats_url}")).unwrap();
 
         let _detached = task::spawn(async move {
             bp_rx.recv().await;
