@@ -770,9 +770,9 @@ mod test {
             let actual = is_string_match_csvrule(input_2, &input_1.to_owned());
 
             validator
-                .given(&format!("rules: {}, term: {}", input_2, input_1))
+                .given(&format!("rules: {input_2}, term: {input_1}"))
                 .when("is_string_match_csvrule")
-                .then(&format!("it should be {}", expected))
+                .then(&format!("it should be {expected}"))
                 .assert_eq(expected, actual);
         }
     }

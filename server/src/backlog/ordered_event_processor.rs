@@ -396,7 +396,7 @@ mod tests {
         // Add events in order
         for i in 0..5 {
             let event = NormalizedEvent {
-                id: format!("event-{}", i),
+                id: format!("event-{i}"),
                 timestamp: base_time + ChronoDuration::seconds(i),
                 ..Default::default()
             };
@@ -408,15 +408,14 @@ mod tests {
 
         // Events should be in order
         for (i, event) in processable.iter().enumerate() {
-            assert_eq!(event.id, format!("event-{}", i));
+            assert_eq!(event.id, format!("event-{i}"));
         }
     }
 
     #[test]
     fn test_ordered_queue_out_of_order_strict() {
         let mut queue = OrderedEventQueue::new("test-backlog".to_string());
-        let mut config = OrderingConfig::default();
-        config.strict_ordering = true;
+        let config = OrderingConfig { strict_ordering: true, ..Default::default() };
 
         let base_time = Utc::now();
 
@@ -471,7 +470,7 @@ mod tests {
         // Send some events
         for i in 0..10 {
             let event = NormalizedEvent {
-                id: format!("event-{}", i),
+                id: format!("event-{i}"),
                 timestamp: Utc::now() + ChronoDuration::seconds(i),
                 ..Default::default()
             };
