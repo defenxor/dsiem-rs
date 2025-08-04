@@ -144,9 +144,6 @@ pub struct Backlog {
     directive_id: u64, // never updated
     #[serde(skip)]
     log_tx: Option<crossbeam_channel::Sender<LogWriterMessage>>,
-
-    // PHASE 2: Ordered event processing for maintaining temporal sequence
-
     // Performance optimization: cached risk calculation to avoid repeated computation
     #[serde(skip)]
     risk_cache_valid: std::sync::atomic::AtomicBool,
@@ -249,7 +246,6 @@ impl Backlog {
             med_risk_max: o.med_risk_max,
             state: Mutex::new(BacklogState::Created),
 
-            // PHASE 1 & 2: Enhanced storage and processing
             optimized_storage: Some(optimized_storage),
             risk_cache_valid: std::sync::atomic::AtomicBool::new(false),
 
@@ -1113,6 +1109,176 @@ impl VulnSearchTerm {
 
 #[cfg(test)]
 mod test {
+    #[test]
+    fn test_update_risk_fallback_legacy() {
+        use crate::asset::NetworkAssets;
+        use std::sync::Arc;
+        // Create Backlog with optimized_storage = None
+        let directives = crate::directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
+        let d = directives[0].clone();
+        let mut backlog = Backlog::new(&{
+            let asset = Arc::new(NetworkAssets::new(true, None).unwrap());
+            let intels = Arc::new(crate::intel::load_intel(true, None).unwrap());
+            let vulns = Arc::new(crate::vuln::load_vuln(true, None).unwrap());
+            let (mgr_delete_tx, _) = tokio::sync::mpsc::channel::<()>(128);
+            let (bp_tx, _) = tokio::sync::mpsc::channel::<()>(1);
+            let (log_tx, _) = crossbeam_channel::bounded(1);
+            BacklogOpt {
+                directive: d.clone(),
+                asset,
+                intels,
+                vulns,
+                event: None,
+                bp_tx,
+                delete_tx: Some(mgr_delete_tx),
+                min_alarm_lifetime: 0,
+                default_status: "Open".into(),
+                default_tag: "Test".into(),
+                med_risk_min: 1,
+                med_risk_max: 2,
+                intel_private_ip: true,
+                log_tx,
+            }
+        }).unwrap();
+        backlog.optimized_storage = None;
+        // Insert some IPs to src_ips and dst_ips
+        backlog.src_ips.lock().insert("10.1.1.1".parse().unwrap());
+        backlog.dst_ips.lock().insert("10.2.2.2".parse().unwrap());
+        // Should not panic and should use legacy path
+        let _ = backlog.update_risk();
+    }
+
+    #[test]
+    fn test_append_and_write_event_fallback_legacy() {
+        use crate::asset::NetworkAssets;
+        use std::sync::Arc;
+        use crate::event::NormalizedEvent;
+        // Create Backlog with optimized_storage = None
+        let directives = crate::directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
+        let d = directives[0].clone();
+        let mut backlog = Backlog::new(&{
+            let asset = Arc::new(NetworkAssets::new(true, None).unwrap());
+            let intels = Arc::new(crate::intel::load_intel(true, None).unwrap());
+            let vulns = Arc::new(crate::vuln::load_vuln(true, None).unwrap());
+            let (mgr_delete_tx, _) = tokio::sync::mpsc::channel::<()>(128);
+            let (bp_tx, _) = tokio::sync::mpsc::channel::<()>(1);
+            let (log_tx, _) = crossbeam_channel::bounded(1);
+            BacklogOpt {
+                directive: d.clone(),
+                asset,
+                intels,
+                vulns,
+                event: None,
+                bp_tx,
+                delete_tx: Some(mgr_delete_tx),
+                min_alarm_lifetime: 0,
+                default_status: "Open".into(),
+                default_tag: "Test".into(),
+                med_risk_min: 1,
+                med_risk_max: 2,
+                intel_private_ip: true,
+                log_tx,
+            }
+        }).unwrap();
+        backlog.optimized_storage = None;
+        // Add a dummy rule so get_rule(None) works
+        backlog.rules.push(crate::rule::DirectiveRule::default());
+        let event = NormalizedEvent {
+            id: "evt1".to_string(),
+            src_ip: "10.1.1.1".parse().unwrap(),
+            dst_ip: "10.2.2.2".parse().unwrap(),
+            src_port: 1234,
+            dst_port: 4321,
+            ..Default::default()
+        };
+        // Should not panic and should use legacy path
+        let _ = backlog.append_and_write_event(&event, None);
+    }
+
+    #[test]
+    fn test_check_intel_fallback_legacy() {
+        use crate::asset::NetworkAssets;
+        use std::sync::Arc;
+        use tokio::runtime::Runtime;
+        // Create Backlog with optimized_storage = None
+        let directives = crate::directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
+        let d = directives[0].clone();
+        let mut backlog = Backlog::new(&{
+            let asset = Arc::new(NetworkAssets::new(true, None).unwrap());
+            let intels = Arc::new(crate::intel::load_intel(true, None).unwrap());
+            let vulns = Arc::new(crate::vuln::load_vuln(true, None).unwrap());
+            let (mgr_delete_tx, _) = tokio::sync::mpsc::channel::<()>(128);
+            let (bp_tx, _) = tokio::sync::mpsc::channel::<()>(1);
+            let (log_tx, _) = crossbeam_channel::bounded(1);
+            BacklogOpt {
+                directive: d.clone(),
+                asset,
+                intels,
+                vulns,
+                event: None,
+                bp_tx,
+                delete_tx: Some(mgr_delete_tx),
+                min_alarm_lifetime: 0,
+                default_status: "Open".into(),
+                default_tag: "Test".into(),
+                med_risk_min: 1,
+                med_risk_max: 2,
+                intel_private_ip: true,
+                log_tx,
+            }
+        }).unwrap();
+        backlog.optimized_storage = None;
+        // Insert some IPs to src_ips and dst_ips
+        backlog.src_ips.lock().insert("10.1.1.1".parse().unwrap());
+        backlog.dst_ips.lock().insert("10.2.2.2".parse().unwrap());
+        // Should not panic and should use legacy path
+        let rt = Runtime::new().unwrap();
+        let _ = rt.block_on(backlog.check_intel());
+    }
+
+    #[test]
+    fn test_check_vuln_fallback_legacy() {
+        use crate::asset::NetworkAssets;
+        use std::sync::Arc;
+        use tokio::runtime::Runtime;
+        // Create Backlog with optimized_storage = None
+        let directives = crate::directive::load_directives(true, Some(vec!["directives".to_string(), "directive5".to_string()])).unwrap();
+        let d = directives[0].clone();
+        let mut backlog = Backlog::new(&{
+            let asset = Arc::new(NetworkAssets::new(true, None).unwrap());
+            let intels = Arc::new(crate::intel::load_intel(true, None).unwrap());
+            let vulns = Arc::new(crate::vuln::load_vuln(true, None).unwrap());
+            let (mgr_delete_tx, _) = tokio::sync::mpsc::channel::<()>(128);
+            let (bp_tx, _) = tokio::sync::mpsc::channel::<()>(1);
+            let (log_tx, _) = crossbeam_channel::bounded(1);
+            BacklogOpt {
+                directive: d.clone(),
+                asset,
+                intels,
+                vulns,
+                event: None,
+                bp_tx,
+                delete_tx: Some(mgr_delete_tx),
+                min_alarm_lifetime: 0,
+                default_status: "Open".into(),
+                default_tag: "Test".into(),
+                med_risk_min: 1,
+                med_risk_max: 2,
+                intel_private_ip: true,
+                log_tx,
+            }
+        }).unwrap();
+        backlog.optimized_storage = None;
+        // Add a dummy rule so get_rule(None) works
+        backlog.rules.push(crate::rule::DirectiveRule::default());
+        // Insert some socketaddrs
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        backlog.src_socketaddr.lock().insert(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10,1,1,1)), 1234));
+        backlog.dst_socketaddr.lock().insert(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10,2,2,2)), 4321));
+        // Should not panic and should use legacy path
+        let rt = Runtime::new().unwrap();
+        let _ = rt.block_on(backlog.check_vuln());
+    }
     use std::{str::FromStr, thread};
 
     use chrono::Days;
