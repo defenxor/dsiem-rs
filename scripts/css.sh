@@ -17,6 +17,11 @@ npm init -y && npm install -y text-spinners@1.0.5 || {
   exit 1
 }
 
+npm install -D tailwindcss @tailwindcss/cli || {
+  echo "fails to install tailwindcss"
+  exit 1
+}
+
 echo building tailwind css...
 [ "$1" = "prod" ] && NODE_ENV=production npx -y tailwindcss -c ./tailwind.config.js -o ./tailwind.css --minify && exit
 [ "$1" = "dev" ] && echo "\nrunning tailwind in watch mode:" && npx tailwindcss -o ./tailwind.css --watch
