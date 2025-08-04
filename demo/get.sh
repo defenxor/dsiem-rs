@@ -28,3 +28,8 @@ done
 
 [ -z "$patched" ] && echo "** cannot find dsiem-backend and dsiem-frontend lines to patch in ${compose_file}" ||
   echo "** ${compose_file} patched"
+
+# we need to patch the protocol in directives_dsiem-backend_demo.json since suricata somehow no longer detect the event as HTTP
+# if HTTP cannot be detected, we assume it's fixed at the source
+sed -i 's/"protocol": "HTTP"/"protocol": "TCP"/g' ./docker/conf/dsiem/configs/directives_dsiem-backend_demo.json >/dev/null 2>&1 && 
+  echo "** patched protocol in directives_dsiem-backend_demo.json"
