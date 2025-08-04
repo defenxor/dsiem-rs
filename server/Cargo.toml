@@ -11,27 +11,14 @@ serde = { version = "1.0", features = ["rc"], default-features = false }
 serde_json = { version = "1.0", default-features = false }
 serde_derive = "1.0"
 glob = "0.3"
-regex = { version = "1.7", features = [
-  "std",
-  "perf",
-], default-features = false }
+regex = { version = "1.7", features = ["std", "perf"], default-features = false }
 cidr = { version = "0.2", features = ["serde"] }
 tokio = { version = "1.25", features = ["sync", "rt-multi-thread"] }
-chrono = { version = "0.4", features = [
-  "serde",
-  "clock",
-], default-features = false }
+chrono = { version = "0.4", features = ["serde", "clock" ], default-features = false }
 anyhow = "1.0"
 nanoid = "0.4"
-clap = { version = "4.1", features = [
-  "help",
-  "std",
-  "derive",
-  "env",
-], optional = false, default-features = false }
-parking_lot = { version = "0.12", features = [
-  "serde",
-], optional = false, default-features = false }
+clap = { version = "4.1", features = ["help", "std", "derive", "env" ], optional = false, default-features = false}
+parking_lot = { version = "0.12", features = ["serde"], optional = false, default-features = false }
 mini-moka = { version = "0.10", features = ["sync"], default-features = false }
 quick_cache = "0.4"
 
@@ -39,46 +26,24 @@ ip_rfc = "0.1"
 async-trait = "0.1"
 metered = { git = "https://github.com/magnet/metered-rs", rev = "3f2d8dc" }
 ctrlc = { version = "3.2", features = ["termination"] }
-reqwest = { version = "0.12", features = [
-  "blocking",
-  "rustls-tls",
-], default-features = false }
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false }
 async-nats = "0.34"
 futures-lite = { version = "2", default-features = false }
 crossbeam-channel = "0.5.11"
 
-tracing = { version = "0.1", features = [
-  "attributes",
-], default-features = false }
-tracing-subscriber = { version = "0.3", features = [
-  "json",
-  "ansi",
-], default-features = false }
+tracing = { version = "0.1", features = [ "attributes" ], default-features = false }
+tracing-subscriber = { version = "0.3", features = ["json", "ansi"], default-features = false }
 tracing-opentelemetry = { version = "0.23", default-features = false }
 opentelemetry = { version = "0.22", default-features = false }
-opentelemetry_sdk = { version = "0.22", features = [
-  "rt-tokio-current-thread",
-], default-features = false }
-opentelemetry-otlp = { version = "0.15", features = [
-  "grpc-tonic",
-  "metrics",
-  "trace",
-], default-features = false }
+opentelemetry_sdk = { version = "0.22", features = ["rt-tokio-current-thread" ], default-features = false }
+opentelemetry-otlp =  { version = "0.15", features = [ "grpc-tonic", "metrics", "trace" ], default-features = false }
 
 # frontend specific
-axum = { version = "0.7", features = [
-  "macros",
-  "json",
-  "tokio",
-  "http1",
-], default-features = false }
+axum = { version = "0.7", features = ["macros", "json", "tokio", "http1" ], default-features = false }
 axum-extra = { version = "0.9", features = ["erased-json"] }
 ratelimit = "0.9"
 atomic-counter = "1.0"
-tower-http = { version = "0.5", features = [
-  "timeout",
-  "fs",
-], default-features = false }
+tower-http = { version = "0.5", features = ["timeout", "fs" ] , default-features = false }
 arcstr = { version = "1.1", features = ["serde"] }
 
 [dev-dependencies]
@@ -91,11 +56,7 @@ criterion = "0.5"
 rand = "0.8"
 rayon = "1.9"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
-reqwest = { version = "0.12", features = [
-  "blocking",
-  "rustls-tls",
-  "json",
-], default-features = false }
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "json"], default-features = false }
 colored = "2.1.0"
 
 [[bench]]

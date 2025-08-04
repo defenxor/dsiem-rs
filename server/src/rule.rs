@@ -568,14 +568,14 @@ pub fn get_quick_check_pairs(rules: &[DirectiveRule]) -> (Vec<SIDPair>, Vec<Taxo
 
 #[inline(always)]
 pub fn quick_check_taxo_rule(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
-    pairs.iter().filter(|v| v.product.contains(&e.product)).any(|v| v.category == e.category)
+    pairs.iter().filter(|v| v.product.iter().any(|x| *x == e.product)).any(|v| v.category == e.category)
 }
 
 // QuickCheckPluginRule checks event against the key fields in a directive
 // plugin rules
 #[inline(always)]
 pub fn quick_check_plugin_rule(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
-    pairs.iter().filter(|v| v.plugin_id == e.plugin_id).any(|v| v.plugin_sid.contains(&e.plugin_sid))
+    pairs.iter().filter(|v| v.plugin_id == e.plugin_id).any(|v| v.plugin_sid.iter().any(|x| *x == e.plugin_sid))
 }
 
 // WARNING: deprecated fn
@@ -686,11 +686,11 @@ mod test {
         let (p, q) = get_quick_check_pairs(&rules);
         assert!(!p.is_empty());
         assert!(!q.is_empty());
-        let v = p.into_iter().filter(|v| v.plugin_id == 1 && v.plugin_sid == vec![1, 2, 3]).next_back();
+        let v = p.into_iter().filter(|v| v.plugin_id == 1 && v.plugin_sid == vec![1, 2, 3]).last();
         assert!(v.is_some());
         let v2 = v.clone().unwrap();
         assert_eq!(v.unwrap().plugin_id, v2.plugin_id);
-        let v = q.into_iter().filter(|v| v.product == vec!["checkpoint"] && v.category == "firewall").next_back();
+        let v = q.into_iter().filter(|v| v.product == vec!["checkpoint"] && v.category == "firewall").last();
         assert!(v.is_some());
         let v2 = v.clone().unwrap();
         assert_eq!(v.unwrap().product, v2.product);
@@ -744,9 +744,9 @@ mod test {
             let actual = is_ip_match_csvrule(input_2, ip);
 
             validator
-                .given(&format!("rules: {input_2}, term: {input_1}"))
+                .given(&format!("rules: {}, term: {}", input_2, input_1))
                 .when("is_ip_match_csvrule")
-                .then(&format!("it should be {expected}"))
+                .then(&format!("it should be {}", expected))
                 .assert_eq(expected, actual);
         }
     }
@@ -770,9 +770,9 @@ mod test {
             let actual = is_string_match_csvrule(input_2, &input_1.to_owned());
 
             validator
-                .given(&format!("rules: {input_2}, term: {input_1}"))
+                .given(&format!("rules: {}, term: {}", input_2, input_1))
                 .when("is_string_match_csvrule")
-                .then(&format!("it should be {expected}"))
+                .then(&format!("it should be {}", expected))
                 .assert_eq(expected, actual);
         }
     }
@@ -1098,9 +1098,9 @@ mod test {
             let actual = rule.does_event_match(&a, &event, &rules, false);
 
             validator
-                .given(&format!("test_case: {case_id}, "))
+                .given(&format!("test_case: {}, ", case_id))
                 .when("does_event_match")
-                .then(&format!("it should be {expected}"))
+                .then(&format!("it should be {}", expected))
                 .assert_eq(expected, actual);
         }
 
@@ -1128,11 +1128,11 @@ mod test {
             }
 
             validator
-                .given(&format!("test_case: {case_id}, "))
+                .given(&format!("test_case: {}, ", case_id))
                 .when("does_event_match")
-                .then(&format!("it should be {expected}"))
+                .then(&format!("it should be {}", expected))
                 .assert_eq(expected, actual)
-                .then(&format!("stickydiff should be {sticky_diff:?}"))
+                .then(&format!("stickydiff should be {:?}", sticky_diff))
                 .assert_eq(sticky_diff, sticky_diff_actual);
         }
     }
@@ -1185,9 +1185,9 @@ mod test {
             let actual = r.does_event_match(&a, &e, &rules, true);
 
             validator
-                .given(&format!("test_case: {case_id}, "))
+                .given(&format!("test_case: {}, ", case_id))
                 .when("does_event_match")
-                .then(&format!("it should be {expected}"))
+                .then(&format!("it should be {}", expected))
                 .assert_eq(expected, actual);
         }
     }

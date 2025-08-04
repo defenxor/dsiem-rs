@@ -146,11 +146,12 @@ impl BacklogManager {
         // lock the rx channel asap
         // if this fails, it means another instance is already running and we should
         // abort
-        let mut upstream_rx = self.upstream_rx.try_lock().inspect_err(|_e| {
+        let mut upstream_rx = self.upstream_rx.try_lock().map_err(|e| {
             error!(
                 directive.id = self.id,
                 "another instance is already running for this directive ID, exiting this one"
             );
+            e
         })?;
 
         let mut cancel_rx = self.option.cancel_tx.subscribe();
@@ -217,7 +218,7 @@ impl BacklogManager {
                     if self.option.reload_backlogs {
                         clean_deleted().await;
                         let backlogs = self.backlogs.read().await;
-                        if !backlogs.is_empty() {
+                        if  backlogs.len() > 0 {
                             let v = &*backlogs;
                             info!(self.id, "saving {} backlogs to disk", v.len());
                             if let Err(err) = storage::save(self.option.test_env, self.id, v.to_vec()).await {

@@ -57,7 +57,7 @@ pub fn targets_and_spawner_from_directives(
         let (tx, rx) = mpsc::channel::<OnDemandIDMessage>(DIRECTIVE_ID_CHAN_QUEUE_SIZE);
         id_tx = Some(tx);
         let ondemand_opt = SpawnerOnDemandOption { directives: directives.to_vec(), id_rx: rx, manager_option: None };
-        Spawner::OnDemand(vec![], Box::new(ondemand_opt))
+        Spawner::OnDemand(vec![], ondemand_opt)
     };
 
     for directive in directives.iter() {

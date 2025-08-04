@@ -18,7 +18,7 @@ root=$(git rev-parse --show-toplevel) || {
 cd $root/web
 
 index="index.dev.html"
-[ "$mode" = "prod" ] && rel_flag="--release true" && public="--public-url /ui" && index="index.html"
+[ "$mode" = "prod" ] && rel_flag="--release" && public="--public-url /ui" && index="index.html"
 
 $root/scripts/css.sh $mode &&
   echo "** building wasm $mode version" &&

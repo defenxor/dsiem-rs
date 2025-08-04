@@ -19,7 +19,8 @@ pub fn quick_check_plugin_rule_with_cache(
     if cache.get(&(e.plugin_id, e.plugin_sid)).is_some() {
         return true;
     };
-    let found = pairs.iter().filter(|v| v.plugin_id == e.plugin_id).any(|v| v.plugin_sid.contains(&e.plugin_sid));
+    let found =
+        pairs.iter().filter(|v| v.plugin_id == e.plugin_id).any(|v| v.plugin_sid.iter().any(|s| *s == e.plugin_sid));
     if found {
         cache.insert((e.plugin_id, e.plugin_sid), ());
     };
@@ -28,7 +29,7 @@ pub fn quick_check_plugin_rule_with_cache(
 
 #[inline(always)]
 pub fn quick_check_plugin_rule_with_rayon(pairs: &[SIDPair], e: &NormalizedEvent) -> bool {
-    pairs.par_iter().filter(|v| v.plugin_id == e.plugin_id).any(|v| v.plugin_sid.contains(&e.plugin_sid))
+    pairs.par_iter().filter(|v| v.plugin_id == e.plugin_id).any(|v| v.plugin_sid.iter().any(|x| *x == e.plugin_sid))
 }
 
 fn bench_quick_check_plugin_rule(c: &mut Criterion) {
@@ -58,7 +59,7 @@ fn bench_quick_check_plugin_rule(c: &mut Criterion) {
 
 #[inline(always)]
 pub fn quick_check_taxo_rule_with_rayon(pairs: &[TaxoPair], e: &NormalizedEvent) -> bool {
-    pairs.par_iter().filter(|v| v.product.contains(&e.product)).any(|v| v.category == e.category)
+    pairs.par_iter().filter(|v| v.product.iter().any(|x| *x == e.product)).any(|v| v.category == e.category)
 }
 
 fn bench_quick_check_taxo_rule(c: &mut Criterion) {
