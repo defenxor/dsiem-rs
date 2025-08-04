@@ -2,6 +2,7 @@ FROM cgr.dev/chainguard/wolfi-base
 ARG apk_extra_packages
 # replace with full busybox to add wget
 # optionally also add extra packages, i.e. libgcc if dynamic linking is used
-RUN apk del busybox && apk add --no-cache busybox-full ${apk_extra_packages}
+RUN apk add libcrypt1 && apk upgrade libcrypt1
+RUN apk del busybox && apk add busybox-full ${apk_extra_packages}
 # ensure /var/run is a symlink to /run, required in some systems
-RUN [ ! -L "/var/run" ] && rm -rf /var/run && ln -s /run /var/run || true
+RUN ln -sf /run /var/run
