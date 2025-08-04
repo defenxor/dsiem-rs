@@ -29,7 +29,7 @@ pub fn write_dsiem_config(test_env: bool, status: Vec<String>, tags: Vec<String>
         utils::config_dir(test_env, None)?
     };
     let path = config_dir.to_string_lossy().to_string() + "/dsiem_config.json";
-    let mut local = File::create(&path).context(format!("cannot create dsiem config file {}", path))?;
+    let mut local = File::create(&path).context(format!("cannot create dsiem config file {path}"))?;
     let c = DsiemConfig { status, tags };
     let content = serde_json::to_string_pretty(&c)?;
     local.write_all(content.as_bytes()).context("cannot write file")?;
@@ -66,7 +66,7 @@ pub fn download_files(
         let resp = reqwest::blocking::get(url.clone())?;
         let content = resp.text()?;
         let path = config_dir.clone() + "/" + &f.filename;
-        let mut local = File::create(&path).context(format!("cannot create config file {}", path))?;
+        let mut local = File::create(&path).context(format!("cannot create config file {path}"))?;
         local.write_all(content.as_bytes()).context("cannot write file")?;
     }
 
@@ -108,7 +108,7 @@ mod test {
 
         let config_files = list_config_files(url.clone());
         if let Err(e) = config_files {
-            panic!("error: {}", e);
+            panic!("error: {e}");
         }
         let config_files = config_files.unwrap();
         assert!(config_files.len() == 3);

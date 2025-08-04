@@ -142,7 +142,7 @@ pub async fn config_upload_handler(
     }
     if let Err(e) = validate::validate_content(&cfg_file, &payload) {
         warn!("l337 or epic fail attempt from {} detected. Discarding.", addr.to_string());
-        let msg = format!("Invalid content detected, parsing error message is: {}\n", e);
+        let msg = format!("Invalid content detected, parsing error message is: {e}\n");
         return Err(AppError::new(StatusCode::IM_A_TEAPOT, &msg));
     }
     info!("Upload file request for {} from {}", cfg_file, addr.to_string());
@@ -228,7 +228,7 @@ pub async fn events_handler(
         state
             .event_tx
             .send(event)
-            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, &format!("error sending to NATS: {}", e)))?;
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, &format!("error sending to NATS: {e}")))?;
     }
     Ok(())
 }

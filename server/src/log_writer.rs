@@ -39,8 +39,8 @@ pub enum FileType {
 impl Display for FileType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FileType::Alarm => write!(f, "{}", ALARM_LOG),
-            FileType::AlarmEvent => write!(f, "{}", ALARM_EVENT_LOG),
+            FileType::Alarm => write!(f, "{ALARM_LOG}"),
+            FileType::AlarmEvent => write!(f, "{ALARM_EVENT_LOG}"),
         }
     }
 }
@@ -74,9 +74,8 @@ impl LogWriter {
 
     pub fn listener(&mut self) -> Result<()> {
         loop {
-            let msg = self.receiver.recv().map_err(|e| {
+            let msg = self.receiver.recv().inspect_err(|_e| {
                 info!("exiting log writer thread");
-                e
             })?;
             if let Err(e) = self.write(&msg) {
                 // this also happens on first time file creation, so not always unexpected
@@ -102,7 +101,6 @@ impl LogWriter {
 }
 
 #[cfg(test)]
-
 mod tests {
     use std::{io::Read, thread, time::Duration};
 
@@ -156,10 +154,10 @@ mod tests {
             let res = OpenOptions::new().read(true).open(&file_path);
             assert!(res.is_ok());
 
-            let expected = format!("log writer error: missing file {}", file_name);
+            let expected = format!("log writer error: missing file {file_name}");
             logs_assert(|lines: &[&str]| match lines.iter().filter(|line| line.contains(&expected)).count() {
                 1 => Ok(()),
-                n => Err(format!("Expected 1 matching logs, but found {}", n)),
+                n => Err(format!("Expected 1 matching logs, but found {n}")),
             });
 
             /*

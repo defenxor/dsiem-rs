@@ -75,9 +75,7 @@ pub fn generate_normalized_event(rules: &[DirectiveRule]) -> Vec<NormalizedEvent
 
             res.push(e.clone());
             // this saves the first event that is generated for a stage
-            if ref_events.get(&r.stage).is_none() {
-                ref_events.insert(r.stage, e);
-            }
+            ref_events.entry(r.stage).or_insert(e);
         }
     }
     res

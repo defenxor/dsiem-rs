@@ -176,13 +176,13 @@ async fn test_concurrent_events_to_the_same_directive() {
     // assert that there's only 2 backlogs
     logs_assert(|lines: &[&str]| match lines.iter().filter(|line| line.contains("total backlogs 2")).count() {
         2 => Ok(()),
-        n => Err(format!("Expected two matching logs, but found {}", n)),
+        n => Err(format!("Expected two matching logs, but found {n}")),
     });
     assert!(!logs_contain("total backlogs 3"));
     logs_assert(|lines: &[&str]| {
         match lines.iter().filter(|line| line.contains("found existing backlog that consumes the event")).count() {
             2 => Ok(()),
-            n => Err(format!("Expected two matching logs, but found {}", n)),
+            n => Err(format!("Expected two matching logs, but found {n}")),
         }
     });
 
@@ -260,13 +260,13 @@ async fn test_any_and_multiple_sid_on_2nd_stage() {
     // assert that there's only 2 backlogs
     logs_assert(|lines: &[&str]| match lines.iter().filter(|line| line.contains("total backlogs 1")).count() {
         3 => Ok(()),
-        n => Err(format!("Expected two matching logs, but found {}", n)),
+        n => Err(format!("Expected two matching logs, but found {n}")),
     });
     assert!(!logs_contain("total backlogs 2"));
     logs_assert(|lines: &[&str]| {
         match lines.iter().filter(|line| line.contains("found existing backlog that consumes the event")).count() {
             3 => Ok(()),
-            n => Err(format!("Expected two matching logs, but found {}", n)),
+            n => Err(format!("Expected two matching logs, but found {n}")),
         }
     });
 
