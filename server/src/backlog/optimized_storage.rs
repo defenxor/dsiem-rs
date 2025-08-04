@@ -119,6 +119,44 @@ impl OptimizedBacklogStorage {
     pub fn compare_and_swap_risk(&self, expected: u8, new: u8) -> bool {
         self.risk.compare_exchange(expected, new, Ordering::AcqRel, Ordering::Acquire).is_ok()
     }
+
+    /// Batch update intel and vulnerability results to reduce lock contention
+    pub fn batch_update_intel_vuln(&self, intel_hits: HashSet<IntelResult>, vulnerabilities: HashSet<VulnResult>) {
+        let mut hot_data = self.hot_data.write();
+        hot_data.intel_hits.extend(intel_hits);
+        hot_data.vulnerabilities.extend(vulnerabilities);
+    }
+
+    /// Update networks efficiently
+    pub fn update_networks(&self, networks: Vec<ArcStr>) {
+        let mut hot_data = self.hot_data.write();
+        for network in networks {
+            hot_data.networks.insert(network);
+        }
+    }
+
+    /// Get atomic values without locking
+    pub fn get_atomic_values(&self) -> (u8, u8, u64, u64) {
+        (
+            self.current_stage.load(Ordering::Acquire),
+            self.risk.load(Ordering::Acquire),
+            self.created_time.load(Ordering::Acquire),
+            self.update_time.load(Ordering::Acquire),
+        )
+    }
+
+    /// Batch update atomic values to reduce memory barriers
+    pub fn batch_update_atomics(&self, stage: Option<u8>, risk: Option<u8>, update_time: Option<u64>) {
+        if let Some(s) = stage {
+            self.current_stage.store(s, Ordering::Release);
+        }
+        if let Some(r) = risk {
+            self.risk.store(r, Ordering::Release);
+        }
+        if let Some(t) = update_time {
+            self.update_time.store(t, Ordering::Release);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

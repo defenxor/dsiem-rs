@@ -13,6 +13,7 @@ use tracing::{debug, error, warn};
 use crate::event::NormalizedEvent;
 
 /// Event processor that maintains strict temporal ordering while still providing performance benefits
+#[derive(Debug)]
 pub struct OrderedEventProcessor {
     config: OrderingConfig,
     // Per-backlog ordered queues to maintain sequence within each incident
@@ -22,7 +23,7 @@ pub struct OrderedEventProcessor {
     processing_semaphore: Arc<Semaphore>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OrderingConfig {
     /// Maximum time to wait for out-of-order events before processing
     pub max_ordering_delay_ms: u64,
@@ -49,6 +50,7 @@ impl Default for OrderingConfig {
 }
 
 /// Ordered queue for a specific backlog that maintains temporal sequence
+#[derive(Debug)]
 struct OrderedEventQueue {
     backlog_id: String,
     // Events ordered by timestamp
@@ -194,6 +196,7 @@ impl OrderedEventQueue {
 }
 
 /// Global ordering buffer for new events before they're assigned to backlogs
+#[derive(Debug)]
 struct OrderingBuffer {
     events: BTreeMap<DateTime<Utc>, Vec<NormalizedEvent>>,
     last_processed: Option<DateTime<Utc>>,
@@ -289,6 +292,45 @@ impl OrderedEventProcessor {
         // Main event reception loop
         while let Some(event) = event_rx.recv().await {
             self.add_event_to_queue(event).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Simplified interface for processing a batch of events immediately
+    pub async fn process_batch<F, Fut>(&self, events: Vec<NormalizedEvent>, processor: F) -> Result<()>
+    where
+        F: Fn(Vec<NormalizedEvent>) -> Fut + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
+    {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        // For immediate processing, we still respect ordering but process synchronously
+        let backlog_id = self.determine_backlog_id(&events[0]).await;
+
+        let mut processable_events = Vec::new();
+
+        {
+            let mut queues = self.backlog_queues.write().await;
+
+            // Get or create the queue for this backlog
+            let queue = queues.entry(backlog_id.clone()).or_insert_with(|| OrderedEventQueue::new(backlog_id));
+
+            // Add all events to the queue
+            for event in events {
+                queue.add_event(event, &self.config)?;
+            }
+
+            // Get all processable events immediately
+            processable_events = queue.get_processable_events(&self.config);
+        }
+
+        // Process the events in order
+        if !processable_events.is_empty() {
+            processable_events.sort_by_key(|event| event.timestamp);
+            processor(processable_events).await?;
         }
 
         Ok(())
