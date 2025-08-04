@@ -39,11 +39,9 @@ pub mod manager;
 
 // Enhanced backlog processing modules
 pub mod optimized_storage; // Memory efficiency improvements
-pub mod ordered_event_processor; // Order-preserving event processor for SIEM rules
 
 // Import optimized components
 use optimized_storage::OptimizedBacklogStorage;
-use ordered_event_processor::{OrderedEventProcessor, OrderingConfig};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 pub struct CustomData {
@@ -148,8 +146,6 @@ pub struct Backlog {
     log_tx: Option<crossbeam_channel::Sender<LogWriterMessage>>,
 
     // PHASE 2: Ordered event processing for maintaining temporal sequence
-    #[serde(skip)]
-    event_processor: Option<Arc<OrderedEventProcessor>>,
 
     // Performance optimization: cached risk calculation to avoid repeated computation
     #[serde(skip)]
@@ -231,16 +227,6 @@ impl Backlog {
             o.directive.all_rules_always_active,
         ));
 
-        // PHASE 2: Initialize ordered event processor for temporal sequence
-        let ordering_config = OrderingConfig {
-            max_ordering_delay_ms: 1000, // 1 second tolerance for out-of-order events
-            max_buffer_size_per_backlog: 1000,
-            processing_interval_ms: 10,
-            max_concurrent_processing: 4,
-            strict_ordering: true, // Critical for SIEM functionality
-        };
-        let event_processor = Arc::new(OrderedEventProcessor::new(ordering_config));
-
         let mut backlog = Backlog {
             id,
             title: o.directive.name.clone(),
@@ -265,7 +251,6 @@ impl Backlog {
 
             // PHASE 1 & 2: Enhanced storage and processing
             optimized_storage: Some(optimized_storage),
-            event_processor: Some(event_processor),
             risk_cache_valid: std::sync::atomic::AtomicBool::new(false),
 
             ..Default::default()
@@ -562,21 +547,13 @@ impl Backlog {
     }
 
     pub async fn process_new_event(&self, event: &NormalizedEvent, max_delay: i64) -> Result<()> {
-        // PHASE 2: Use ordered event processor for temporal sequence validation
-        if let Some(_event_processor) = &self.event_processor {
-            // For now, use simplified ordering check to maintain temporal sequence
-            // This avoids complex lifetime issues while still providing ordering benefits
-            if !self.is_time_in_order(&event.timestamp) {
-                warn!("discarded out of order event");
-                return Ok(());
-            }
-
-            // Process directly but with ordering validation
-            self.process_single_event_internal(event, max_delay).await?;
-        } else {
-            // Fallback to direct processing for backward compatibility
-            self.process_single_event_internal(event, max_delay).await?;
+        // Direct processing with ordering validation
+        if !self.is_time_in_order(&event.timestamp) {
+            warn!("discarded out of order event");
+            return Ok(());
         }
+
+        self.process_single_event_internal(event, max_delay).await?;
 
         Ok(())
     }
