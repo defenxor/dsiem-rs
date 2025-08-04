@@ -1,18 +1,23 @@
-//! Order-preserving event processor that maintains temporal sequence for SIEM rule processing
-//! This module addresses the critical requirement that events must be processed in chronological order
-//! for proper multi-stage incident detection and rule correlation.
+//! Order-preserving event processor that maintains temporal sequence for SIEM
+//! rule processing This module addresses the critical requirement that events
+//! must be processed in chronological order for proper multi-stage incident
+//! detection and rule correlation.
+
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use std::collections::{BTreeMap, VecDeque};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock, Semaphore};
 use tracing::{debug, error, warn};
 
 use crate::event::NormalizedEvent;
 
-/// Event processor that maintains strict temporal ordering while still providing performance benefits
+/// Event processor that maintains strict temporal ordering while still
+/// providing performance benefits
 #[derive(Debug)]
 pub struct OrderedEventProcessor {
     config: OrderingConfig,
@@ -107,7 +112,8 @@ impl OrderedEventQueue {
         Ok(())
     }
 
-    /// Get the next batch of events that can be processed while maintaining order
+    /// Get the next batch of events that can be processed while maintaining
+    /// order
     fn get_processable_events(&mut self, config: &OrderingConfig) -> Vec<NormalizedEvent> {
         let mut processable_events = Vec::new();
         let now = Instant::now();
@@ -383,8 +389,9 @@ impl Clone for OrderedEventProcessor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use chrono::Duration as ChronoDuration;
+
+    use super::*;
 
     #[test]
     fn test_ordered_queue_in_order_events() {

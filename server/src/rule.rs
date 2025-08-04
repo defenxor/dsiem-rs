@@ -699,10 +699,10 @@ mod test {
     }
     #[test]
     fn test_quick_check_plugin_rule() {
-        let pair = vec![
-            SIDPair { plugin_id: 1, plugin_sid: vec![1, 2, 3] },
-            SIDPair { plugin_id: 2, plugin_sid: vec![1, 2, 3] },
-        ];
+        let pair = vec![SIDPair { plugin_id: 1, plugin_sid: vec![1, 2, 3] }, SIDPair {
+            plugin_id: 2,
+            plugin_sid: vec![1, 2, 3],
+        }];
         let mut event = NormalizedEvent { plugin_id: 1, plugin_sid: 1, ..Default::default() };
         assert!(quick_check_plugin_rule(&pair, &event));
         event.plugin_sid = 4;

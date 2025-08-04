@@ -1,12 +1,16 @@
-use crate::backlog::CustomData;
-use crate::intel::IntelResult;
-use crate::vuln::VulnResult;
+use std::{
+    collections::HashSet,
+    net::{IpAddr, SocketAddr},
+    sync::{
+        atomic::{AtomicU64, AtomicU8, Ordering},
+        Arc,
+    },
+};
+
 use arcstr::ArcStr;
 use parking_lot::RwLock;
-use std::collections::HashSet;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
+
+use crate::{backlog::CustomData, intel::IntelResult, vuln::VulnResult};
 
 /// Optimized storage structure that reduces lock contention
 /// by separating frequently accessed data from rarely changed data

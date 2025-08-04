@@ -30,7 +30,8 @@ async fn test_home_page() {
     // Debug: log the actual HTML content
     log!("Rendered HTML:", &result);
 
-    // Test for the main description text (be more flexible with whitespace and formatting)
+    // Test for the main description text (be more flexible with whitespace and
+    // formatting)
     let normalized_result = result.replace('\n', " ").replace("  ", " ");
 
     // Test the core message is present (split into smaller, more reliable parts)

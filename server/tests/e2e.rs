@@ -110,8 +110,8 @@ fn test_e2e_frontend_nats_backend() {
     print("running dsiem-backend", false);
     // add -vv before serve for more verbose output
     let backend_cmd = format!(
-        "exec ./dsiem-backend serve -n dsiem-backend-0 --msq nats://127.0.0.1:{NATS_PORT} -f http://127.0.0.1:{FRONTEND_PORT} \
-         --intel_private_ip"
+        "exec ./dsiem-backend serve -n dsiem-backend-0 --msq nats://127.0.0.1:{NATS_PORT} \
+         -f http://127.0.0.1:{FRONTEND_PORT} --intel_private_ip"
     );
     let backend = spawn_in_shell(&backend_cmd, &test_dir_str, "failed to run dsiem-backend");
     dsiem_cleaner.backend = Some(backend);

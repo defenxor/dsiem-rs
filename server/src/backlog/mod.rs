@@ -983,7 +983,8 @@ impl Backlog {
         let intels = self.intels.as_ref().ok_or_else(|| anyhow!("intels is none"))?;
         let mut targets = HashSet::new();
 
-        // Read IP addresses from optimized storage if available, otherwise fallback to original fields
+        // Read IP addresses from optimized storage if available, otherwise fallback to
+        // original fields
         if let Some(storage) = &self.optimized_storage {
             let hot_data = storage.hot_data.read();
             targets.extend(hot_data.src_ips.clone());
@@ -1013,7 +1014,8 @@ impl Backlog {
 
         let mut vs = VulnSearchTerm::default();
 
-        // Read socket addresses from optimized storage if available, otherwise fallback to original fields
+        // Read socket addresses from optimized storage if available, otherwise fallback
+        // to original fields
         if let Some(storage) = &self.optimized_storage {
             let hot_data = storage.hot_data.read();
             vs.add_pair(&hot_data.src_socketaddr);
@@ -1530,9 +1532,11 @@ mod test {
 
 #[tokio::test]
 async fn test_intel_vuln_preservation() {
-    use crate::{directive, intel, log_writer::LogWriter, vuln};
     use std::thread;
+
     use tokio::sync::mpsc;
+
+    use crate::{directive, intel, log_writer::LogWriter, vuln};
 
     // Test that intels and vulns are preserved in BacklogOpt cloning
     let directives =
@@ -1570,7 +1574,8 @@ async fn test_intel_vuln_preservation() {
     assert!(Arc::ptr_eq(&cloned_opt.intels, &opt.intels));
     assert!(Arc::ptr_eq(&cloned_opt.vulns, &opt.vulns));
 
-    // Test BacklogOpt spread syntax preserves intels and vulns (like in get_backlog_opt)
+    // Test BacklogOpt spread syntax preserves intels and vulns (like in
+    // get_backlog_opt)
     let spread_opt = BacklogOpt { event: None, delete_tx: opt.delete_tx.clone(), ..opt.clone() };
     assert!(Arc::ptr_eq(&spread_opt.intels, &opt.intels));
     assert!(Arc::ptr_eq(&spread_opt.vulns, &opt.vulns));
