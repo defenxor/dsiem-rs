@@ -88,6 +88,7 @@ pub struct Alarm {
 
 #[derive(Deserialize, Clone)]
 pub struct AlarmEvent {
+    #[allow(dead_code)]
     pub alarm_id: String,
     pub event_id: String,
     pub stage: u8,
