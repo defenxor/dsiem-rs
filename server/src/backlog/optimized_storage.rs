@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(storage.cold_data.category, ArcStr::from("test-category"));
         assert_eq!(storage.cold_data.priority, 1);
         assert_eq!(storage.cold_data.directive_id, 100);
-        assert_eq!(storage.cold_data.all_rules_always_active, false);
+        assert!(!storage.cold_data.all_rules_always_active);
 
         // Check atomic values
         assert_eq!(storage.current_stage.load(std::sync::atomic::Ordering::Acquire), 1);
