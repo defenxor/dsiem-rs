@@ -40,7 +40,6 @@ pub mod manager;
 // Enhanced backlog processing modules
 pub mod optimized_storage; // Memory efficiency improvements
 pub mod ordered_event_processor; // Order-preserving event processor for SIEM rules
-pub mod performance_monitor; // Real-time monitoring and optimization
 
 // Import optimized components
 use optimized_storage::OptimizedBacklogStorage;
