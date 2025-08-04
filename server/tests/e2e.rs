@@ -199,7 +199,7 @@ fn send_events_to_frontend(d: &Directive) {
         print("sending event:", false);
         println!("{}", serde_json::to_string(&e).unwrap());
         let client = reqwest::blocking::Client::new();
-        let res = client.post(format!("http://localhost:{}/events/", FRONTEND_PORT)).json(&e).send().unwrap();
+        let res = client.post(format!("http://localhost:{FRONTEND_PORT}/events/")).json(&e).send().unwrap();
         sleep(Duration::from_millis(100));
         assert!(res.status().is_success());
     }

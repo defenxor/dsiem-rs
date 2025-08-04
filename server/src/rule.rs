@@ -686,11 +686,11 @@ mod test {
         let (p, q) = get_quick_check_pairs(&rules);
         assert!(!p.is_empty());
         assert!(!q.is_empty());
-        let v = p.into_iter().filter(|v| v.plugin_id == 1 && v.plugin_sid == vec![1, 2, 3]).last();
+        let v = p.into_iter().filter(|v| v.plugin_id == 1 && v.plugin_sid == vec![1, 2, 3]).next_back();
         assert!(v.is_some());
         let v2 = v.clone().unwrap();
         assert_eq!(v.unwrap().plugin_id, v2.plugin_id);
-        let v = q.into_iter().filter(|v| v.product == vec!["checkpoint"] && v.category == "firewall").last();
+        let v = q.into_iter().filter(|v| v.product == vec!["checkpoint"] && v.category == "firewall").next_back();
         assert!(v.is_some());
         let v2 = v.clone().unwrap();
         assert_eq!(v.unwrap().product, v2.product);
