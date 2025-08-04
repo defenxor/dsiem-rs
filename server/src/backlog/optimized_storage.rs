@@ -190,3 +190,249 @@ impl Clone for BacklogHotData {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashSet,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+    };
+
+    use arcstr::ArcStr;
+
+    use super::{BacklogHotData, OptimizedBacklogStorage};
+    use crate::{backlog::CustomData, intel::IntelResult, vuln::VulnResult};
+
+    fn create_test_storage() -> OptimizedBacklogStorage {
+        OptimizedBacklogStorage::new(
+            "test-id".to_string(),
+            "test-title".into(),
+            "test-status".into(),
+            "test-tag".into(),
+            "test-kingdom".into(),
+            "test-category".into(),
+            1,
+            100,
+            false,
+        )
+    }
+
+    #[test]
+    fn test_new_storage() {
+        let storage = create_test_storage();
+
+        // Check cold data
+        assert_eq!(storage.cold_data.id, "test-id");
+        assert_eq!(storage.cold_data.title, ArcStr::from("test-title"));
+        assert_eq!(storage.cold_data.status, ArcStr::from("test-status"));
+        assert_eq!(storage.cold_data.tag, ArcStr::from("test-tag"));
+        assert_eq!(storage.cold_data.kingdom, ArcStr::from("test-kingdom"));
+        assert_eq!(storage.cold_data.category, ArcStr::from("test-category"));
+        assert_eq!(storage.cold_data.priority, 1);
+        assert_eq!(storage.cold_data.directive_id, 100);
+        assert_eq!(storage.cold_data.all_rules_always_active, false);
+
+        // Check atomic values
+        assert_eq!(storage.current_stage.load(std::sync::atomic::Ordering::Acquire), 1);
+        assert_eq!(storage.risk.load(std::sync::atomic::Ordering::Acquire), 0);
+        assert_eq!(storage.created_time.load(std::sync::atomic::Ordering::Acquire), 0);
+        assert_eq!(storage.update_time.load(std::sync::atomic::Ordering::Acquire), 0);
+
+        // Check hot data is initialized
+        let hot_data = storage.hot_data.read();
+        assert!(hot_data.src_ips.is_empty());
+        assert!(hot_data.dst_ips.is_empty());
+        assert!(hot_data.src_socketaddr.is_empty());
+        assert!(hot_data.dst_socketaddr.is_empty());
+        assert!(hot_data.networks.is_empty());
+        assert!(hot_data.intel_hits.is_empty());
+        assert!(hot_data.vulnerabilities.is_empty());
+        assert!(hot_data.custom_data.is_empty());
+    }
+
+    #[test]
+    fn test_batch_update_ips_and_ports() {
+        let storage = create_test_storage();
+        let src_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        let dst_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let src_port = 8080;
+        let dst_port = 80;
+
+        storage.batch_update_ips_and_ports(src_ip, dst_ip, src_port, dst_port);
+
+        let hot_data = storage.hot_data.read();
+        assert!(hot_data.src_ips.contains(&src_ip));
+        assert!(hot_data.dst_ips.contains(&dst_ip));
+        assert!(hot_data.src_socketaddr.contains(&SocketAddr::new(src_ip, src_port)));
+        assert!(hot_data.dst_socketaddr.contains(&SocketAddr::new(dst_ip, dst_port)));
+    }
+
+    #[test]
+    fn test_batch_update_ips_and_ports_cleanup_default() {
+        let storage = create_test_storage();
+        let default_ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let real_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+
+        // Add default IP first
+        storage.batch_update_ips_and_ports(default_ip, default_ip, 0, 0);
+
+        // Add real IP
+        storage.batch_update_ips_and_ports(real_ip, real_ip, 8080, 80);
+
+        let hot_data = storage.hot_data.read();
+        // Default IPs should be removed when we have real IPs
+        assert!(!hot_data.src_ips.contains(&default_ip));
+        assert!(!hot_data.dst_ips.contains(&default_ip));
+        assert!(hot_data.src_ips.contains(&real_ip));
+        assert!(hot_data.dst_ips.contains(&real_ip));
+    }
+
+    #[test]
+    fn test_get_hot_data_snapshot() {
+        let storage = create_test_storage();
+        let src_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        let dst_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+
+        storage.batch_update_ips_and_ports(src_ip, dst_ip, 8080, 80);
+
+        let snapshot = storage.get_hot_data_snapshot();
+        assert!(snapshot.src_ips.contains(&src_ip));
+        assert!(snapshot.dst_ips.contains(&dst_ip));
+    }
+
+    #[test]
+    fn test_compare_and_swap_risk() {
+        let storage = create_test_storage();
+
+        // Initial risk is 0
+        assert_eq!(storage.risk.load(std::sync::atomic::Ordering::Acquire), 0);
+
+        // Try to swap from 0 to 5 - should succeed
+        assert!(storage.compare_and_swap_risk(0, 5));
+        assert_eq!(storage.risk.load(std::sync::atomic::Ordering::Acquire), 5);
+
+        // Try to swap from 0 to 10 - should fail (current value is 5)
+        assert!(!storage.compare_and_swap_risk(0, 10));
+        assert_eq!(storage.risk.load(std::sync::atomic::Ordering::Acquire), 5);
+
+        // Try to swap from 5 to 10 - should succeed
+        assert!(storage.compare_and_swap_risk(5, 10));
+        assert_eq!(storage.risk.load(std::sync::atomic::Ordering::Acquire), 10);
+    }
+
+    #[test]
+    fn test_batch_update_intel_vuln() {
+        let storage = create_test_storage();
+
+        let mut intel_hits = HashSet::new();
+        let intel_result = IntelResult {
+            provider: "test-provider".to_string(),
+            term: "192.168.1.1".to_string(),
+            result: "test-result".to_string(),
+        };
+        intel_hits.insert(intel_result.clone());
+
+        let mut vulnerabilities = HashSet::new();
+        let vuln_result = VulnResult {
+            provider: "test-vuln-provider".to_string(),
+            term: "192.168.1.1:80".to_string(),
+            result: "test-vuln-result".to_string(),
+        };
+        vulnerabilities.insert(vuln_result.clone());
+
+        storage.batch_update_intel_vuln(intel_hits, vulnerabilities);
+
+        let hot_data = storage.hot_data.read();
+        assert!(hot_data.intel_hits.contains(&intel_result));
+        assert!(hot_data.vulnerabilities.contains(&vuln_result));
+    }
+
+    #[test]
+    fn test_update_networks() {
+        let storage = create_test_storage();
+
+        let networks = vec!["network1".into(), "network2".into(), "network3".into()];
+
+        storage.update_networks(networks);
+
+        let hot_data = storage.hot_data.read();
+        assert!(hot_data.networks.contains(&ArcStr::from("network1")));
+        assert!(hot_data.networks.contains(&ArcStr::from("network2")));
+        assert!(hot_data.networks.contains(&ArcStr::from("network3")));
+    }
+
+    #[test]
+    fn test_get_atomic_values() {
+        let storage = create_test_storage();
+
+        // Set some values
+        storage.current_stage.store(3, std::sync::atomic::Ordering::Release);
+        storage.risk.store(7, std::sync::atomic::Ordering::Release);
+        storage.created_time.store(1000, std::sync::atomic::Ordering::Release);
+        storage.update_time.store(2000, std::sync::atomic::Ordering::Release);
+
+        let (stage, risk, created, updated) = storage.get_atomic_values();
+        assert_eq!(stage, 3);
+        assert_eq!(risk, 7);
+        assert_eq!(created, 1000);
+        assert_eq!(updated, 2000);
+    }
+
+    #[test]
+    fn test_batch_update_atomics() {
+        let storage = create_test_storage();
+
+        // Update only stage and risk
+        storage.batch_update_atomics(Some(5), Some(8), None);
+
+        assert_eq!(storage.current_stage.load(std::sync::atomic::Ordering::Acquire), 5);
+        assert_eq!(storage.risk.load(std::sync::atomic::Ordering::Acquire), 8);
+        assert_eq!(storage.update_time.load(std::sync::atomic::Ordering::Acquire), 0); // Should be unchanged
+
+        // Update only update_time
+        storage.batch_update_atomics(None, None, Some(3000));
+
+        assert_eq!(storage.current_stage.load(std::sync::atomic::Ordering::Acquire), 5); // Should be unchanged
+        assert_eq!(storage.risk.load(std::sync::atomic::Ordering::Acquire), 8); // Should be unchanged
+        assert_eq!(storage.update_time.load(std::sync::atomic::Ordering::Acquire), 3000);
+    }
+
+    #[test]
+    fn test_hot_data_clone() {
+        let mut hot_data = BacklogHotData::default();
+
+        let src_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        hot_data.src_ips.insert(src_ip);
+
+        let network: ArcStr = "test-network".into();
+        hot_data.networks.insert(network.clone());
+
+        let intel_result = IntelResult {
+            provider: "test-provider".to_string(),
+            term: "192.168.1.1".to_string(),
+            result: "test-result".to_string(),
+        };
+        hot_data.intel_hits.insert(intel_result.clone());
+
+        let vuln_result = VulnResult {
+            provider: "test-vuln-provider".to_string(),
+            term: "192.168.1.1:80".to_string(),
+            result: "test-vuln-result".to_string(),
+        };
+        hot_data.vulnerabilities.insert(vuln_result.clone());
+
+        let custom_data = CustomData { label: "test-label".into(), content: "test-content".into() };
+        hot_data.custom_data.insert(custom_data.clone());
+
+        hot_data.risk_class = "high".into();
+
+        let cloned = hot_data.clone();
+
+        assert_eq!(cloned.src_ips, hot_data.src_ips);
+        assert_eq!(cloned.networks, hot_data.networks);
+        assert_eq!(cloned.intel_hits, hot_data.intel_hits);
+        assert_eq!(cloned.vulnerabilities, hot_data.vulnerabilities);
+        assert_eq!(cloned.custom_data, hot_data.custom_data);
+        assert_eq!(cloned.risk_class, hot_data.risk_class);
+    }
+}

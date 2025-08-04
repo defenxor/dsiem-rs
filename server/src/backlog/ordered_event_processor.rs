@@ -490,4 +490,120 @@ mod tests {
         let stats = processor.get_all_queue_stats().await;
         assert!(!stats.is_empty());
     }
+
+    #[test]
+    fn test_ordered_queue_new() {
+        let queue = OrderedEventQueue::new("test-backlog".to_string());
+
+        assert_eq!(queue.backlog_id, "test-backlog");
+        assert!(queue.events.is_empty());
+        assert!(queue.last_processed_timestamp.is_none());
+        assert!(queue.out_of_order_buffer.is_empty());
+        assert_eq!(queue.total_events_received, 0);
+        assert_eq!(queue.out_of_order_events, 0);
+        assert_eq!(queue.events_processed, 0);
+    }
+
+    #[test]
+    fn test_ordered_queue_add_event_in_order() {
+        let mut queue = OrderedEventQueue::new("test-backlog".to_string());
+        let config = OrderingConfig::default();
+
+        let base_time = Utc::now();
+
+        // Add events in order
+        for i in 0..3 {
+            let event = NormalizedEvent {
+                id: format!("event-{i}"),
+                timestamp: base_time + ChronoDuration::seconds(i),
+                ..Default::default()
+            };
+            queue.add_event(event, &config).unwrap();
+        }
+
+        assert_eq!(queue.total_events_received, 3);
+        assert_eq!(queue.out_of_order_events, 0);
+        assert_eq!(queue.events.len(), 3);
+    }
+
+    #[test]
+    fn test_ordered_queue_get_processable_events_strict() {
+        let mut queue = OrderedEventQueue::new("test-backlog".to_string());
+        let config = OrderingConfig { strict_ordering: true, ..Default::default() };
+
+        let base_time = Utc::now();
+
+        // Add events in order
+        for i in 0..3 {
+            let event = NormalizedEvent {
+                id: format!("event-{i}"),
+                timestamp: base_time + ChronoDuration::seconds(i),
+                ..Default::default()
+            };
+            queue.add_event(event, &config).unwrap();
+        }
+
+        let processable = queue.get_processable_events(&config);
+        assert_eq!(processable.len(), 3);
+
+        // Events should be in order
+        for (i, event) in processable.iter().enumerate() {
+            assert_eq!(event.id, format!("event-{i}"));
+        }
+
+        assert_eq!(queue.events_processed, 3);
+        assert_eq!(queue.events.len(), 0); // All events should be processed
+    }
+
+    #[test]
+    fn test_ordered_queue_get_stats() {
+        let mut queue = OrderedEventQueue::new("test-backlog".to_string());
+        let config = OrderingConfig::default();
+
+        let base_time = Utc::now();
+
+        // Add events
+        for i in 0..3 {
+            let event = NormalizedEvent {
+                id: format!("event-{i}"),
+                timestamp: base_time + ChronoDuration::seconds(i),
+                ..Default::default()
+            };
+            queue.add_event(event, &config).unwrap();
+        }
+
+        let processable = queue.get_processable_events(&config);
+        assert_eq!(processable.len(), 3);
+
+        let stats = queue.get_stats();
+        assert_eq!(stats.backlog_id, "test-backlog");
+        assert_eq!(stats.total_events_received, 3);
+        assert_eq!(stats.out_of_order_events, 0);
+        assert_eq!(stats.events_processed, 3);
+        assert_eq!(stats.current_queue_size, 0);
+        assert_eq!(stats.buffered_out_of_order, 0);
+    }
+
+    #[test]
+    fn test_ordered_processor_new() {
+        let config = OrderingConfig::default();
+        let processor = OrderedEventProcessor::new(config.clone());
+
+        assert_eq!(processor.get_config().max_ordering_delay_ms, config.max_ordering_delay_ms);
+        assert_eq!(processor.get_config().max_buffer_size_per_backlog, config.max_buffer_size_per_backlog);
+        assert_eq!(processor.get_config().processing_interval_ms, config.processing_interval_ms);
+        assert_eq!(processor.get_config().max_concurrent_processing, config.max_concurrent_processing);
+        assert_eq!(processor.get_config().strict_ordering, config.strict_ordering);
+    }
+
+    #[test]
+    fn test_ordering_config_default() {
+        let config = OrderingConfig::default();
+
+        assert_eq!(config.max_ordering_delay_ms, 1000);
+        assert_eq!(config.max_buffer_size_per_backlog, 1000);
+        assert_eq!(config.processing_interval_ms, 10);
+        assert_eq!(config.max_concurrent_processing, 4);
+        assert!(config.strict_ordering);
+    }
 }
