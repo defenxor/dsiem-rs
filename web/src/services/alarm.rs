@@ -240,7 +240,7 @@ pub async fn read(dsiem_baseurl: String, id: String) -> Result<Alarm, String> {
     Ok(alarm)
 }
 
-async fn get_alarm_event(search_cfg: &SearchConfig, alarm_id: &String) -> Result<Vec<AlarmEvents>, String> {
+async fn get_alarm_event(search_cfg: &SearchConfig, alarm_id: &str) -> Result<Vec<AlarmEvents>, String> {
     let url =
         search_cfg.search.to_string() + INDEX_ALARM_EVENT + "/_search?size=" + DEFAULT_ES_MAX_SIZE.to_string().as_str();
 
@@ -264,7 +264,7 @@ async fn get_alarm_event(search_cfg: &SearchConfig, alarm_id: &String) -> Result
     Ok(alarm_events)
 }
 
-async fn get_alarm(search_cfg: &SearchConfig, id: &String) -> Result<Alarm, String> {
+async fn get_alarm(search_cfg: &SearchConfig, id: &str) -> Result<Alarm, String> {
     let url = search_cfg.search.to_string() + INDEX_ALARM + "/_search";
     // curl 'localhost:9200/siem_alarms-*/_search' -XPOST -H
     // 'content-type:application/json' -d'{ "query": { "term" : { "_id": "gUJis6htM"
@@ -292,7 +292,7 @@ async fn get_alarm(search_cfg: &SearchConfig, id: &String) -> Result<Alarm, Stri
     Ok(alarm)
 }
 
-async fn get_event(search_cfg: &SearchConfig, id: &String) -> Result<Event, String> {
+async fn get_event(search_cfg: &SearchConfig, id: &str) -> Result<Event, String> {
     let url = search_cfg.search.to_string() + INDEX_EVENT + "/_search";
 
     let data = r#"{ "query": { "term": { "event_id.keyword": ""#.to_owned() + id + r#"" }  } }"#;
