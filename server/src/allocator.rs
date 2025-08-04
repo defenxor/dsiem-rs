@@ -75,7 +75,6 @@ pub fn calculate(
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::*;
 
