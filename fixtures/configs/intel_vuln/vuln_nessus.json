@@ -5,7 +5,7 @@
       "type": "IP-Port",
       "plugin": "Nesd",
       "enabled": true,
-      "config": "{ \"url\" : \"http://127.0.0.1:18082/?ip=${ip}&port=${port}\" }"
+      "config": "{ \"url\" : \"http://127.0.0.1:18082/?ip=${ip}&port=${port}\", \"allow_low_severity\": true }"
     }
   ]
 }

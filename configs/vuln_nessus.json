@@ -5,7 +5,7 @@
       "type": "IP-Port",
       "plugin": "Nesd",
       "enabled": true,
-      "config": "{ \"url\" : \"http://dsiem-nesd:8081/?ip=${ip}&port=${port}\" }"
+      "config": "{ \"url\" : \"http://dsiem-nesd:8081/?ip=${ip}&port=${port}\", \"allow_low_severity\" : false }"
     }
   ]
 }
