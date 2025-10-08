@@ -10,6 +10,7 @@ use super::{VulnChecker, VulnResult};
 #[derive(Deserialize, Default)]
 struct Config {
     url: String,
+    allow_low_severity: Option<bool>,
 }
 #[derive(Default)]
 pub struct Nesd {
@@ -28,6 +29,7 @@ pub struct NesdResult {
 impl VulnChecker for Nesd {
     async fn check_ip_port(&self, ip: IpAddr, port: u16) -> Result<HashSet<VulnResult>> {
         let url = self.config.url.replacen("${ip}", &ip.to_string(), 1).replacen("${port}", &port.to_string(), 1);
+        let allow_low_severity = self.config.allow_low_severity.unwrap_or(false);
 
         trace!(url, "nesd vuln check");
 
@@ -52,7 +54,12 @@ impl VulnChecker for Nesd {
         let res: Vec<NesdResult> = serde_json::from_str(&text).context("error parsing nesd result")?;
 
         for v in res.iter() {
-            if v.risk != "Medium" && v.risk != "High" && v.risk != "Critical" {
+            let is_valid = if allow_low_severity {
+                v.risk == "Low" || v.risk == "Medium" || v.risk == "High" || v.risk == "Critical"
+            } else {
+                v.risk == "Medium" || v.risk == "High" || v.risk == "Critical"
+            };
+            if !is_valid {
                 continue;
             }
 

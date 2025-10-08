@@ -169,7 +169,8 @@ mod test {
         let res2 = vulns.run_checkers(ip2, port2).await.unwrap();
         assert!(!res2.is_empty());
         let res3 = vulns.run_checkers(ip3, port3).await.unwrap();
-        assert!(res3.is_empty());
+        // fixture has allow_low_severity = true
+        assert!(!res3.is_empty());
         let res4 = vulns.run_checkers(ip3, port2).await.unwrap();
         assert!(res4.is_empty());
         // run again to use cache

@@ -4,7 +4,7 @@ members = ["server", "web"]
 default-members = ["server"]
 
 [workspace.package]
-version = "1.5.1"
+version = "1.5.2"
 authors = ["Dsiem Authors"]
 description = "OSSIM-style event correlation engine for ELK stack"
 documentation = "https://github.com/defenxor/dsiem/blob/master/docs/README.md"
