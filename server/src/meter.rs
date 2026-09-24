@@ -90,7 +90,8 @@ impl Meter {
                 if let Ok(r) = lock.read() {
                     for (k, v) in r.iter() {
                         if *k == name {
-                            // v will have been updated by watchdog by the time this is called
+                            // v will have been updated by watchdog by the time
+                            // this is called
                             observer.observe_f64(&gauge, *v, &[]);
                         }
                     }

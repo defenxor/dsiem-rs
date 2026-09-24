@@ -317,9 +317,9 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let (mut log_writer, log_tx) = LogWriter::new(test_env)?;
     let cancel_tx_clone = cancel_tx.clone();
     let _handle_filewriter = thread::spawn(move || {
-        // this could exit because the channel is closed by shutdown process initiated
-        // from other threads, or fatal file access/write errors. Either way,
-        // we're exiting the process.
+        // this could exit because the channel is closed by shutdown process
+        // initiated from other threads, or fatal file access/write
+        // errors. Either way, we're exiting the process.
         _ = log_writer.listener();
         _ = cancel_tx_clone.send(());
     });
@@ -386,8 +386,8 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         // manager or spawner will be closed first by cancel signal,
         // wherever it comes from
         _ = handle_manager.join();
-        // cancel signal will also close messenger, which will close recv() in filter
-        // and causing it to initiate ordely exit
+        // cancel signal will also close messenger, which will close recv() in
+        // filter and causing it to initiate ordely exit
         if let Ok(Err(e)) = handle_filter.join() {
             return Err(e);
         }

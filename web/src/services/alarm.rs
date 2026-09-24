@@ -267,8 +267,8 @@ async fn get_alarm_event(search_cfg: &SearchConfig, alarm_id: &str) -> Result<Ve
 async fn get_alarm(search_cfg: &SearchConfig, id: &str) -> Result<Alarm, String> {
     let url = search_cfg.search.to_string() + INDEX_ALARM + "/_search";
     // curl 'localhost:9200/siem_alarms-*/_search' -XPOST -H
-    // 'content-type:application/json' -d'{ "query": { "term" : { "_id": "gUJis6htM"
-    // } } }'
+    // 'content-type:application/json' -d'{ "query": { "term" : { "_id":
+    // "gUJis6htM" } } }'
 
     let data = r#"{ "query": { "term": { "_id": ""#.to_owned() + id + r#"" }  } }"#;
 
