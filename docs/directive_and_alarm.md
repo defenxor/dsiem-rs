@@ -1,58 +1,51 @@
 # Directive and Alarm
 
-Similar to [OSSIM](https://www.alienvault.com/products/ossim), Dsiem directive contains a set of rules that will be used to evaluate incoming [Normalized Events](./dsiem_plugin.md#normalized-event). Directive triggers alarms when enough of its rules condition are met.
+A directive describes how incoming [normalized events](dsiem_plugin.md#normalized-event) are correlated into an alarm. It contains a sequence of rules with occurrence counts, matching conditions, and timeouts.
 
-## About Directive Rules
+## About directive rules
 
-There are two types of directive rules in Dsiem, `PluginRule` and `TaxonomyRule`. As suggested in the [Normalized Events](./dsiem_plugin.md#normalized-event) table, `PluginRule` differentiates events based on `PluginID` and `Plugin_SID` fields, while TaxonomyRule uses `Product`, `Category`, and optionally `Subcategory` fields.
+`PluginRule` matches `plugin_id` and `plugin_sid`. Use it when detection depends on specific event types from a known source.
 
-`PluginRule` should be used if you want to do correlation based on specific events produced by specific brand of devices. On the other hand, `TaxonomyRule` allows correlation to be done based on a group of events that share similar characteristic.
+`TaxonomyRule` matches `product`, `category`, and optionally `subcategory`. It lets different sources participate in a rule when their normalized events use the same classification scheme. Maintaining that shared scheme is part of configuring the source parsers.
 
-As an example, suppose you have the following security devices in your network: Suricata IDS, SomebrandNG IDS, Pfsense Firewall, SomeRouterNG Firewall. `PluginRule` will allow you to define a directive that says, "Raise alarm if Suricata IDS detects SQL injection or XSS attacks that isn't blocked by SomeRouterNG Firewall". In contrast, `TaxonomyRule` allow definition of a more general directive that says, "Raise alarm if an IDS detects web application attack that isn't blocked by firewall".
+Both rule types can also constrain addresses, ports, protocol, and custom fields. For example, a directive can track an IDS alert followed by a firewall event showing allowed traffic. It needs those matching events; the absence of a blocked-traffic event alone does not satisfy a stage.
 
-Despite its obvious flexibility, `TaxonomyRule` does require you to maintain a custom classification/taxonomy scheme that isn't required by `PluginRule`. In the above example, using `TaxonomyRule` means you will have to know and classify which events from Suricata or SomebrandNG are "web application attack", and which events in PfSense and SomeRouterNG means "not blocking".
+## Rule format
 
-As a general guide, `TaxonomyRule` should be preferred when there are similar types of product (like IDS and firewall above) to cover since it will prevent a lot of redundant directives. But if that's not the case, `PluginRule` will likely offer an easier to maintain plugin/parser configuration.
+A directive file contains a top-level `directives` array. Each directive needs `id`, `name`, `priority`, `kingdom`, `category`, and `rules`. Use a unique ID, nonempty names/classifications, and priority from 1 to 5. `disabled` and `all_rules_always_active` default to `false`.
 
-## Rule Format
+Define at least two rules, with consecutive stages starting at 1, and set stage 1's `occurrence` to 1. References depend on those stage positions. Startup rejects invalid enabled directives instead of repairing or skipping them. Disabled directives are skipped; the backend needs at least one enabled directive.
 
-A directive rule contains the following fields:
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `name` | Yes | Rule name; the field must be present |
+| `type` | Yes | `PluginRule` or `TaxonomyRule` |
+| `stage` | Yes | Stage number, starting at 1 |
+| `occurrence` | Yes | Positive count of matching event IDs; stage 1 must use 1 |
+| `from`, `to` | Yes | Source/destination address conditions |
+| `port_from`, `port_to` | Yes | Source/destination port conditions; use `ANY` to ignore |
+| `protocol` | Yes | Exact protocol string, `ANY`, empty string, or a stage reference |
+| `reliability` | Yes | Integer from 0 to 10, used when the stage completes |
+| `timeout` | Yes | Nonnegative integer in seconds; there is no deserialization default |
+| `plugin_id` | For `PluginRule` | Positive plugin ID |
+| `plugin_sid` | For `PluginRule` | Nonempty array of positive event-type IDs |
+| `product` | For `TaxonomyRule` | Nonempty array of product strings |
+| `category` | For `TaxonomyRule` | Nonempty category string |
+| `subcategory` | No | Array of strings for a taxonomy rule; empty or containing `ANY` means unrestricted |
+| `custom_data1`, `custom_data2`, `custom_data3` | No | Custom-field conditions; omitted, empty, or `ANY` means unrestricted |
+| `sticky_different` | No | Require a new value in the selected field while counting matches |
 
-| Field        | Description                                                                                                  | Valid Content                                                                                                                                                                                                                                                                                                                                                                                                            | Used in event evaluation?                                         | Mandatory                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- | ---------------------------------------------------------- |
-| name         | The title of the rule                                                                                        | Any string                                                                                                                                                                                                                                                                                                                                                                                                               | No                                                                | No                                                         |
-| type         | Determine if the rule is a `PluginRule` or `TaxonomyRule`                                                    | `"PluginRule"` or `"TaxonomyRule"`                                                                                                                                                                                                                                                                                                                                                                                       | Yes, this determines how the evaluation work                      | Yes                                                        |
-| stage        | The rule stage, starts from 1 to 255                                                                         | integer from 1 to 255                                                                                                                                                                                                                                                                                                                                                                                                    | Yes, this determines the order of evaluation                      | Yes                                                        |
-| plugin_id    | `plugin_id` of the rule                                                                                      | integer from 1                                                                                                                                                                                                                                                                                                                                                                                                           | Yes, together with `plugin_sid` in a `PluginRule`                 | Only if type is `PluginRule`                               |
-| plugin_sid   | `plugin_sid` of the rule                                                                                     | array of integers, e.g. `[1,2,5,6]`, cannot contain `0`.                                                                                                                                                                                                                                                                                                                                                                 | Yes, together with `plugin_id` in a `PluginRule`                  | Only if type is `PluginRule`                               |
-| product      | `product` field of the rule                                                                                  | array of strings, e.g. `["iptables","nftables"]`                                                                                                                                                                                                                                                                                                                                                                         | Yes, with `category` in a `TaxonomyRule`                          | Only if type is `TaxonomyRule` |
-| category     | `category` field of the rule                                                                                 | strings, e.g. `"firewall"`                                                                                                                                                                                                                                                                                                                                                                                               | Yes, with `category` in a `TaxonomyRule`                          | Only if type is `TaxonomyRule` |
-| occurrence   | The number of matching events before the rule is considered `finished` and processing move to the next stage | integer from 1                                                                                                                                                                                                                                                                                                                                                                                                           | Yes, to count the number of matching events for the current stage | Yes                                                        |
-| from         | How `SRC_IP` of the event will be matched                                                                    | String that can be `ANY` (will match any IP address), `HOME_NET` (will match those defined in assets.json), `!HOME_NET`(will match those that aren't defined in assets.json), specific IPv4/IPv6 address, CIDR notation, or a list of addresses separated by comma. Each address can also be prefixed with `!` to specify negation. Examples: `"192.168.0.1"`, `"192.168.0.0/24"`, `"!10.0.0.1", "192.168.0.0/24, 10.0.0.0/8" ` | Yes                                                               | Yes                                                        |
-| to           | How `DST_IP` of the event will be matched                                                                    | The Same format with `from` above                                                                                                                                                                                                                                                                                                                                                                                        | Yes                                                               | Yes                                                        |
-| port_from    | How `SRC_PORT` of the event will be matched                                                                  | String that can be `ANY`, a specific port number (1-65535), or a list of port numbers separated by comma| Yes                                               | No                                     |
-| port_to   | How `DST_PORT` of the event will be matched                                                                  | String that can be `ANY`, a specific port number (1-65535), or a list of port numbers separated by comma| Yes                                               | No
-| protocol     | How `protocol` of the event will be matched                                                                  | String that can be `ANY` or a specific string, e.g. `"ICMP"`, `"HTTP"`                                                                                                                                                                                                                                                                                                                                                               | Yes                                                               | No                                                         |
-| custom_data1 | How `custom_data1` of the event will be matched                                                              | String that can be `ANY`, or a specific string, e.g. `"access denied"`, `"accepted"`                                                                                                                                                                                                                                                                                                                                                 | Yes                                                               | No                                                         |
-| custom_data2 | How `custom_data2` of the event will be matched                                                              | String that can be `ANY`, or a specific string, e.g. `"access denied"`, `"accepted"`                                                                                                                                                                                                                                                                                                                                                 | Yes                                                               | No                                                         |
-| custom_data3 | How `custom_data3` of the event will be matched                                                              | String that can be `ANY`, or a specific string, e.g. `"access denied"`, `"accepted"`                                                                                                                                                                                                                                                                                                                                                 | Yes                                                               | No                                                         |
-| reliability  | Determines the directive reliability value once the rule completes                                           | integer 0 to 10                                                                                                                                                                                                                                                                                                                                                                                                          | No                                                                | Yes                                                        |
-| timeout      | the rule maximum active duration (in seconds) since the timestamp of the first matching event                | integer starting from 0                                                                                                                                                                                                                                                                                                                                                                                                  | No                                                                | No, defaults to 0                                              |
+Address conditions support `ANY`, `HOME_NET`, `!HOME_NET`, IP addresses, CIDRs, comma-separated entries, and `!` negation. `HOME_NET` is built from non-whitelisted entries in `assets_*.json`. Both IPv4 and IPv6 are supported. Port conditions support `ANY`, ports from 1 to 65535, comma-separated entries, negation, and references. Empty or missing port conditions are invalid.
 
-#### Note on non-mandatory fields
+The supported rule-level `sticky_different` selectors are `SRC_IP`, `DST_IP`, `SRC_PORT`, `DST_PORT`, `PLUGIN_SID`, and `CUSTOM_DATA1` through `CUSTOM_DATA3`.
 
-Non-mandatory fields can be excluded from event evaluation by leaving it undefined or setting its value to an empty string. These fields include `port_from`, `port_to`, `protocol`, `custom_data1`, `custom_data2`, and `custom_data3`.
+### Referencing a previous stage
 
-#### Referencing value from previous stage
-Some of the fields can also be set to refer to value from the _first event_ of a _previous stage_ using a `:[stage]` notation. This is to allow later stages inheriting conditions from previous stages as part of its own rule conditions.
+Use `:1`, `:2`, and so on to match the corresponding field of the first event in a previous stage. For example, `"from": ":1"` requires the same source address as the first event in stage 1. It does not match against every address seen during that stage.
 
-For example, Let's say a rule in stage 3 has its `from` set to `:2`. When the directive processing reaches stage 3, `SRC_IP` of incoming events will be matched against the `SRC_IP` of the _first event_ that matches the stage 2 rule. 
+References are supported in `from`, `to`, `port_from`, `port_to`, `protocol`, and the three `custom_data` fields. Use only earlier stages. Address and port reference validation accepts `:1` through `:99` within the directive's highest stage; it does not verify every ordering constraint. Write stages consecutively and keep references backward even if a malformed directive passes startup validation.
 
-Notice the emphasis put on _first event_ above. If the from field in stage 2 contain a specific IP address like 192.168.0.1, then any event (including the first one) that matches it will also have that specific IP address. And since stage 3 from field refers to stage 2, all events that matches stage 3 must also have the same IP address. 
-
-However, if the stage 2 from field contain `ANY` or `HOME_NET` or `!HOME_NET`, then the stage 3 from field that refers to it will only be evaluated against the SRC_IP of the _first event_ that matches stage 2. In other words, `:2` in stage 3 doesn't mean that events will be compared to all IP addresses from all events in stage 2.
-
-The full list of fields that support references are: `from`, `to`, `port_from`, `port_to`, `protocol`, `custom_data1`, `custom_data2`, and `custom_data3`.
+See [directive loading and validation](../server/src/directive.rs) and [rule deserialization and matching](../server/src/rule.rs) for the implementation.
 
 ## Directive and Rules Processing
 
@@ -66,19 +59,19 @@ The following is an example of a dsiem directive that has several `PluginRule`.
   "id": 1,
   "priority": 3,
   "rules" : [
-    { "name": "ICMP Ping", "type": "PluginRule", "stage": 1, "plugin_id": 1001, 
+    { "name": "ICMP Ping", "type": "PluginRule", "stage": 1, "plugin_id": 1001,
       "plugin_sid": [ 2100384 ], "occurrence": 1, "from": "HOME_NET", "to": "ANY",
-      "port_from": "ANY", "port_to": "ANY", "protocol": "ICMP", 
-      "reliability": 1, "timeout": 0 
+      "port_from": "ANY", "port_to": "ANY", "protocol": "ICMP",
+      "reliability": 1, "timeout": 0
     },
     { "name": "ICMP Ping", "type": "PluginRule", "stage": 2, "plugin_id": 1001,
       "plugin_sid": [ 2100384 ], "occurrence": 5, "from": ":1", "to": "ANY",
       "port_from": "ANY", "port_to": "ANY", "protocol": "ICMP",
-      "reliability": 5, "timeout": 600 
+      "reliability": 5, "timeout": 600
     },
     { "name": "ICMP Ping", "type": "PluginRule", "stage": 3, "plugin_id": 1001,
-      "plugin_sid": [ 2100384 ], "occurrence": 500, "from": ":1", "to": "ANY", 
-      "port_from": "ANY", "port_to": "ANY", "protocol": "ICMP", 
+      "plugin_sid": [ 2100384 ], "occurrence": 500, "from": ":1", "to": "ANY",
+      "port_from": "ANY", "port_to": "ANY", "protocol": "ICMP",
       "reliability": 10, "timeout": 3600
     }
   ]
@@ -88,66 +81,52 @@ Notice that the directive `Ping Flood from SRC_IP` above has 3 `rules`, each hav
 
 When an incoming event matches a directive's stage 1 rule condition, dsiem will create a backlog object associated with that directive to track the progress of this potential alarm.
 
-Dsiem will then wait for incoming events that match the next rule (i.e. stage 2) rule condition, until one of these conditions happen:
-- the count for matching events reach the stage `occurrence` value, in which case evaluation will continue to next rule (i.e. stage 3); or
-- `timeout` duration (in seconds) has elapsed since the first matched event, in which case the backlog will be discarded.
+Dsiem counts matching event IDs for the current stage. Once the count reaches `occurrence`, it calculates risk and advances to the next stage. On the final stage, it writes the last alarm update and removes the backlog from memory.
 
-The above repeats until evaluation of the last rule completes — after which the backlog object will finally be removed.
+A new stage initially uses the previous stage's completion event timestamp as its start time. Its first matching event resets that start time to its own timestamp. The expiration check runs every 10 seconds and compares wall-clock time with:
+
+```text
+stage start time + timeout + min-alarm-lifetime (converted to seconds)
+```
+
+`timeout=0` does not disable expiration. `--min-alarm-lifetime` adds time to this deadline; it does not delay removal after the final stage completes. When a backlog expires, Dsiem marks the current rule `timeout`, writes an alarm update if risk is nonzero, and removes the backlog. Existing alarm documents remain available for investigation.
+
+With `all_rules_always_active=true`, an event that fails the current stage can still be attached to a matching earlier stage. This does not advance the current stage or recalculate risk.
 
 ## Triggering Alarm
 
-Dsiem calculates a risk value for backlog when the current stage's rule condition has been matched by incoming events. An alarm will be triggered *when the backlog risk value is ≥ 1*. Risk value calculation is based on this formula:
+Dsiem calculates risk when a stage reaches its required occurrence count. It writes an alarm when the resulting integer is greater than zero:
 
-$$Risk = \frac{reliability × priority × asset\ value}{25}$$
+```text
+risk = (reliability × priority × asset value) / 25
+```
 
-Where: 
-- Reliability (1 to 10): the active rule `reliability` value. Higher reliability means higher confidence on the likelihood that the (potential) alarm is a true positive.
-- Priority (1 to 5): The directive's `priority` value. This reflects the directive level of importance. Those with more severe impact should be given a higher priority.
-- Asset Value (1 to 5): From the asset value set on `assets_*.json` config files. This reflects the criticality of the target/impacted assets. Higher value should be assigned to more critical assets. 
+The Rust implementation uses integer division, so it discards the fractional part. Reliability ranges from 0 to 10 and directive priority from 1 to 5. Configure asset values from 1 to 5 for the intended 0-to-10 scoring scale. The asset loader rejects zero but does not enforce an upper bound of 5.
 
-Given the above, we can calculate that risk value of any backlog will vary from 0.4 when all parameters are at their minimum, to 10 when all parameters are at their maximum. Since alarm will only be created when that value is ≥ 1, we can also deduce that the risk range of any alarm will be from 1 to 10.
+For each involved source and destination address, Dsiem takes the highest value among matching asset entries, then uses the highest value across those addresses. An address with no matching asset has value 0, not a default value of 2. If none of the involved addresses match an asset, risk remains zero.
 
-By using [Dsiem startup parameter](commands.md), you can then configure when should an alarm be labeled as Low, Medium or High risk based on that range. The default thresholds are:
-- Low risk ⟶ risk value of 1 to less than 3
-- Medium risk ⟶ risk value of 3 to 6
-- High risk ⟶ risk value of more than 6 to 10
+The default classifications are:
 
-*The startup parameters `medRiskMin` and `medRiskMax` control number `3` and `6` above respectively.*
+- Low: 1 or 2.
+- Medium: 3 through 6.
+- High: above 6, up to 10 when using the intended asset scale.
 
-### Example Directive ⟶ Alarm Processing
+`--med_risk_min` and `--med_risk_max` control the Medium boundaries. An alarm can be emitted before the final stage and updated as later stages finish. Threat-intelligence and vulnerability matches add context without changing risk.
 
-Let's say Dsiem is configured with the above `Ping Flood from SRC_IP` directive, and an `assets_*.json` that defines an asset value of 4 for `10.0.0.0/8` network.
+### Example directive-to-alarm processing
 
-When Dsiem receives the following series of events:
-1. plugin_id: 1001, plugin_sid: 2100384, protocol: ICMP, src_ip: 10.0.0.1, dst_ip: 10.0.0.2
-1. plugin_id: 1001, plugin_sid: 2100384, protocol: ICMP, src_ip: 10.0.0.1, dst_ip: 10.0.0.3
-1. plugin_id: 1001, plugin_sid: 2100384, protocol: ICMP, src_ip: 10.0.0.2, dst_ip: 10.0.0.1
-1. plugin_id: 1001, plugin_sid: 2100384, protocol: ICMP, src_ip: 10.0.0.1, dst_ip: 10.0.0.4
-1. plugin_id: 1001, plugin_sid: 2100384, protocol: ICMP, src_ip: 10.0.0.1, dst_ip: 10.0.0.5 (repeated 13x)
+Use the three-stage directive above and an asset value of 4 for `10.0.0.0/8`. Assume all events match the configured plugin, SID, and protocol and arrive within the stage timeouts.
 
-The following processing will take place:
+1. An event from `10.0.0.1` starts backlog A. Stage 1 completes, but `(1 × 3 × 4) / 25` becomes integer `0`, so no alarm is written.
+2. Five more matching events from `10.0.0.1` complete stage 2. Risk becomes `(5 × 3 × 4) / 25 = 2`, producing a Low alarm. Stage 3 starts.
+3. Ten more matching events give stage 3 a count of 10 out of 500. The alarm remains Low; the stage is not complete.
+4. Another 490 matching events complete stage 3. Risk becomes `(10 × 3 × 4) / 25 = 4`. Dsiem writes a Medium alarm update and removes backlog A from memory.
 
-* On 1st event:
-  * the event matches directive 1st rule condition because:
-    * they have the same value for `plugin_id`, `plugin_sid`, and `protocol`.
-    * the event `src_ip` (10.0.0.1) matches the directive `from` condition of `HOME_NET`. This is because `HOME_NET` refers to any addresses defined in `assets_*.json` file.
-    * the event `dst_ip` (10.0.0.2) matches the directive `to` condition of `ANY`. This is because `ANY` will match all possible value.
-  * backlog #1 is created to track this potential alarm.
-  * backlog #1 has fulfilled all of its condition, including its required number of `occurrence` (1 event). This starts a risk calculation of `risk = (reliability * priority * asset value)/25 = (1 * 3 * 4)/25 = 0.48`, so no alarm will be created yet.
-  * backlog #1 now moves to the 2nd correlation stage and starts monitoring for incoming events that would trigger the 2nd stage rule condition.
-* On 2nd event:  
-  * the event matches backlog #1 2nd rule condition because the event `src_ip` matches the directive `from` value of `:1`. That `:1` denotes a reference to the `from` value matched in the first rule, which in this case is `10.0.0.1`.
-* On 3rd event:
-  * the event doesn't match backlog #1 2nd rule condition because of the mismatch in `from` condition and the event's `src_ip`.
-  * since this event does match the directive 1st rule, a new backlog #2 will be created to track it separately from backlog #1.
-* On 4th event:
-  * the event matches backlog #1 2nd rule condition. This will raise its event count from 1 to 2 for the 2nd stage.
-  * the event doesnt match backlog #2 2nd rule condition.
-* On 5th to 17th event:
-  * 5th to 7th events match backlog #1 2nd rule condition and cause its event count to reach the `occurrence` limit (5 events), so this will recalculate the risk value to be `risk = (5 * 3 * 2)/25 = 2.4`. **This will generate a Low risk alarm**, and will also move backlog #1 to the 3rd correlation stage.  
-  * the next 10 events (8-17th) match backlog #1 3rd rule condition, and will again recalculate the risk value to be `risk = (10 * 3 * 4)/25 = 4.8`. This results in an update of the associated alarm's risk label from Low to **Medium**.
+An event from `10.0.0.2` can start a separate backlog because stage 2 of backlog A refers to stage 1's source address. An unfinished backlog expires according to its current stage's deadline.
 
-  Backlog #1 now has no more rules to process and will immediately be deleted from memory. As for backlog #2, it will keep waiting for event matching its 2nd rule for 10 minutes (600s), after which it will expire and also be deleted.
+This example is separate from the [shipped test directive](../configs/directives_dsiem-backend-0_testing1.json), which uses stage-2 occurrence 3 and reliability 6, followed by stage-3 occurrence 10,000.
+
+The scoring and stage transitions are implemented in [backlog/mod.rs](../server/src/backlog/mod.rs).
 
 ## Creating a Dsiem Directive
 
@@ -164,7 +143,7 @@ we can use the following `dpluger` command:
 ```console
 ./dpluger directive -i 3001 -f sangfor_plugin-sids.tsv
 ```
-To automatically generate this `directives_dsiem.json` file:
+The external tool can generate a `directives_dsiem.json` file like the example below. Rename it to match the backend assignment, such as `directives_dsiem-backend-0_generated.json`, before placing it in the frontend configuration directory. Check `dpluger directive --help` for the version you installed:
 ```json
 {
   "directives": [
@@ -297,4 +276,5 @@ The generated directives above have the following characteristics:
   - stage 1: match a single event that has similar `PluginID` and `PluginSID` combination as specified by each row of the TSV file.
   - stage 2: has similar condition with stage 1, with an added requirement for the events to also match stage 1 source and destination IP addresses. This stage is set to match up to 10 events within 3,600 seconds (1 hour).
   - stage 3: has similar condition with stage 2, but is setup to match up to 10,000 events within 6 hour.
-- The directive priority value (1) and the correlation rules reliability value (for each consecutive stages: 1, 5, 10) are set so that the directive will trigger a low risk alarm when stage 2 receives its last matching event. This is true if the events source or destination IP address include an asset whose value are at least 2 (the default asset value), as that will cause the last event for the 2nd stage to produce a risk value of 1.2.
+- The example priority is 3, and the stage reliabilities are 1, 5, and 10. With an explicitly configured asset value of 2, stage 2 produces integer risk 1. Addresses outside the asset configuration have value 0.
+- The generated `protocol: "TCP/IP"` condition requires that exact event protocol. Change it to the source's actual protocol or `ANY`; `TCP/IP` is not a wildcard.
