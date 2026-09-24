@@ -8,15 +8,15 @@ The following table shows the fields of a `Normalized Event`:
 
 | Field   |      Description      |  Mandatory | Usable in Correlation Rules |
 |----------|-------------|------|------|
-| timestamp | The original event timestamp in ISO8601 format, not to be confused with Logstash builtin `@timestamp`. | Yes | No, but this is used to detect out-of-order events and transit time.
-| event_id | UUID for the event, typically generated using [Logstash UUID filter plugin](https://www.elastic.co/guide/en/logstash/current/plugins-filters-uuid.html) if the event doesn't already have one. | Yes | No
+| timestamp | The original event timestamp in ISO8601 format, with a UTC offset, distinct from Logstash `@timestamp`. | Yes | Used for rule timing and order checks; transit time uses the frontend receipt time.
+| event_id | Nonempty unique string for the event; UUID format is not enforced. Typically generated using [Logstash UUID filter plugin](https://www.elastic.co/guide/en/logstash/current/plugins-filters-uuid.html) for normalization; the supplied `80_siem.conf` overwrites any existing ID. | Yes | No
 | title | Description of the event. | Yes | No
 | sensor | String identifier of the device that produces/captures the event. Examples: hostname of the IPS device, firewall, or the processing Logstash node. | Yes | No
 | src_ip | Source IP, should refer to the sender for network communication based events. For host-based events, use the host main IP address if it's available on the event's record, or just use `127.0.0.1`. | Yes | Yes
 | dst_ip |    Destination IP, should refer to the receiver for network communication based events. Host-based events should just use the same address as `src_ip` or `127.0.0.1` |   Yes | Yes
 | protocol |  Network protocol used, such as TCP, UDP, ICMP, etc. | No | Yes
 | src_port | Source port number, typically refers to TCP or UDP ports, but may also be any identifying number like ICMP type number, etc. | No | Yes
-| dst_port | Source port number, typically refers to TCP or UDP ports, but may also be any identifying number like ICMP type number, etc. |  No | Yes
+| dst_port | Destination port number, typically refers to TCP or UDP ports, but may also be any identifying number like ICMP type number, etc. |  No | Yes
 | product | Product-type of the device that generates the event, i.e. firewall, IDS/IPS, etc. | Yes, if `plugin_id` or `plugin_sid` is empty | Yes, in [TaxonomyRule](./directive_and_alarm.md#about-directive-rules)
 | category | The event's category, relative to the product type. For example, if the product type is firewall, event's category maybe `Allowed Traffic`,`Denied Traffic`, `Dropped Traffic`, `Port Scan` etc. | Yes, if `plugin_id` or `plugin_sid` is empty | Yes, in [TaxonomyRule](./directive_and_alarm.md#about-directive-rules)
 | subcategory |  further breakdown of the event's category. For example, if the category is `Code Injection Attack`, subcategory maybe `SQL Injection`, `HTTP Parameter Injection`, etc. | No | Yes, in [TaxonomyRule](./directive_and_alarm.md#about-directive-rules)
@@ -29,6 +29,8 @@ The following table shows the fields of a `Normalized Event`:
 | custom_label3 | A text identifier for an extra/custom field to use for correlation rules. | No | No
 | custom_data3 |  The text content for the extra/custom field defined by `custom_label3`. | No | Yes
 
+The authoritative structure and validation are in [event.rs](../server/src/event.rs). Addresses may be IPv4 or IPv6. `title`, `sensor`, and `event_id` must be nonempty. Supply either positive `plugin_id` and `plugin_sid`, or nonempty `product` and `category`; both pairs may be present. Numeric fields must be JSON numbers, not numeric strings. Omitted ports default to 0, and omitted optional strings default to empty strings.
+
 ## Creating a Dsiem Plugin
 
 Dsiem plugin can be created automatically from an existing index in Elasticsearch with the help of `dpluger` tool.
@@ -36,18 +38,18 @@ Dsiem plugin can be created automatically from an existing index in Elasticsearc
 > [!IMPORTANT]
 > Dpluger is available inside of `dsiem-tools` zip file, which can be downloaded from Dsiem main repo [Release](https://github.com/defenxor/dsiem/releases) page. For example, the latest Linux version is available from [dsiem-tools_linux_amd64.zip](https://github.com/defenxor/dsiem/releases/latest/download/dsiem-tools_linux_amd64.zip).
 
-The Logstash config file created by `dpluger` can then be used to filter and parse incoming events in order to produce normalized events and, with the help of [`80_siem.conf`](https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/80_siem.conf), send them to Dsiem for further processing.
+The Logstash config file created by `dpluger` can then be used to filter and parse incoming events in order to produce normalized events and, with the help of [`80_siem.conf`](../deployments/docker/conf/logstash/conf.d/80_siem.conf), send them to Dsiem for further processing.
 
 There are two types of Dsiem plugin:
 * SID-based plugin: produces normalized events to be processed later by a directive [`PluginRule`](./directive_and_alarm.md#about-directive-rules)
 * Taxonomy-based plugin: produces normalized events for directive [`TaxonomyRule`](./directive_and_alarm.md#about-directive-rules).
 
-Examples on how to create them with `dpluger` assistance are given below.
+The examples below describe the external `dpluger` workflow. Check `dpluger --help` and each subcommand's help for your installed version; this repository does not contain the generator or verify its output against every Elastic version.
 
 ### Example 1: SID-based Plugin
 Suppose your elasticsearch is located at http://elasticsearch:9200 and there is an index there named `suricata-*` for Suricata IDS that you want to create a plugin for. Here are the steps to do it:
 
-* Download and extract the latest version of `dsiem-tools` from this project release page.
+* Download and extract the latest version of `dsiem-tools` from the original Dsiem repository's release page.
 
 * Create an empty dpluger config file template to use:
   ```shell
@@ -80,7 +82,7 @@ Suppose your elasticsearch is located at http://elasticsearch:9200 and there is 
     }
   }
   ```
-* The next step is to edit that file so the field references and identifiers match with the actual field names in the target Elasticsearch `suricata-*` index. For index generated from Suricata Eve JSON format, which is also used in the [example Docker Compose deployments](https://github.com/defenxor/dsiem-rs/tree/master/deployments/docker), the final config should be something like this:
+* The next step is to edit that file so the field references and identifiers match with the actual field names in the target Elasticsearch `suricata-*` index. For index generated from Suricata Eve JSON format, which is also used in the [example Docker Compose deployments](../deployments/docker), the final config should be something like this:
 
   ```json
   {
@@ -127,7 +129,7 @@ Suppose your elasticsearch is located at http://elasticsearch:9200 and there is 
   Checking existence of field proto... OK
   Logstash conf file created.
   ```
-* The generated Logstash config file (i.e. a Dsiem SIEM plugin) will be  [`70_siem-plugin-suricata.conf`](https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/70_siem-plugin-suricata.conf) located in the current directory.
+* The generated Logstash config file (i.e. a Dsiem SIEM plugin) will be  [`70_siem-plugin-suricata.conf`](../deployments/docker/conf/logstash/conf.d/70_siem-plugin-suricata.conf) located in the current directory.
 To use the plugin, just copy it to Logstash configuration directory and reload Logstash.
 
 ### Example 2: SID-based Plugin with Generated Plugin SID
@@ -163,9 +165,9 @@ But what if the source index doesn't have such field? in that case `dpluger` can
 ```
 Using the above config, `dpluger` will gather uniq entries in `signature` field of `mcafee-nsp-*` index, and generate entries for `plugin_sid` field based that. The following shows an excerpt of the relevant part of the generated Logstash config file that does this:
 
-```yaml
+```text
 translate {
-        field => "%[signature]"
+        field => "[signature]"
         destination => "[plugin_sid]"
         dictionary => {
           "BlueCoat: Blue Coat BCAAA Stack Buffer Overflow Vulnerability" => "1"
@@ -191,7 +193,7 @@ The content of that TSV file will be used as a starting point and lookup table o
 Supply `-t` parameter to `dpluger` to generate a template for a taxonomy-based plugin:
 
 ```shell
-./dpluger create -i firewall-* -t Taxonomy
+./dpluger create -i "firewall-*" -t Taxonomy
 ```
 
 the resulting `dpluger_config.json` file would be:
@@ -245,19 +247,17 @@ if [@metadata][log_type] == "sshd" and [sshd_result]
 
 To embed this directly to the resulting logstash config, you can set the `identifier_block_source` value to the path of `filter.conf`:
 
-```JSON
-...
-"identifier_block_source": "filter.conf",
-...
+```text
+"identifier_block_source": "filter.conf"
 ```
 
 The content of `filter.conf` will fill the `filter` block inside the 1st and 2nd step of the resulting logstash config:
 
 ```YAML
-filter 
+filter
 {
     # embedded from filter.conf
-    if [@metadata][log_type] == "sshd" and [sshd_result] 
+    if [@metadata][log_type] == "sshd" and [sshd_result]
     {
       mutate {
         id => "tag normalizedEvent 10008"
