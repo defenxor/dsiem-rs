@@ -1,47 +1,38 @@
 :modulename: dsiem
-:has-dashboards: true
+:has-dashboards: false
 
-== dsiem module
+== Dsiem alarm module
 
-This is the dsiem module.
+This optional Filebeat module reads the backend's `siem_alarms.json` output and sends alarm snapshots directly to Elasticsearch. The supplied Docker Compose deployments use the separate Filebeat-to-Logstash configuration instead; they do not load this module.
 
-include::../include/what-happens.asciidoc[]
+=== Data mapping
 
-[float]
+The `alarm` fileset decodes each JSON line into `dsiem.alarm`. It maps the alarm title to `message`, risk to `event.risk_score`, and source/destination addresses to their corresponding fields. It parses `created_time` and `update_time` as Unix timestamps and adds threat classification fields.
+
+The ingest pipeline sets the Elasticsearch document `_id` from `event.id`, which the input copies from `alarm_id`. The input drops the alarm's status, tag, and rules. It does not harvest `siem_alarm_events.json` or normalized events.
+
+This route does not reproduce the standard Logstash pipeline's `siem_alarms` alias, original-index lookup, or selective updates that preserve analyst status and tag. Do not use it as a replacement for the standard pipeline when running the bundled Dsiem UI without adapting the storage contract.
+
+=== Configuration
+
+Install the module and its fields into the Filebeat installation, then enable the fileset with paths appropriate to the backend:
+
+[source,yaml]
+----
+- module: dsiem
+  alarm:
+    enabled: true
+    var.paths:
+      - /var/log/dsiem/siem_alarms.json
+----
+
+`var.paths` accepts a list of log paths. The fileset manifest defaults to `/tmp/siem_alarms.json`, with overrides of `/var/log/dsiem/siem_alarms.json` on macOS and `c:/programdata/dsiem/log/siem_alarms.json` on Windows. These are Filebeat input defaults, not the backend's output directory; the backend writes beside its executable under `logs/`.
+
+The surrounding `filebeat-es/filebeat.yml` configures module loading, an Elasticsearch output, and custom template fields. Set its output address and authentication for the deployment. No module dashboard is included.
+
 === Compatibility
 
-TODO: document with what versions of the software is this tested
-
-
-include::../include/running-modules.asciidoc[]
-
-[float]
-=== Example dashboard
-
-This module comes with a sample dashboard. For example:
-
-TODO: include an image of a sample dashboard. If you do not include a dashboard,
-remove this section and set `:has-dashboards: false` at the top of this file.
-
-include::../include/configuring-intro.asciidoc[]
-
-TODO: provide an example configuration
-
-:fileset_ex: {fileset}
-
-include::../include/config-option-intro.asciidoc[]
-
-TODO: document the variables from each fileset. If you're describing a variable
-that's common to other modules, you can reuse shared descriptions by including
-the relevant file. For example:
-
-[float]
-==== `{fileset}` log fileset settings
-
-include::../include/var-paths.asciidoc[]
+The repository does not declare a tested Filebeat version for this optional module. Validate its processor syntax and resulting field mappings with the Filebeat and Elasticsearch versions you intend to deploy. The standard Compose examples pin their separate Filebeat configuration to 7.11.0.
 
 :has-dashboards!:
-
-:fileset_ex!:
-
 :modulename!:
