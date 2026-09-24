@@ -34,7 +34,8 @@ pub fn home() -> Html {
                   </ul>
                 </div>
                 <div class="mb-4">
-                  {"The frontend creates the Dsiem configuration file at startup. HTTP configuration writes can remain disabled. "}
+                  {"The frontend creates the Dsiem configuration file at startup. "}
+                  {"HTTP configuration writes can remain disabled. "}
                   {"The container startup script creates the Elasticsearch configuration file from "}
                   <code>{"DSIEM_WEB_ESURL"}</code> {" and "}<code>{"DSIEM_WEB_KBNURL"}</code>
                   {" environment variables. For a manual installation, create that file yourself."}
