@@ -2,7 +2,7 @@ use yew::prelude::*;
 
 use crate::services::config::{DSIEM_CONFIG_URL, ES_CONFIG_URL};
 
-/// Home page with an article list and a tag list.
+/// Home page with alarm-viewing instructions and configuration links.
 #[function_component(Home)]
 pub fn home() -> Html {
     let location = yew_hooks::use_location();
@@ -13,8 +13,8 @@ pub fn home() -> Html {
         <div class="home-page">
             <div class="container page">
                 <div class="mb-4">
-                  {"This app shows an alarm relation to it's associated rules and events, and provides a way
-                  to update the status and tag of the alarm. This should mainly be opened by clicking on "}<code>
+                  {"This app shows an alarm and its associated rules and events. You can update its status and tag.
+                  Open an alarm by clicking "}<code>
                   { "Dsiem Link" }</code>{" on the Kibana dashboard."}
                 </div>
                 <div class="mb-4">
@@ -34,16 +34,16 @@ pub fn home() -> Html {
                   </ul>
                 </div>
                 <div class="mb-4">
-                  {"Dsiem config file should be created automatically by the frontend node when "}
-                  <code>{"WRITEABLE_CONFIG"}</code> {" environment variable is set to true. "}
-                  {"ES config file should be created automatically by the frontend node based on "}
+                  {"The frontend creates the Dsiem configuration file at startup. "}
+                  {"HTTP configuration writes can remain disabled. "}
+                  {"The container startup script creates the Elasticsearch configuration file from "}
                   <code>{"DSIEM_WEB_ESURL"}</code> {" and "}<code>{"DSIEM_WEB_KBNURL"}</code>
-                  {" environment variables."}
+                  {" environment variables. For a manual installation, create that file yourself."}
                 </div>
                 <div class="mb-4">
                   {"Refer to the example "}
                   <b>
-                    <a href={"https://github.com/defenxor/dsiem/tree/master/deployments/docker"}>
+                    <a href={"https://github.com/defenxor/dsiem-rs/tree/master/deployments/docker"}>
                     {"docker-compose files"}
                     </a>
                   </b>

@@ -7,7 +7,7 @@ default-members = ["server"]
 version = "1.5.2"
 authors = ["Dsiem Authors"]
 description = "OSSIM-style event correlation engine for ELK stack"
-documentation = "https://github.com/defenxor/dsiem/blob/master/docs/README.md"
+documentation = "https://github.com/defenxor/dsiem-rs/blob/master/docs/README.md"
 
 [profile.release]
 opt-level = 3

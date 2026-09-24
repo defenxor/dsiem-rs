@@ -42,8 +42,8 @@ pub async fn save(test_env: bool, directive_id: u64, source: Vec<Arc<Backlog>>) 
     for b in source.into_iter() {
         let saveable = Backlog::saveable_version(b);
 
-        // if extra sanity check for occurrence & stage are needed, they should be done
-        // here currently such tests are only during loading in
+        // if extra sanity check for occurrence & stage are needed, they should
+        // be done here currently such tests are only during loading in
         // Backlog::runable_version()
 
         backlogs.push(saveable);

@@ -235,8 +235,9 @@ impl Backlog {
                 backlog.title = backlog.title.replace("DST_IP", &dst).into();
             }
 
-            // warning: we can't simply clone the directive rules and assign it to backlog
-            // because the Arc fields will point to the same memory location
+            // warning: we can't simply clone the directive rules and assign it
+            // to backlog because the Arc fields will point to the
+            // same memory location
             for r in o.directive.rules.clone() {
                 backlog.rules.push(r.reset_arc_fields());
             }
@@ -526,8 +527,8 @@ impl Backlog {
                         continue;
                     }
                     // event match previous rule, processing it further here
-                    // just add the event to the stage, no need to process other steps in
-                    // processMatchedEvent
+                    // just add the event to the stage, no need to process other
+                    // steps in processMatchedEvent
                     debug!(backlog.id = self.id, event.id, r.stage, "previous rule match");
                     self.append_and_write_event(event, Some(r.stage))?;
                     // also update alarm to sync any changes to customData
@@ -544,7 +545,8 @@ impl Backlog {
             return Ok(());
         }
 
-        // if stickydiff is set, there must be added member to sdiff_string or sdiff_int
+        // if stickydiff is set, there must be added member to sdiff_string or
+        // sdiff_int
         if !curr_rule.sticky_different.is_empty() {
             let reader = curr_rule.sticky_diffdata.lock();
             if n_string == reader.sdiff_string.len() && n_int == reader.sdiff_int.len() {
@@ -562,7 +564,8 @@ impl Backlog {
         }
 
         if !self.is_time_in_order(&event.timestamp) {
-            // event is out of order, discard but prevent it from triggering new backlog
+            // event is out of order, discard but prevent it from triggering new
+            // backlog
             warn!("discarded out of order event");
             return Ok(());
         }
@@ -648,8 +651,8 @@ impl Backlog {
     async fn process_matched_event(&self, event: &NormalizedEvent) -> Result<()> {
         self.append_and_write_event(event, None)?;
 
-        // set rule's first_event if there's none yet, and set rule's start_time based
-        // on it.
+        // set rule's first_event if there's none yet, and set rule's start_time
+        // based on it.
         let current_rule = self.current_rule()?;
         if !current_rule.is_first_event_set() {
             debug!("setting first event for stage {}", self.current_stage.load(Relaxed));
@@ -657,8 +660,8 @@ impl Backlog {
             self.set_rule_starttime(event.timestamp)?;
         }
 
-        // exit early if the newly added event hasnt caused events_count == occurrence
-        // for the current stage
+        // exit early if the newly added event hasnt caused events_count ==
+        // occurrence for the current stage
         if !self.is_stage_reach_max_event_count()? {
             debug!("stage max event count not yet reached");
             return Ok(());
@@ -675,7 +678,8 @@ impl Backlog {
         }
 
         debug!(backlog.id = self.id, "checking if this is the last stage");
-        // if it causes the last stage to reach events_count == occurrence, delete it
+        // if it causes the last stage to reach events_count == occurrence,
+        // delete it
         if self.is_last_stage() {
             info!("reached max stage and occurrence, deleting backlog");
             self.update_alarm(true).await?;
@@ -687,10 +691,11 @@ impl Backlog {
         debug!("stage max event count reached, increasing stage and updating alarm");
         // increase stage.
         if self.increase_stage() {
-            // set rule startTime for the new stage, this will reset/be-updated when the new
-            // stage receives its first matching event above.
-            // for non-stage 1, we set it here so expiration time can be calculated without
-            // depending on whether the new stage will receive a matching event or not.
+            // set rule startTime for the new stage, this will reset/be-updated
+            // when the new stage receives its first matching event
+            // above. for non-stage 1, we set it here so expiration
+            // time can be calculated without depending on whether
+            // the new stage will receive a matching event or not.
             self.set_rule_starttime(event.timestamp)?;
             // stage Increased, update alarm to publish new stage startTime
             self.update_alarm(true).await?;
@@ -911,8 +916,8 @@ impl Backlog {
     }
 
     fn to_alarm_json(&self) -> Result<String> {
-        // this replaces the ref to digit in rules with the actual referred value
-        // before the alarm is serialized to json
+        // this replaces the ref to digit in rules with the actual referred
+        // value before the alarm is serialized to json
 
         let mut rules = vec![];
 
@@ -1089,16 +1094,16 @@ mod test {
             assert_eq!(*rule.sticky_diffdata.lock(), stickydiff_data);
         }
 
-        // should throw error if the saved backlog and the directive have the same ID
-        // but different title
+        // should throw error if the saved backlog and the directive have the
+        // same ID but different title
         let b = Backlog::new(&get_opt()).unwrap();
         let mut saveable = Backlog::saveable_version(Arc::new(b));
         saveable.title = "foo".into();
         let res = Backlog::runnable_version(get_opt(), saveable);
         assert!(res.unwrap_err().to_string().contains("different title detected"));
 
-        // should throw error if all rules in the saved backlog already have a status
-        // (i.e. finished or timeout)
+        // should throw error if all rules in the saved backlog already have a
+        // status (i.e. finished or timeout)
         let b = Backlog::new(&get_opt()).unwrap();
         let mut saveable = Backlog::saveable_version(Arc::new(b));
         for rule in saveable.rules.iter_mut() {
@@ -1181,7 +1186,8 @@ mod test {
             _ = cloned.start(event_rx, Some(evt_cloned), resptime_tx, 1).await;
         });
 
-        // these matching event should increase level from 2 to 3 to 4, and raise risk
+        // these matching event should increase level from 2 to 3 to 4, and
+        // raise risk
         evt.id = "2".to_string();
         evt.src_ip = "0.0.0.0".parse().unwrap();
         evt.dst_ip = "0.0.0.0".parse().unwrap();
@@ -1228,11 +1234,13 @@ mod test {
         let asset = Arc::new(NetworkAssets::new(true, Some(vec!["assets".to_string()])).unwrap());
 
         let mut intel_plugin = crate::intel::load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap();
-        intel_plugin.checkers = Arc::new(vec![]); // disable, we're not testing this
+        intel_plugin.checkers = Arc::new(vec![]); // disable, we're not testing
+                                                  // this
         let intels = Arc::new(intel_plugin);
 
         let mut vuln_plugin = crate::vuln::load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap();
-        vuln_plugin.checkers = Arc::new(vec![]); // disable, we're not testing this
+        vuln_plugin.checkers = Arc::new(vec![]); // disable, we're not testing
+                                                 // this
         let vulns = Arc::new(vuln_plugin);
 
         let (mgr_delete_tx, _) = mpsc::channel::<()>(128);
@@ -1294,8 +1302,8 @@ mod test {
         event_tx.send(evt.clone()).unwrap();
         sleep(Duration::from_millis(1000)).await;
         assert!(logs_contain("event doesn't match"));
-        // these matching event should be captured by first rule, but only when there's
-        // uniq SRC_PORT (sticky_different)
+        // these matching event should be captured by first rule, but only when
+        // there's uniq SRC_PORT (sticky_different)
 
         // this should increase risk to 1 (Low)
         evt.plugin_sid = 2;

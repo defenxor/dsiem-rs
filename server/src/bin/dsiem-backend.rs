@@ -66,9 +66,8 @@ struct ServeArgs {
     /// Unique node name to use when deployed in cluster mode
     #[arg(short('n'), long = "node", env = "DSIEM_NODE", value_name = "string")]
     node: String,
-    /// Min. alarm lifetime in minutes. Backlog won't expire sooner than this
-    /// regardless rule timeouts. This is to support processing of delayed
-    /// events
+    /// Extra time in minutes added to the current rule expiration deadline.
+    /// Does not delay removal after the final stage completes.
     #[arg(short('l'), long, env = "DSIEM_MINALARMLIFETIME", value_name = "minutes", default_value_t = 0)]
     min_alarm_lifetime: u16,
     /// Alarm status to use, the first one will be assigned to new alarms
@@ -107,7 +106,8 @@ struct ServeArgs {
     /// Nats address to use for frontend - backend communication
     #[arg(long = "msq", env = "DSIEM_MSQ", value_name = "string", default_value = "nats://dsiem-nats:4222")]
     msq: String,
-    /// Cache expiration time in minutes for intel and vuln query results
+    /// Compatibility option; currently unused. Lookup caches have fixed
+    /// 30-minute TTL and 5-minute idle expiration settings.
     #[arg(short('c'), long = "cache", env = "DSIEM_CACHEDURATION", value_name = "minutes", default_value_t = 10)]
     cache_duration: u8,
     /// Length of queue for unprocessed events, rounded to the next power of 2.
@@ -317,9 +317,9 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
     let (mut log_writer, log_tx) = LogWriter::new(test_env)?;
     let cancel_tx_clone = cancel_tx.clone();
     let _handle_filewriter = thread::spawn(move || {
-        // this could exit because the channel is closed by shutdown process initiated
-        // from other threads, or fatal file access/write errors. Either way,
-        // we're exiting the process.
+        // this could exit because the channel is closed by shutdown process
+        // initiated from other threads, or fatal file access/write
+        // errors. Either way, we're exiting the process.
         _ = log_writer.listener();
         _ = cancel_tx_clone.send(());
     });
@@ -386,8 +386,8 @@ fn serve(listen: bool, require_logging: bool, args: Cli) -> Result<()> {
         // manager or spawner will be closed first by cancel signal,
         // wherever it comes from
         _ = handle_manager.join();
-        // cancel signal will also close messenger, which will close recv() in filter
-        // and causing it to initiate ordely exit
+        // cancel signal will also close messenger, which will close recv() in
+        // filter and causing it to initiate ordely exit
         if let Ok(Err(e)) = handle_filter.join() {
             return Err(e);
         }

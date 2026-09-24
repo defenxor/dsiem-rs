@@ -12,7 +12,8 @@ use dsiem::{
 use nanoid::nanoid;
 
 const MAX_EVENT_FOR_A_STAGE: usize = 100;
-const IP_IN_HOME_NET: &str = "192.168.0.1"; // must match an entry in assets.json
+const IP_IN_HOME_NET: &str = "192.168.0.1"; // must match an entry in
+                                            // assets.json
 
 pub fn generate_normalized_event(rules: &[DirectiveRule]) -> Vec<NormalizedEvent> {
     let mut res = vec![];

@@ -1,164 +1,52 @@
-# Managing Performance
+# Managing performance
 
-Dsiem is designed to scale horizontally, which means we can add more nodes and distribute correlation rule directives among them to cope with increasing demands.
+Dsiem uses dedicated filter threads followed by asynchronous backlog managers. Monitor both parts of that path before changing resource allocation. Slow enrichment endpoints can also delay backlog processing.
 
-In practice however, hardware and network resources are often limited, and we will have to work with what's available at hand.
+## Filter allocation
 
-This page gives several suggestions on how to deploy Dsiem with performance consideration in mind. In addition, tips on how to detect performance issue are also given at [the end of this page](#Detecting-performance-issue).
+The [allocator](../server/src/allocator.rs) estimates filter capacity using a constant of 100 million quick checks per thread per second, based on a cached benchmark on an i7-12700F. It combines the directive count and backend `max_eps` to choose the allocation. This is a sizing heuristic, not a measured throughput guarantee for your deployment.
 
-## Evaluate the most likely performance bottleneck
+For example, the estimate gives one thread for 20,000 directives at 5,000 events per second. The process requires at least two available logical CPUs and reserves at least one for Tokio. If the calculated filter allocation exceeds available parallelism, startup fails.
 
-The first thing to know is that for each incoming event, Dsiem will quickly compare several key fields (like `Plugin ID` and `Plugin SID`) against all directives to determine if there's a match. Only matching events will be sent afterwards to the associated directives for further processing. Because this initial quick comparison is done to _all_ events against _all_ directives, it becomes a main spot for potential performance bottleneck and should therefore be allocated with enough CPU resources.
+`DSIEM_FILTER_THREADS` or `--filter-threads` overrides the estimate. Leave at least one CPU for Tokio, and do not request more filter threads than there are directives. Measure actual queue growth and processing time after each change.
 
-In our tests, with cache in-front a single CPU thread was able to perform around 100 million quick filtering checks per second, so the rate of incoming events/sec times the number of directives should not exceed that number.
+## Manager loading
 
-$$ {100,000,000} × {n_{cpu}} = {n_{eps}} × {n_{directive}} $$
+All directive definitions are loaded and validated at startup. By default, backlog managers are started only when an event passes their directive's quick check. An idle manager with no backlogs is unloaded after `--idle-directives-timeout` minutes (default 10, minimum 5).
 
-For example suppose you dedicate 1 CPU thread to perform quick checks on a node that is hosting 20,000 directives. We can calculate the maximum events/sec rate before the system may start lagging behind:
+`--preload-all-directives` starts all managers immediately and keeps them loaded. This uses more memory but avoids repeated manager startup. Compare the modes with your directive set and event stream before selecting one for a throughput target.
 
-$$ {n_{eps}} = \frac{{100,000,000} × 1}{20,000} = 5,000$$
+## Queues and backpressure
 
-> [!NOTE]
-> By default, Dsiem uses the above calculation to determine the number of CPU threads to allocate for quick checks. 
-> You can override this by specifying `DSIEM_FILTER_THREADS` environment variable or `--filter-threads` startup parameter.
+Both binaries accept `--max_queue`. Defaults are 25,000 for the frontend and 32,768 for the backend. Tokio broadcast channels round capacity to a power of two. Other channels and the NATS subscription have their own capacities.
 
-If that rate limit is persistently exceeded, the queue will start filling up and eventually events will be dropped. In such cases, first consider increasing the number of threads allocated so that directives are processed in parallel. If that's not feasible, then consider applying one of, or a combination of, reconfigurations outlined below.
+Setting `max_queue=0` selects a finite capacity of 524,288 events for compatibility with the original implementation. It also selects the backend manager's longer wait mode. Prefer an explicit capacity sized for the workload; zero is not an unlimited queue or a lossless-delivery setting.
 
-## Preload all directives at startup if necessary
+When a broadcast receiver falls behind, it skips older retained events and reports lag. NATS can also lose messages for slow subscribers. Increasing a queue can absorb a burst, but cannot fix sustained processing demand above capacity.
 
-By default, Dsiem will only load backlog manager for a directive whenever there's a matching event for its rules. Backlog managers without active backlog will also be unloaded after a period of time controlled by `--idle-directives-timeout` option. This allows us to assign many more directives to a node without allocating more memory unless there's an actual need for it.
+Backlogs compare an event's frontend receipt time with the current time. If delay exceeds backend `--max_delay` (default 180 seconds), they send an overload signal through NATS. Frontends adjust their acceptance rate between `min_eps` and `max_eps` and return HTTP 429 when the limiter has no capacity. This checks processing transit time, not the original event timestamp.
 
-That dynamic loading/unloading of backlog managers however, adds variability to their reaction time, and requires more complexity (hence CPU time) than just pre-loading all of them at startup. Pre-loading at startup should ensure stable reaction time and maybe able to sustain constant high EPS environment better than the dynamic alternative, at the cost of more memory allocation.
+`max_delay=0` disables these backlog overload signals; it does not disable the frontend's configured rate limiter. Set positive frontend limits with `min_eps <= max_eps`. Backend `max_eps` is an expected rate used for thread allocation and processing wait budgets, rather than a second HTTP acceptance limit.
 
-Dsiem backend node supports both mode of operation controlled through `--preload-all-directives` startup flag. In most cases the default mode should be used, unless there's evidence like unstable queue condition, or a business requirement like an SLA, that justifies the extra memory allocations of preloading all backlog managers at startup.
+Backpressure reduces intake but does not guarantee that every event is processed, or that concurrent processing preserves input order. Configure producer retries and buffering separately. Do not use these queues as the only durable record of security events.
 
-For concrete example, here's resident memory usage of two backend nodes both serving identical 23,500 directives. The node on the second line uses `--preload-all-directives true` and is using more than double the memory used by the first node.
+## Reducing work
 
-```shell
-ps -axo rss,cmd | grep -v grep | grep dsiem-backend
-400736 /dsiem/dsiem-backend serve
-1196992 /dsiem/dsiem-backend serve
-```
+- Send normalized events to Dsiem only when its directives use them. Keep the original logs in the storage pipeline as needed.
+- Split exclusive directive sets across backends on different hardware when a single host lacks capacity. Every backend still receives the full NATS event stream.
+- Investigate slow or unreachable enrichment APIs when backlog processing time rises.
+- Keep the main Elasticsearch ingestion path separate from Dsiem delivery if correlation downtime must not block log storage. The shipped single-pipeline example does not provide that isolation.
 
-## Selectively ingest logs from Logstash
+See [advanced deployment](adv_deployment.md) for backend assignments. The external `dpluger` tool has pipeline-generation options; check the installed tool's help before using them.
 
-It makes no sense to send a log to Dsiem if you don't have correlation rules for it.
+## Detecting performance issues
 
-You can avoid sending unnecessary logs by reconfiguring the Logstash filter that generates the normalized events. Similar effect can also be achieved by supplying an appropriate filter in `dplugin_config.json` before running `dpluger run` command to create the Logstash plugin.
-
-## Distribute directives to multiple nodes located on different hardware
-
-This is as straightforward horizontal scaling solution. By distributing the directives to multiple nodes each running on a different hardware, the system will have more processing power to execute the same workload in parallel.
-
-Note that for Dsiem in this repo, distributing directives to multiple dsiem backend nodes running on the same hardware most likely _will not_ achieve higher performance compared to just hosting all of those directives in a single node. A single backend node is capable of utilizing all of the CPU cores assigned to it, so multiple nodes will only introduce extra overhead without significant gain.
-
-## Prioritise directives and allocate resources accordingly
-
-Directives are not created equal. Directives that detect more severe consequences should be given higher priority and should receive more allocation compared to other directives.
-
-You can treat directives differently by using a separate set of nodes (both frontend and backend) for each class of directives, and defining a separate overload coping strategy for each of them.
-
-Dsiem offers two such strategies to select from:
-
-1. Use a short queue length and discard new events when that queue is full
-
-   The advantages of this strategy are:
-   - Events that *do* get processed will have a recent timestamp.
-   - Backend nodes will have a relatively constant and lower resource usage.
-   - NATS, Logstash, and frontend nodes do not have to adapt to backend nodes condition.
-
-   The obvious (and rather severe) disadvantage of this is Dsiem may skip processing events from time to time.
-
-> [!NOTE]
-> Use this strategy by setting `max_queue` to a number higher than 0, and `max_delay` to 0.
-> 
-> The fixed queue length then will be set to `max_queue`, and `max_delay` = 0 will prevent frontend from throttling incoming events.
-
-
-2. Use a long queue and auto-adjust frontend ingestion rate (events/sec) to apply back-pressure to Logstash
-
-   In this case whenever Dsiem backend nodes detect an event that has a timestamp older than the configured threshold, they will instruct frontends to reduce the rate of incoming events from Logstash. Frontends will gradually increase its ingestion rate again once the backends no longer report overload condition.
-
-   Advantage of this strategy is that eventually all events will be processed in order.
-
-   The disadvantages are:
-    - There could be processing delays from time to time.
-    - The processing delays may never go away if the log sources never reduce their output rate.
-    - Sustained reduction of delivery rate from Logstash to frontends will cause Logstash to overflow its queue capacity, and depending on how it's configured, Logstash may end up stop receiving incoming events from its input. Using Logstash persistent queue backed by a large amount of storage space will not help either — in fact that may only worsen the processing delay issue.
-
-> [!NOTE]
-> Use this strategy by setting `max_queue` to 0, and `max_delay` to a number higher than 0. The queue length will  then be set to 512k events, and `max_delay` (seconds) will be used by backend to detect processing delay and report this condition to frontend, which will then apply back-pressure to Logstash.
-> 
-> _Processing delay_ occurs when the duration between the time that _an event was received by frontend_ to the time when _that event is processed by a directive_, is greater than `max_delay`.
-
-Now, for instance suppose that in a limited resource environment, you have 100 critical directives and 1000 lower priority directives both evaluating the same sources of logs. You want the critical directives to be applied to all events at all times, and to have a maximum processing delays of 5 minutes. In exchange for that, you're willing to let the lower priority directives occasionally skip events, as long as the alarms that they do manage to produce are based on recent enough events, which will make them at least relevant and still actionable.
-
-Given that scenario, you can use the following strategy to make the best out of the situation:
-
-- Use unbounded queue and Dsiem EPS rate auto-adjustment (with threshold set to 5 minutes delay) on a set of nodes that host the 100 critical directives. Make sure that the nodes have enough hardware resources allocated to cope with normal ingestion rate, so that the auto-adjustment will only be triggered sparingly during a temporary spike and will not last for long. 
-At Logstash end, use persistent queue on the pipeline with enough capacity to prevent it from blocking its input during reduced output rate to Dsiem frontend. This last bit isn't necessary if the input is Filebeat, or similar producer that doesn't discard events when they can't send to Logstash.
-
-- Use a short length queue on a set of nodes that host the lower priority directives. They can run on the hardware that aren't being used by the nodes hosting critical directives.
-
-## Shield the main Logstash ingestion pipeline
-
-For production use, it's important to make sure that any Dsiem performance issues or downtime will not affect the main Logstash ingestion pipeline to Elasticsearch.
-
-This can be implemented using Logstash [pipeline-to-pipeline](https://www.elastic.co/guide/en/logstash/current/pipeline-to-pipeline.html) feature or by running a cascade of Logstash instances configured in a certain way. To assist in this, `dpluger run` has a `--usePipeline` flag that will create plugins in a format that is more suitable for multiple pipeline configuration.
-
-## Detecting performance issue
-
-Dsiem regularly prints out information that can be used to detect performance-related issues.
-
-The following shows an example of a node with a fixed length queue having problem keeping up with the inbound ingestion rate:
+Enable JSON diagnostic logs with `DSIEM_JSON=true`, then inspect watchdog reports and lag messages:
 
 ```shell
-docker logs dsiem-backend -f --since=5m | jq --unbuffered -c '.fields' | grep -E '(watchdog|lagged)'
-
-{"message":"watchdog report","eps":1636.36,"queue_length":8733,"avg_proc_time_ms":0.035,"ttl_directives":5001,"active_directives":70,"backlogs":284,"timedout_backlogs":0}
-{"message":"watchdog report","eps":1571.43,"queue_length":18530,"avg_proc_time_ms":0.037,"ttl_directives":5001,"active_directives":70,"backlogs":290,"timedout_backlogs":0}
-{"message":"watchdog report","eps":1548.39,"queue_length":28382,"avg_proc_time_ms":0.039,"ttl_directives":5001,"active_directives":70,"backlogs":295,"timedout_backlogs":0}
-{"message":"filtering lagged and skipped 2 events"}
-{"message":"filtering lagged and skipped 1 events"}
-{"message":"filtering lagged and skipped 1 events"}
-{"message":"filtering lagged and skipped 2 events"}
-
+docker logs -f dsiem-backend --since=5m | jq --unbuffered -c 'select(.target == "dsiem::watchdog" or (.fields.message // "" | contains("lagged")))'
 ```
 
-Those log lines show the following:
-- The queue length keeps rising until it's full, and events are skipped (not processed). This is the **_most important_** metric to evaluate Dsiem backend node performance issues.
-- Average processing time stays low around 0.03 ms for the configured `max_eps` parameter of 1000 events/sec (or 1ms max. processing time per event). This parameter is measuring backlog processing time, which for Dsiem in this repo, is _no longer the likely location for bottlenecks_.
-- The system has > 280 active backlogs, all created from just 70 of the 5001 directives defined.
+Watch `queue_length` over time alongside `avg_proc_time_ms`, `directives_active`, `backlogs`, and `backlogs_timedout`. A growing queue indicates that consumers are falling behind. A `filtering lagged and skipped ... events` message confirms loss at that receiver.
 
-Based on the above we can try to relieve the performance bottleneck by:
-- Increasing the number of filtering threads;
-- Moving the rarely used directives to other nodes running on a different hardware.
-
-Both options essentially split the directives processing to more CPU threads, thereby preventing the queue from constantly being filled to its maximum capacity.
-
-Next is an example of a different backend node that's still keeping up with the ingestion rate, but will not be able to if the rate goes up to the configured `max_eps`. Notice the warning message about long processing time.
-
-```json
-{"message":"watchdog report","eps":578.84,"queue_length":132,"avg_proc_time_ms":12.222,"ttl_directives":12434,"active_directives":432,"backlogs":463,"timedout_backlogs":431}
-{"message":"avg. processing time maybe too long to sustain the target 1000 event/sec (or 1.000 ms/event)","avg_proc_time_ms":12.222},
-{"message":"watchdog report","eps":581.19,"queue_length":11,"avg_proc_time_ms":25.3,"ttl_directives":12434,"active_directives":438,"backlogs":469,"timedout_backlogs":437}
-{"message":"avg. processing time maybe too long to sustain the target 1000 event/sec (or 1.000 ms/event)","avg_proc_time_ms":25.3}
-```
-
-As mentioned in the prior example, slow backlog processing is not a likely cause for bottleneck in this dsiem version. Such occurrences are more likely due to configuration/environmental error rather than resource issues. In this particular example, the cause was an enabled-but-unreachable intel and vulnerability plugin API endpoints.
-
-Finally as a comparison, here's an example log output from a node that isn't experiencing performance problem:
-
-```json
-{"message":"watchdog report","eps":1615.38,"queue_length":5,"avg_proc_time_ms":0.023,"ttl_directives":5001,"active_directives":70,"backlogs":552,"timedout_backlogs":0}
-{"message":"watchdog report","eps":1565.22,"queue_length":11,"avg_proc_time_ms":0.025,"ttl_directives":5001,"active_directives":70,"backlogs":580,"timedout_backlogs":0}
-{"message":"watchdog report","eps":1545.45,"queue_length":1,"avg_proc_time_ms":0.028,"ttl_directives":5001,"active_directives":70,"backlogs":601,"timedout_backlogs":0}
-{"message":"watchdog report","eps":1535.07,"queue_length":1,"avg_proc_time_ms":0.03,"ttl_directives":5001,"active_directives":70,"backlogs":615,"timedout_backlogs":0}
-{"message":"watchdog report","eps":1531.58,"queue_length":0,"avg_proc_time_ms":0.031,"ttl_directives":5001,"active_directives":70,"backlogs":621,"timedout_backlogs":0}
-```
-
-Those log lines show that:
-- The queue is almost never used at all. Single event processing time is around 0.02-0.03 ms, still way faster than the configured limit of 1ms (or `max_eps` parameter of 1k/sec).
-- The node is tracking >500 active backlogs created from 70 directives (out of the total 5001 directives defined), and that doesn't negatively affect its performance.
-
-So for this particular node, we can try to increase its utilisation by moving more directives to it, or by increasing its incoming event ingestion rate.
+The watchdog warns when the receive queue is nonempty and average processing time exceeds `1000 / max_eps` milliseconds. `backlogs_timedout` describes manager response waits; it is not a count of rule expirations. Treat the reports as asynchronous measurements, not an exact audit of delivered events. The [telemetry reference](telemetry.md) explains their scope and reset behavior.

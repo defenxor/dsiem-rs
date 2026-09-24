@@ -34,10 +34,11 @@ async fn test_home_page() {
     // formatting)
     let normalized_result = result.replace('\n', " ").replace("  ", " ");
 
-    // Test the core message is present (split into smaller, more reliable parts)
-    assert!(normalized_result.contains("This app shows an alarm relation"));
+    // Test the core message is present (split into smaller, more reliable
+    // parts)
+    assert!(normalized_result.contains("This app shows an alarm and its"));
     assert!(normalized_result.contains("associated rules and events"));
-    assert!(normalized_result.contains("update the status and tag"));
+    assert!(normalized_result.contains("update its status and tag"));
 
     // Test for other key elements
     assert!(normalized_result.contains("Requirements"));

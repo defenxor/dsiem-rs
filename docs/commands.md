@@ -1,71 +1,79 @@
-# Dsiem Command and Tools
+# Commands and configuration
 
-## Usage Information
+This repository builds `dsiem-frontend` and `dsiem-backend`. Each has a `serve` subcommand; there is no standalone mode. Tools such as `dpluger`, `dtester`, and `nesd` come from the [original Dsiem repository](https://github.com/defenxor/dsiem).
 
-All executables and their sub-commands have `-h` or `--help` flag that will outline and describe all available parameters. For example:
-
-```shell
-./dsiem-frontend -h
-Dsiem frontend server
-
-Usage: 
-
-Commands:
-  serve  Start Dsiem frontend server
-  help   Print this message or the help of the given subcommand(s)
-
-Options:
-  -v, --verbosity...  Increase logging verbosity
-      --debug         Enable debug output, for compatibility purpose [env: DSIEM_DEBUG=]
-      --trace         Enable trace output, for compatibility purpose [env: DSIEM_TRACE=]
-  -j, --json          Enable json-lines log output [env: DSIEM_JSON=]
-      --test-env      Testing environment flag
-  -h, --help          Print help (see more with '--help')
-  -V, --version       Print version
-```
+Read the options for the binary you installed:
 
 ```shell
-./dsiem-frontend serve -h
-Start Dsiem frontend server
-
-Usage: 
-
-Options:
-  -a, --ip-address <ip>
-          IP address for the HTTP server to listen on [env: DSIEM_ADDRESS=] [default: 0.0.0.0]
-  -p, --tcp-port <tcp>
-          TCP port for the HTTP server to listen on [env: DSIEM_PORT=] [default: 8080]
-  -n, --node <string>
-          Unique node name to use when deployed in cluster mode [env: DSIEM_NODE=]
-  -e, --max_eps <number>
-          [env: MAX_EPS=] [default: 1000]
-  -i, --min_eps <number>
-          [env: MIN_EPS=] [default: 100]
-      --msq <string>
-          Nats address to use for frontend - backend communication [env: DSIEM_MSQ=] [default: nats://dsiem-nats:4222]
-  -q, --max_queue <events>
-          Length of queue for unprocessed events, setting this to 0 will use 1,000,000 events to emulate unbounded queue [env: DSIEM_MAXQUEUE=] [default: 25000]
-      --writable-config
-          Whether to allow configuration file update through HTTP [env: DSIEM_WRITEABLECONFIG=]
-  -s, --status <comma separated strings>
-          Alarm status to use, the first one will be assigned to new alarms [env: DSIEM_STATUS=] [default: Open,In-Progress,Closed]
-  -t, --tags <comma separated strings>
-          Alarm tags to use, the first one will be assigned to new alarms [env: DSIEM_TAGS=] [default: "Identified Threat,False Positive,Valid Threat,Security Incident"]
-  -h, --help
-          Print help (see more with '--help')
+./dsiem-frontend --help
+./dsiem-frontend serve --help
+./dsiem-backend --help
+./dsiem-backend serve --help
 ```
 
-Each flag can be configured through command line parameter or environment variable. As an example, it is possible to execute `./dsiem-frontend serve` above with `node` set to `dsiem-0` like this:
+`--test-env` selects repository fixtures for development tests and is not a deployment option.
+
+Logging switches belong before `serve`, while server options follow it:
 
 ```shell
-./dsiem-frontend serve --node=dsiem-0
-```
-or
-```shell
-export DSIEM_NODE=dsiem-0
-./dsiem-frontend serve
+./dsiem-frontend --debug --json serve --node dsiem-frontend-0 --msq nats://localhost:4222
+./dsiem-backend --json serve --node dsiem-backend-0 --frontend http://localhost:8080 --msq nats://localhost:4222
 ```
 
-Notice how the environment variable above starts with `DSIEM_` string. The same applies for all parameters, so to configure the `max_eps` flag, you will need to set environment variable `DSIEM_MAXEPS`, and so on.
+`--node` is required on both binaries unless `DSIEM_NODE` is set. Environment variable names are declared explicitly; they cannot always be inferred from a flag's spelling. `DSIEM_MODE` is used by the container launcher to select a binary, not by either binary itself.
 
-We try to provide sensible defaults, so there's no need to supply additional flags unless there's a specific need to override them. Refer to the [Installation](./installation.md) doc for examples on how to start both the frontend and backend dsiem nodes.
+## Shared options
+
+| Option | Environment variable | Default / behavior |
+| --- | --- | --- |
+| `--debug` | `DSIEM_DEBUG` | `false`; debug logging |
+| `--trace` | `DSIEM_TRACE` | `false`; trace logging; debug takes precedence if both are enabled |
+| `-j`, `--json` | `DSIEM_JSON` | `false`; JSON-lines diagnostic logs |
+| `-v`, `--verbosity` | None | Repeat for higher verbosity |
+| `--node` | `DSIEM_NODE` | Required node name |
+| `--msq` | `DSIEM_MSQ` | `nats://dsiem-nats:4222` |
+| `--max_eps` | `DSIEM_MAXEPS` | `1000`; frontend acceptance limit, backend expected rate for sizing and timing |
+| `--max_queue` | `DSIEM_MAXQUEUE` | Frontend: `25000`; backend: `32768` |
+| `--status` | `DSIEM_STATUS` | `Open,In-Progress,Closed` |
+| `--tags` | `DSIEM_TAGS` | `Identified Threat,False Positive,Valid Threat,Security Incident` |
+| `--otel-tracing-enabled` | `DSIEM_OTEL_TRACING_ENABLED` | `false` |
+| `--otel-endpoint` | `DSIEM_OTEL_ENDPOINT` | `http://localhost:4317`; OTLP gRPC |
+
+The frontend writes status/tag choices for the UI. Backends use the first status and tag as defaults for new alarms. Configure both sides consistently.
+
+`max_queue=0` maps to 524,288 in both binaries. Tokio broadcast channels round capacity to a power of two; other queues have their own limits. A zero setting does not create an unlimited queue. See [Managing performance](managing_performance.md).
+
+Boolean switches can be enabled on the command line without a value, for example `--preload-all-directives`. Use their environment variables with `true` or `false` to set them explicitly. In particular, set `DSIEM_RELOAD_BACKLOGS=false` to disable the default restart recovery.
+
+## Frontend options
+
+| Option | Environment variable | Default |
+| --- | --- | --- |
+| `--ip-address` | `DSIEM_ADDRESS` | `0.0.0.0` |
+| `--tcp-port` | `DSIEM_PORT` | `8080` |
+| `--min_eps` | `DSIEM_MINEPS` | `100` |
+| `--writable-config` | `DSIEM_WRITEABLECONFIG` | `false`; enables HTTP configuration upload/deletion |
+
+Use positive frontend limits with `min_eps <= max_eps`. Although the limiter constructor treats zero as disabled, the background adjustment task currently requires an initialized limiter. Use a positive backend `max_eps` too; backend allocation and wait-time calculations depend on it.
+
+## Backend options
+
+| Option | Environment variable | Default / behavior |
+| --- | --- | --- |
+| `--frontend` | `DSIEM_FRONTEND` | `http://frontend:8080`; HTTP URL used to download configuration |
+| `--min-alarm-lifetime` | `DSIEM_MINALARMLIFETIME` | `0` minutes; adds time to the current rule's expiration deadline |
+| `--med_risk_min` | `DSIEM_MEDRISKMIN` | `3` |
+| `--med_risk_max` | `DSIEM_MEDRISKMAX` | `6` |
+| `--cache` | `DSIEM_CACHEDURATION` | Accepted with default `10`, but currently not used by the lookup caches |
+| `--hold_duration` | `DSIEM_HOLDDURATION` | `10` seconds before clearing an overload signal |
+| `--max_delay` | `DSIEM_MAXDELAY` | `180` seconds; `0` disables backlog delay signaling |
+| `--intel_private_ip` | `DSIEM_INTELPRIVATEIP` | `false`; include non-global IPs in intel lookups when enabled |
+| `--reload-backlogs` | `DSIEM_RELOAD_BACKLOGS` | `true`; save and restore backlogs across graceful restart |
+| `--otel-metrics-enabled` | `DSIEM_OTEL_METRICS_ENABLED` | `false` |
+| `--filter-threads` | `DSIEM_FILTER_THREADS` | `0`; calculate allocation automatically |
+| `--preload-all-directives` | `DSIEM_PRELOAD_DIRECTIVES` | `false`; start all backlog managers at startup |
+| `--idle-directives-timeout` | `DSIEM_DIRECTIVES_IDLE_TIMEOUT_MINUTES` | `10` minutes; minimum `5`; applies to on-demand managers |
+
+Lookup caches are currently configured in code with a 30-minute time-to-live and a 5-minute time-to-idle. See [lookup plugins](ti_vuln_plugins.md).
+
+The authoritative declarations are in [dsiem-frontend.rs](../server/src/bin/dsiem-frontend.rs) and [dsiem-backend.rs](../server/src/bin/dsiem-backend.rs). Shared runtime transformations are in [cmd_utils.rs](../server/src/cmd_utils.rs).

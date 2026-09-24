@@ -125,7 +125,8 @@ mod test {
     async fn test_vuln() {
         let vulns = load_vuln(true, Some(vec!["intel_vuln".to_string()])).unwrap();
         debug!("vulns: {:?}", vulns);
-        assert!(vulns.vuln_sources.len() == 1); // wise, change this if there's anything else
+        assert!(vulns.vuln_sources.len() == 1); // wise, change this if there's
+                                                // anything else
         let mut set = HashSet::new();
         let ip1: IpAddr = "192.168.0.1".parse().unwrap();
         let port1 = 80;

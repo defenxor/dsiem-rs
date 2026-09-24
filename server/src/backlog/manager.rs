@@ -67,8 +67,8 @@ impl BacklogManager {
         // this channel is a one-to-many channel between backlog manager and its
         // backlogs there's no need for large capacity since there's already a
         // configurable queue in upstream the size of this channel also linearly
-        // affects the number of directives that can be load given the same memory
-        // resources
+        // affects the number of directives that can be load given the same
+        // memory resources
 
         let (downstream_tx, _) = broadcast::channel(BACKLOGMGR_DOWNSTREAM_QUEUE_SIZE);
         let (delete_tx, delete_rx) = mpsc::channel::<()>(128);
@@ -144,8 +144,8 @@ impl BacklogManager {
 
     pub async fn start(&self, ready_tx: oneshot::Sender<()>) -> Result<()> {
         // lock the rx channel asap
-        // if this fails, it means another instance is already running and we should
-        // abort
+        // if this fails, it means another instance is already running and we
+        // should abort
         let mut upstream_rx = self.upstream_rx.try_lock().inspect_err(|_e| {
             error!(
                 directive.id = self.id,
@@ -181,8 +181,8 @@ impl BacklogManager {
 
         let mut delete_rx = self.delete_rx.lock().await;
 
-        // if the option is set, activate idle_timer to exit the manager thread when
-        // there's no backlog after the specified minutes
+        // if the option is set, activate idle_timer to exit the manager thread
+        // when there's no backlog after the specified minutes
         let (mut checker, mut idle_timeout) = if let Some(reg) = self.option.lazy_loader.as_ref() {
             debug!(directive.id = self.id, "setting timers for idle timer checks");
             reg.cache.insert(self.id, ());
@@ -398,7 +398,8 @@ impl BacklogManager {
     }
 
     fn new_backlog(&self, event: &NormalizedEvent) -> Result<Option<Backlog>> {
-        // returns error only on fatal condition, non-fatal should return Ok(None)
+        // returns error only on fatal condition, non-fatal should return
+        // Ok(None)
         let first_rule = self
             .option
             .backlog_option

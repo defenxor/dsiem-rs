@@ -78,7 +78,8 @@ impl LogWriter {
                 info!("exiting log writer thread");
             })?;
             if let Err(e) = self.write(&msg) {
-                // this also happens on first time file creation, so not always unexpected
+                // this also happens on first time file creation, so not always
+                // unexpected
                 warn!("log writer error: {}, will try to re-create/open it", e);
                 let file = LogWriter::init_file(&self.log_dir, &msg.file_type.to_string()).map_err(|e| {
                     error!("cannot initialize {}: {}", &msg.file_type, e);

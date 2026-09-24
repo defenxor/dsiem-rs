@@ -61,8 +61,8 @@ pub fn targets_and_spawner_from_directives(
     };
 
     for directive in directives.iter() {
-        // this is a one-to-one channel between manager filter thread and backlog
-        // managers
+        // this is a one-to-one channel between manager filter thread and
+        // backlog managers
         let (event_tx, event_rx) = mpsc::channel::<NormalizedEvent>(opt.load_param.limit_cap);
 
         let rx = Arc::new(Mutex::new(event_rx));

@@ -82,7 +82,7 @@ struct ServeArgs {
     #[arg(long = "msq", env = "DSIEM_MSQ", value_name = "string", default_value = "nats://dsiem-nats:4222")]
     msq: String,
     /// Length of queue for unprocessed events, setting this to 0 will use
-    /// 1,000,000 events to emulate unbounded queue
+    /// 524,288 events for compatibility; the queue remains bounded
     #[arg(short('q'), long = "max_queue", env = "DSIEM_MAXQUEUE", value_name = "events", default_value_t = 25000)]
     max_queue: usize,
     /// Whether to allow configuration file update through HTTP

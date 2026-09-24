@@ -134,7 +134,8 @@ mod test {
         let intels = load_intel(true, Some(vec!["intel_vuln".to_string()])).unwrap();
         // uncommend the struct Debug impl and struct member var to see the
         // intel_sources debug!("intels: {:?}", intels);
-        assert!(intels.checkers.len() == 1); // wise, change this if there's anything else
+        assert!(intels.checkers.len() == 1); // wise, change this if there's
+                                             // anything else
         let mut set = HashSet::new();
         let ip1: IpAddr = "192.168.0.1".parse().unwrap();
         let ip2: IpAddr = "1.0.0.1".parse().unwrap();

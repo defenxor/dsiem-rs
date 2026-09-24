@@ -1,36 +1,33 @@
-# filter-comparison
+# Filter comparison
 
-This provides a way to easily evaluate the performance difference between using rayon vs multiple dedicated threads to execute the hot-code path where events are checked against all directive rules.
+This separate Cargo workspace compares Rayon with dedicated threads for directive quick checks. It starts an HTTP listener at `127.0.0.1:6667` and logs queue length and matching-directive counts. It does not run backlogs or create alarms. Performance depends on the supplied directives, events, and hardware.
 
-At the time of writing, dedicated threads are more performant than rayon for dsiem specific use case, and so it is the one used in directive manager and rule.
+## Build and configure
 
-## Usage
+From the repository root:
 
-Activate rayon by setting the environment variable `USE_RAYON` to `true`, or set it to `false` or unset to use dedicated threads.
+```shell
+cargo build --locked --release --manifest-path scripts/filter-comparison/Cargo.toml
+mkdir -p scripts/filter-comparison/target/release/configs
+cp configs/directives_dsiem-backend-0_testing1.json scripts/filter-comparison/target/release/configs/directives_testing.json
+```
 
-Other environment variables that can be set are:
-- `RAYON_THREAD_POOL_SIZE` to set the number of threads used by rayon
-- `DIRECTIVES_PER_THREAD` to set the number of directives processed by each dedicated thread
+Use a larger directive set to measure sustained filtering work. Configuration is loaded from `configs/` beside the executable and filenames must match `directives_*.json`. A file named only `directive.json` is not loaded. Each directive must pass the server's normal validation.
 
-After setting the environment variables:
+If you set `CARGO_TARGET_DIR`, use its release directory for both the binary and the adjacent `configs/` directory instead.
 
-- Put a directive.json file with at least a thousand entries in /configs directory, i.e.:
-  
-  ```shell
-  mkdir -p ./target/debug/configs && ln -s /absolute/path/to/directive.json ./target/debug/configs/directive.json
-  ```
+## Run a comparison
 
-- Execute one of the following command to start the server (release version is more performant):
+```shell
+USE_RAYON=false DIRECTIVES_PER_THREAD=5000 scripts/filter-comparison/target/release/filter-comparison
+```
 
-  ```shell
-  cargo run -p filter-comparison
-  cargo build --release -p filter-comparison && ./target/release/filter-comparison
-  ```
+Stop that process before trying Rayon on the same port:
 
-- Send a POST request using [dtester](https://github.com/defenxor/dsiem/tree/master/cmd/dtester):
+```shell
+USE_RAYON=true RAYON_THREAD_POOL_SIZE=4 scripts/filter-comparison/target/release/filter-comparison
+```
 
-  ```shell
-  ./dtester dsiem -d 192.168.0.1 -f <path-to-directive.json-above> -p 6667 -r [eps]
-  ```
+`USE_RAYON` defaults to `false`, `DIRECTIVES_PER_THREAD` to 5000, and `RAYON_THREAD_POOL_SIZE` to 4. Keep thread counts and directives-per-thread positive.
 
-- Try different values for `eps` and compare the performance between rayon and dedicated threads.
+Send normalized event objects to `http://127.0.0.1:6667/events/`. The [external dtester tool](https://github.com/defenxor/dsiem/tree/master/cmd/dtester) can generate a stream from directive data; check its installed help for command syntax. Use the same event stream and directive set for both modes, then compare queue growth and processing behavior.

@@ -181,8 +181,9 @@ impl Filter {
             tracer::store_parent_into_event(&distrib_span, &mut event);
 
             matched_dirs.iter().for_each(|d| {
-                // if preload directive is false, send the directive id to the spawner
-                // do this only when the directive isn't already in the active_ids
+                // if preload directive is false, send the directive id to the
+                // spawner do this only when the directive isn't
+                // already in the active_ids
                 if !preload_directives && !active_ids.contains_key(&d.id) {
                     if let Some(id_tx) = &id_tx {
                         let id_tx = id_tx.clone();
@@ -193,10 +194,12 @@ impl Filter {
                             error!(directive.id = d.id, event.id, "skipping, filter can't send id to spawner: {}", e);
                             return;
                         }
-                        // waiting for the spawner to acknowledge backlog manager creation
+                        // waiting for the spawner to acknowledge backlog
+                        // manager creation
                         debug!(directive.id = d.id, "waiting confirmation from spawner");
                         if let Err(e) = rx.blocking_recv() {
-                            // failure could mean there's already an existing backlog manager for
+                            // failure could mean there's already an existing
+                            // backlog manager for
                             // this directive so we should just try to
                             // send the event anyway
                             warn!(

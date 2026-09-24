@@ -98,16 +98,17 @@ impl Validator {
         }
     }
 
-    // we take in unsigned values from CLI to make sure there's no negative numbers,
-    // and convert them to signed value required by timestamp related APIs.
+    // we take in unsigned values from CLI to make sure there's no negative
+    // numbers, and convert them to signed value required by timestamp
+    // related APIs.
     pub fn max_delay(max_delay: u16) -> Result<i64> {
         chrono::Duration::try_seconds(max_delay.into())
             .and_then(|d| d.num_nanoseconds())
             .ok_or_else(|| anyhow!("invalid value provided"))
     }
 
-    // this cannot fail, clap already ensures the value is within the range of u16
-    // (0-65535)
+    // this cannot fail, clap already ensures the value is within the range of
+    // u16 (0-65535)
     pub fn min_alarm_lifetime(min_alarm_lifetime: u16) -> i64 {
         chrono::Duration::try_minutes(min_alarm_lifetime.into()).unwrap_or_default().num_seconds()
     }

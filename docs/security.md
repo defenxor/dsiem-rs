@@ -1,14 +1,17 @@
-# Notes on Security
+# Security and access control
 
-This section briefly describes how Dsiem design and implementation addresses security concerns.
+The Rust frontend has no built-in authentication or TLS termination. Its HTTP routes receive events, serve configuration files, and serve the web UI. Restrict access through the deployment network or an authenticated reverse proxy.
 
-*If you instead want to report security-sensitive information (like a potential security bug), then please send an email to devs@defenxor.com. The GPG public key for that address can be found [here](https://pgp.mit.edu/pks/lookup?search=devs%40defenxor.com)*.
+Configuration listing and download are enabled by default. `DSIEM_WRITEABLECONFIG=true` also enables HTTP upload and deletion at `/config/:filename`; it does not enable or disable filesystem writes. The frontend always writes `configs/dsiem_config.json` at startup, and the backend downloads configuration into its own `configs/` directory. Both directories therefore need appropriate write permissions. The backend also needs write access to `logs/`.
 
-On the design side, we aimed to:
-* Eliminate attack surface by only implementing the bare minimum functionality, and relying on other infrastructure components to do the rest. For instance, there's no authentication on the web interface because Nginx or other similar frontends can easily be used to provide that with more options and manageability (we personally use TLS with client certificates).
-* Adopt least-privilege principle. Dsiem binary requires no special privileges, and only needs to have read access to its own directory, and write access to logs and configs subdirectories.
-* Provide secure defaults. For instance, Write access to configs directory is only needed by web UI and is therefore turned off by-default.
+The browser reads `/config/dsiem_config.json` and `/ui/assets/config/esconfig.json`, then accesses Elasticsearch directly. It can read alarms and events, update alarm status and tags, and delete alarms and their event links. Protect Elasticsearch and grant the browser's account only the permissions needed for those operations. Restrict Kibana separately.
 
-On the implementation side, we tried to:
-* Check and handle all errors appropriately, and maintain a high test coverage.
-* For the HTTP endpoint part, obviously we check all user inputs and return [418 status code](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/418) as needed.
+If an Elasticsearch username and password are placed in `esconfig.json`, anyone who can read that file can obtain them. Authenticating the page does not hide those credentials from an authorized browser user. The [basic-auth Compose example](../deployments/docker/docker-compose-basic-auth.yml) demonstrates integration and is configured for the built-in `elastic` account when used with a fresh cluster; it is not a least-privilege deployment template.
+
+The [default Compose example](../deployments/docker/docker-compose.yml) disables Elasticsearch security and publishes application ports on the host. It is intended for evaluation on a restricted network.
+
+The Dsiem processes need no packet-capture privileges. The separate Suricata container in the example has network capabilities because it captures traffic.
+
+Input validation is implemented in [server.rs](../server/src/server.rs) and [server/validate.rs](../server/src/server/validate.rs). Validation is not access control: the server returns different HTTP errors for malformed input, invalid events, rate limits, and internal failures.
+
+Report security-sensitive issues to devs@defenxor.com. The project's published GPG key lookup is [here](https://pgp.mit.edu/pks/lookup?search=devs%40defenxor.com).

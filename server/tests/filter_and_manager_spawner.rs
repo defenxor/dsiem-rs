@@ -141,7 +141,8 @@ async fn test_concurrent_events_to_the_same_directive() {
     let l = LazyLoaderConfig::new(directives.len(), 100).with_dirs_idle_timeout_checker_interval_sec(10);
 
     // this function should be the only location where reload_backlogs is true,
-    // otherwise we risk having multiple tests trying to save/load/delete from disk
+    // otherwise we risk having multiple tests trying to save/load/delete from
+    // disk
 
     let manager_handle =
         run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), false, Some(l.clone()))
@@ -160,8 +161,8 @@ async fn test_concurrent_events_to_the_same_directive() {
     };
     event_tx.send(evt.clone()).unwrap();
 
-    // should create backlog 2, because backlog 1 has moved to stage 2 that pegs its
-    // dst_ip to 192.168.0.1
+    // should create backlog 2, because backlog 1 has moved to stage 2 that pegs
+    // its dst_ip to 192.168.0.1
     evt.id = "2".to_string();
     evt.dst_ip = std::net::IpAddr::from_str("192.168.0.2").unwrap();
     event_tx.send(evt.clone()).unwrap();
@@ -408,7 +409,8 @@ async fn test_filter_and_loader_no_preload_dirs() {
     let l = LazyLoaderConfig::new(directives.len(), 100).with_dirs_idle_timeout_checker_interval_sec(10);
 
     // this function should be the only location where reload_backlogs is true,
-    // otherwise we risk having multiple tests trying to save/load/delete from disk
+    // otherwise we risk having multiple tests trying to save/load/delete from
+    // disk
 
     let manager_handle =
         run_manager(directives.clone(), event_tx.clone(), cancel_tx.clone(), report_tx.clone(), true, Some(l.clone()))

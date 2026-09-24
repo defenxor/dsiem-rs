@@ -334,8 +334,8 @@ fn ip_port_check(r: &DirectiveRule, a: &NetworkAssets, e: &NormalizedEvent, mut_
     if r.from == "!HOME_NET" && srcip_in_homenet {
         return false;
     }
-    // covers  r.From == "IP", r.From == "IP1, IP2, !IP3", r.From == CIDR-netaddr,
-    // r.From == "CIDR1, CIDR2, !CIDR3"
+    // covers  r.From == "IP", r.From == "IP1, IP2, !IP3", r.From ==
+    // CIDR-netaddr, r.From == "CIDR1, CIDR2, !CIDR3"
     if r.from != "HOME_NET"
         && r.from != "!HOME_NET"
         && r.from != "ANY"
@@ -352,8 +352,8 @@ fn ip_port_check(r: &DirectiveRule, a: &NetworkAssets, e: &NormalizedEvent, mut_
     if r.to == "!HOME_NET" && dstip_in_homenet {
         return false;
     }
-    // covers  r.From == "IP", r.From == "IP1, IP2, !IP3", r.From == CIDR-netaddr,
-    // r.From == "CIDR1, CIDR2, !CIDR3"
+    // covers  r.From == "IP", r.From == "IP1, IP2, !IP3", r.From ==
+    // CIDR-netaddr, r.From == "CIDR1, CIDR2, !CIDR3"
     if r.to != "HOME_NET"
         && r.to != "!HOME_NET"
         && r.to != "ANY"

@@ -1,34 +1,16 @@
-# Threat Intelligence and Vulnerability Lookup Plugins
+# Threat intelligence and vulnerability lookup plugins
 
-Threat intel plugin enriches content of an alarm whenever it involves a public IP address that is listed in one of the plugin backend databases. The same goes for Vulnerability lookup plugin, but here the search is done based on IP and port combination, and the alarm's IP address to lookup will also include any private IP addresses.
+Lookup plugins add context to alarms. They do not change the risk score. The Rust backend currently includes Wise for IP intelligence and Nesd for vulnerability lookup by IP/port pair.
 
-## About Threat Intel Lookup Plugin
+Intel checks skip non-global addresses unless `DSIEM_INTELPRIVATEIP=true` or `--intel_private_ip` is set. Vulnerability checks include private addresses. Lookup failures are logged and do not prevent the alarm update from being written, though waiting for a lookup can delay that update.
 
-Intel lookup plugin is simply a Rust mod that implements the following trait:
-```rust
-#[async_trait]
-pub trait IntelChecker: Send + Sync {
-    async fn check_ip(&self, ip: IpAddr) -> Result<HashSet<IntelResult>>;
-    fn initialize(&mut self, config: String) -> Result<()>;
-}
-```
+## Configuration
 
-`initialize` will receive its `config` content from the text defined in `configs/intel_*.json` file. This allows user to pass in
-custom data in any format to the plugin to configure its behavior.
+Place `intel_*.json` and `vuln_*.json` files in the frontend's configuration directory. Backends download them at startup. A source is enabled only when its `enabled` field is true and its `plugin` name matches a checker compiled into the binary.
 
-`check_ip` will receive its `ip` parameter from SIEM alarm's source and destination IP addresses. The plugin should then check that address against its sources (e.g. by database lookups, API calls, etc.), and return a `HashSet<IntelResult>` if there's a matching entry for it. If that's the case, Dsiem expects the plugin to also return more detail information in multiple `intel.Result` struct as follows:
+For example:
 
-```rust
-pub struct IntelResult {
-    pub provider: String,
-    pub term: String,
-    pub result: String,
-}
-```
-
-You can see a working example of this in [Wise](https://github.com/defenxor/dsiem-rs/blob/master/server/src/intel/plugins/wise.rs) intel plugin code. The plugin uses `initialize` function to obtain Wise URL to use from the JSON [config file](https://github.com/defenxor/dsiem-rs/blob/master/configs/intel_wise.json).
-
-```JSON
+```json
 {
   "intel_sources": [
     {
@@ -42,9 +24,27 @@ You can see a working example of this in [Wise](https://github.com/defenxor/dsie
 }
 ```
 
-## About Vulnerability Lookup Plugin
+`config` is a string passed to the checker's initializer. Wise parses it as JSON and substitutes `${ip}` into the configured URL. [Nesd](../server/src/vuln/plugins/nesd.rs) also substitutes `${port}` and accepts `allow_low_severity`, which defaults to false. With that default it returns Medium, High, and Critical findings; enabling the option also includes Low findings.
 
-Vulnerability lookup plugin is a Rust mod that implements the following trait:
+The [sample Wise](../configs/intel_wise.json) and [Nesd](../configs/vuln_nessus.json) sources are enabled, but the supplied Compose examples do not provide their services. Disable these sources until those endpoints are deployed and reachable from the backend. The external Nesd service is part of the original Dsiem tools, not this Rust workspace.
+
+Each uncached checker call has a 10-second timeout. The caches are configured in [intel.rs](../server/src/intel.rs) and [vuln.rs](../server/src/vuln.rs) with a 30-minute time-to-live and a 5-minute time-to-idle. Results are reinserted after access, so those settings should not be read as a guarantee that a frequently used entry is refreshed from its source every 30 minutes. `--cache` and `DSIEM_CACHEDURATION` are accepted by the CLI but are not connected to these caches.
+
+The cache keys are IP for intel and IP/port for vulnerabilities; they do not include the checker identity. If you add multiple checkers, account for that shared-cache behavior before relying on independent results from each provider.
+
+## Checker interfaces
+
+An intel checker implements:
+
+```rust
+#[async_trait]
+pub trait IntelChecker: Send + Sync {
+    async fn check_ip(&self, ip: IpAddr) -> Result<HashSet<IntelResult>>;
+    fn initialize(&mut self, config: String) -> Result<()>;
+}
+```
+
+A vulnerability checker implements:
 
 ```rust
 #[async_trait]
@@ -54,69 +54,25 @@ pub trait VulnChecker: Send + Sync {
 }
 ```
 
-The difference with intel plugin is that `check_ip_port` here will receive `ip` and `port` combination instead of just `ip`. Those parameters will also come from alarm data, like source IP and source port, or destination IP and destination port.
+Both result types contain `provider`, `term`, and `result` strings. Return an empty set when there is no match. The `term` identifies the queried address or address/port pair, and `result` supplies the text shown on the alarm.
 
-A working example of this can be found in [Nesd](https://github.com/defenxor/dsiem-rs/blob/master/server/src/vuln/plugins/nesd.rs) plugin code. The plugin uses `initialize` function to obtain Nesd URL to use from the JSON [config file](https://github.com/defenxor/dsiem-rs/blob/master/configs/vuln_nessus.json).
+## Adding a checker
 
-## Developing Intel or Vulnerability Lookup Plugin
+1. [Build the server](building.md#server-binaries) before making changes.
+2. Add a module under `server/src/intel/plugins/` or `server/src/vuln/plugins/`. Use [Wise](../server/src/intel/plugins/wise.rs) or [Nesd](../server/src/vuln/plugins/nesd.rs) as a starting point.
+3. Declare that module in the corresponding `plugins/mod.rs`, construct it with `Checker::new`, and include it in `load_plugins()`'s returned vector. Choose a unique checker name and use that exact name in the JSON `plugin` field.
+4. Add configuration to the frontend, rebuild the backend, and restart it so it downloads and initializes the new source.
+5. Submit events that generate an alarm with an address the source can match. Check the backend logs and the alarm's `intel_hits` or `vulnerabilities` fields.
 
-First you need a working Rust development environment. Just follow the instruction from [here](https://www.rust-lang.org/tools/install) to get started.
+For local testing, run a NATS service reachable from the host and a frontend serving your configuration. The default Compose file does not publish NATS port 4222 to the host, so a host-built backend cannot use it without an override or another network arrangement. The telemetry Compose example does publish that port.
 
-Next clone this repository and test the build process. Example on a Linux or OSX system:
-
-```bash
-git clone https://github.com/defenxor/dsiem-rs
-cd dsiem-rs
-cargo build
-```
-
-You should now have a `dsiem-frontend` and `dsiem-backend` binary in `./target/debug/` directory, and ready to start developing a plugin.
-
-A quick way of creating a new intel plugin by using Wise as template is shown below. The same steps should also apply for making a new vulnerability lookup plugin based on Nesd.
+Use a separate configuration directory beside the test backend executable and a backend node assignment reserved for the test. Do not run two backends for the same directive set against the same event stream unless you intend to produce duplicate alarms. For example, after building and creating `target/debug/configs`:
 
 ```shell
-# prepare the new plugin files based on wise
-cp server/src/intel/plugins/wise.rs server/src/intel/plugins/myintel.rs
-
-# replace wise -> myintel and Wise -> Myintel in the code
-sed -i 's/wise/myintel/g; s/Wise/Myintel/g' server/src/intel/plugins/myintel.rs
-
-# do the same for config file
-cp configs/intel_wise.json configs/intel_myintel.json
-sed -i 's/Wise/Myintel/g; s/wise/myintel/g' configs/intel_myintel.json
-
-# insert entry in intel plugins
-export MODFILE=server/src/intel/plugins/mod.rs
-sed -i '4 i mod myintel;' ${MODFILE}
-sed -i '24 i let myintel = Checker::new(Box::<myintel::Myintel>::default(), "Myintel");' ${MODFILE}
-sed -i 's/vec!\[wise\]/vec!\[wise, myintel\]/' ${MODFILE}
-
-# rebuild dsiem binary to include the new plugin
-cargo build
+cargo run --locked --bin dsiem-backend -- --debug serve \
+  --node dsiem-backend-plugin-test \
+  --frontend http://localhost:8080 \
+  --msq nats://localhost:4222
 ```
 
-After that, you can start dsiem and verify that the plugin is loaded correctly like so:
-
-- Run the docker-compose example environment in a separate terminal:
-
-  ```shell
-  cd deployments/docker && PROMISC_INTERFACE=eth0 docker-compose up
-  ```
-
-- Copy the new plugin config file to the expected location:
-
-  ```shell
-  mkdir -p target/debug/configs && cp configs/intel_myintel.json target/debug/configs/
-  ```
-
-- Run `dsiem-backend` and filter for relevant entries:
-
-  ```shell
-  cargo run --bin dsiem-backend -- serve -n dsiem-backend-0 -f http://localhost:8080 2>&1 | grep intel
-  
-  2024-02-15T02:30:23.280219Z  INFO dsiem::intel: reading "/home/mmta/proj/dsiem-rs/target/debug/configs/intel_myintel.json"
-  2024-02-15T02:30:23.280263Z  INFO dsiem::intel: reading "/home/mmta/proj/dsiem-rs/target/debug/configs/intel_wise.json"
-  2024-02-15T02:30:23.280284Z  INFO dsiem::intel: loaded 2 intel plugins
-  ```
-
-And that's it. From here on you can start editing `server/src/intel/plugins/myintel.rs` to implement your plugin's unique functionality. Don't forget to send PR when you're done ;).
+The frontend must have a corresponding file such as `directives_dsiem-backend-plugin-test_custom.json`, valid assets, and the enabled checker configuration. Point checker URLs at addresses reachable from the process running this backend.

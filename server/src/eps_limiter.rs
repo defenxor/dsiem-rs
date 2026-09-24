@@ -96,7 +96,8 @@ impl EpsLimiter {
         let lim = limiter.write().await;
         lim.set_refill_amount(target_refill)?;
         lim.set_max_tokens(target)?;
-        // set available to the new target if it's less than the current available
+        // set available to the new target if it's less than the current
+        // available
         let target_avail = std::cmp::min(target, lim.available());
         lim.set_available(target_avail)?;
         // workaround for refill and max_tokens cannot be set at the same time
