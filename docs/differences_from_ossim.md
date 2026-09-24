@@ -1,41 +1,37 @@
-# Differences between Dsiem and OSSIM
+# Differences from OSSIM
 
-Aside from the obvious things like UI, listed features, or storage backend, there are also differences between Dsiem and OSSIM that may not be apparent from the start. This page aims to explain such things to the more experienced OSSIM users.
+Dsiem uses an OSSIM-style normalized event model and risk formula. Its runtime and deployment scope differ: the Rust binaries perform correlation, while the surrounding pipeline handles log collection and storage. This repository also includes a browser UI for alarm investigation. See the [project overview](../README.md).
 
-## Handling vulnerability information
+## Vulnerability information
 
-OSSIM maintains a table that maps CVE numbers to Suricata plugin SIDs. When an event matches one of those SIDs, OSSIM will search its vulnerability database for the IP address and port from the event, and the corresponding CVE number from the mapping table. If the search returns a positive result, OSSIM will raise the event reliability score to 10 (max.), which in turn will raise the associated alarm's risk value.
+Dsiem looks up vulnerability information using source and destination IP/port pairs from matched events. It does not map the event's signature to a CVE and use that mapping to change rule reliability. Vulnerability and threat-intelligence matches enrich the alarm without changing its risk score. Analysts must assess whether those results relate to the activity being investigated.
 
-OSSIM can do the above, because deep integration with Suricata and OpenVAS *is* part of its scope. Dsiem can't do it because avoiding dependency with specific tools is part of our design goal. We (or anyone else) may build such integration into Dsiem for a particular deployment, but those changes likely will not be part of the main Dsiem code base.
+The lookup interfaces and current implementations are described in [lookup plugins](ti_vuln_plugins.md).
 
-The downside is, Dsiem can only search vulnerability information sources for an IP and port pair of an event, without a way of verifying whether any of the vulnerability found is indeed relevant to the event. Consequently, positive vulnerability search result in Dsiem is only used to decorate alarms in the same way that threat intelligence information is, i.e. no risk (re)assessment will be made based on their results. So it is up to the analyst to assess the relevance of those listed vulnerabilities to the associated alarm.
+## Rule stages
 
-## Correlation rules structure
+Dsiem directives have a linear sequence of stages. Express alternative detection paths as separate directives. A later stage can refer to values from the first event of an earlier stage.
 
-Correlation rules in OSSIM are modelled like a tree, allowing directive to have multiple paths towards the last stage. From the [documentation](https://www.alienvault.com/documentation/usm-appliance/correlation/about-correlation-rules.htm):
+The `all_rules_always_active` flag lets a backlog retain additional events from completed stages. For example, a directive can use these stages:
 
-> When a correlation directive contains multiple rules, the indentation of the rules reveals the relationship between the rules. Indented rules have an AND relationship while parallel rules have an OR relationship.
-
-In contrast, Dsiem correlation rules are structured like a list that can only progress in one path. This is because in our experience, most use cases are much better off expressed as multiple directives instead of a single directive with many branches. Multiple directives produce more concise alarm's title, and users are less likely to make logical mistakes in formulating them.
-
-There is one common and valid use of multiple path in OSSIM rules though, and that is to capture extra events from the previously completed stages. Typically, this is done to prevent those events from creating another instance of the correlation rules tracker (or backlog in OSSIM/Dsiem parlance) while there's one still active in memory. To support this useful behaviour, Dsiem directive has an extra flag `all_rules_always_active` that can be activated to achieve the same result.
-
-For instance, suppose we want to detect SSH bruteforce attempt, where bruteforce is defined as *5 or more failed logins, followed by a successful login within 5 minutes time frame*. The OSSIM rules for this look something like:
-
+```text
+all_rules_always_active: true
+stage 1: one failed SSH login
+stage 2: four more failed logins, timeout 300 seconds
+stage 3: one successful login, timeout 300 seconds
 ```
-level 1: SSH failed login (occurrence: 1)
-  level 2: SSH failed login (occurrence: 4, timeout: 300s)
-    level 3a: SSH succesful login (occurrence: 1, timeout: 300s)
-    level 3b: SSH Failed login (occurrence: 1000, timeout: 300s)
-```
-The above directive uses rule 3a to implement the main goal, and 3b to capture extra failed login events that may occur before rule 3a's condition is satisfied.
 
-The above rules can be implemented in Dsiem as follows:
+Configure later stages to refer to the source/destination values from stage 1 when those addresses should remain the same. While stage 3 is active, a failed login that does not match stage 3 can still be attached to an earlier matching stage. This can prevent it from starting another backlog. Matching earlier stages does not advance stage 3 or raise risk.
 
-```
-"all_rules_always_active": true
-level 1: SSH failed login (occurrence: 1)
-level 2: SSH failed login (occurrence: 4, timeout=300s)
-level 3: SSH succesful login (occurrence: 1, timeout=300s)
-```
-When the above directive processing reaches level 3, `all_rules_always_active: true` will cause it to keep evaluating new events against level 1 and level 2 rules, thereby preventing subsequent SSH failed login events from creating a new tracker (backlog) instance for the same directive.
+Each timeout applies to its own stage, with the start-time and expiration behavior described in [directive and alarm](directive_and_alarm.md). Two 300-second stages do not enforce one overall five-minute window.
+
+## Migration checks
+
+- Both IPv4 and IPv6 are supported. Define assets explicitly; addresses outside the configured assets have value zero.
+- Risk is an integer. Fractional results are discarded.
+- Include required rule fields such as `port_from`, `port_to`, `protocol`, and `timeout`. Use `ANY` for unrestricted ports.
+- Keep stage numbers consecutive from 1 and references pointed at earlier stages.
+- Enabled directives that fail validation stop backend startup; disabled directives are skipped.
+- Deploy frontend and backend binaries with NATS. There is no standalone mode in this repository.
+
+Use the [command reference](commands.md) and [directive reference](directive_and_alarm.md) when adapting an existing configuration.
