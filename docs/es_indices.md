@@ -1,17 +1,25 @@
-# Dsiem Elasticsearch Indices
+# Elasticsearch indices
 
-Dsiem uses 3 types of elasticsearch index:
+The supplied [Logstash pipeline](../deployments/docker/conf/logstash/conf.d/80_siem.conf) and [Elasticsearch 7 templates](../deployments/docker/conf/logstash/index-template.d/es7) use these names:
 
-- `siem_alarms` : to store [alarms](./directive_and_alarm.md) documents.
-- `siem_events` : to store [normalized events](./dsiem_plugin.md#normalized-event) documents.
-- `siem_alarm_events` : to express many-to-many relationship between the document IDs in `siem_alarms` and `siem_events`.
+| Physical index pattern | Content | Alias |
+| --- | --- | --- |
+| `siem_alarms-YYYY.MM.dd` | Alarm snapshots, including analyst status and tag | `siem_alarms`, `siem_alarms_id_lookup` |
+| `siem_events-YYYY.MM.dd` | Normalized events | None in the supplied template |
+| `siem_alarm_events-YYYY.MM.dd` | Alarm ID, event ID, and stage links | None in the supplied template |
 
-All indices are created by Logstash using a one-per-day index pattern (i.e. `siem_events-YYYY.MM.DD`), with important implementation note describe below.
+The [web UI](../web/src/services/alarm.rs) searches alarms through `siem_alarms` and events through the `siem_events-*` and `siem_alarm_events-*` patterns. A single event can be linked to more than one alarm.
 
-## Implementation Note
+## Updating alarms across daily indices
 
-Documents in `siem_events` and `siem_alarm_events` are meant to be written only once and never have to be updated. This makes them an ideal target for one-per-day index pattern.
+Alarms can receive engine and analyst updates after their creation date. Before writing an engine update, Logstash searches `siem_alarms_id_lookup` for the alarm ID and reads its `perm_index` field. If found, it updates that original index. Otherwise, it writes to today's alarm index and records that index in `perm_index`.
 
-On the other hand, documents in `siem_alarms` are typically updated multiple times. Users may update the alarm status and/or conclusion, and Dsiem event correlation process may increase the alarm risk as more incoming events match the rules condition. A straight forward one-per-day indexing pattern in this case will results in a single alarm ID being stored in multiple indices. This is true for any alarm created prior to an index rollover time and kept being updated after it.
+The update script ignores a lower incoming risk, or an older `updated_time` when risk is equal. It updates correlation data while preserving an existing alarm's analyst-managed `status` and `tag`.
 
-To overcome that, the Logstash configuration for `siem_alarms` uses Elasticsearch filter plugin to find the index that contain the same document ID with the one being indexed. If there is match Logstash will update that index instead of today's index, so the duplicate IDs issue can be avoided. As far as we know, this method requires the least manual administration effort compared to other alternatives, but does cost an extra query to Elasticsearch and an extra field on the `siem_alarms` document for storing the index location (unfortunately Elasticsearch filter plugin can only search fields within the `_source` field, so we can't use the built-in `_index` field here).
+The lookup alias must cover indices containing alarms that may still receive updates. Removing an index from that alias, or a failed lookup, can cause an update to be written into a new daily index instead. The pipeline does not provide a global uniqueness guarantee across indices.
+
+Normalized events and alarm-event links are append-oriented records. The supplied event output uses `event_id` as the Elasticsearch document ID; alarm-event links do not set an explicit document ID.
+
+## Optional direct Filebeat output
+
+The [filebeat-es module](../deployments/docker/conf/filebeat-es/module/dsiem/_meta/docs.asciidoc) is a separate alarm-only mapping. It does not implement the aliases, linked-event storage, or analyst-field preservation described above, and is not enabled by the supplied Compose files.
