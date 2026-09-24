@@ -1,87 +1,42 @@
-# Event Processing Flow
+# Event processing through the logging stack
 
-This section provides details on how event processing works in Dsiem. We'll use the following diagram and <a href="https://github.com/defenxor/dsiem-rs/tree/master/deployments/docker/conf/">Dsiem example Logstash and Filebeat configuration files</a> as reference.
+This page describes the [supplied Logstash and Filebeat configuration](../deployments/docker/conf). For processing inside the Rust binaries, see [Event flow inside the server](event_flow.md).
 
 ```mermaid
 flowchart TB
-
-s1 --> |Incoming Events| l1
-l1 --> |Parsed Logs| e1
-l1 --> |Normalized Events| e1
-l1 --> |Alarms| e1
-l1 --> |Alarm_events| e1
-
-l1 --> |Normalized Events| d1
-
-d1 --> |Alarms| f1
-d1 --> |Alarm_events| f1
-
-f1 --> |Alarms| l1
-f1 --> |Alarm_events| l1
-
-subgraph Sources
- s1[syslog/Filebeat]
-end
-
-subgraph Aggregation Layer
- l1[Logstash]
-end
-
-subgraph Storage Layer
- e1[Elasticsearch]
-end
-
-subgraph SIEM Layer
- d1[Dsiem]
- f1[Filebeat]
-end
-
+    S["Suricata / other log sources"] --> F["Filebeat / syslog input"]
+    F --> L["Logstash: parse and normalize"]
+    L -->|"Original parsed logs"| E["Elasticsearch"]
+    L -->|"Normalized events"| E
+    L -->|"Normalized events over HTTP"| D["Dsiem frontend, NATS, backend"]
+    D -->|"Alarm snapshots and event links"| O["Local JSON-lines files"]
+    O --> B["Filebeat"]
+    B --> A["Logstash: transform and upsert alarms"]
+    A --> E
 ```
 
-The diagram shows how logstash plays a central role in the event flow. It is therefore important to get an idea of how it works first before diving further. The basic things to understand are:
+## Original and normalized events
 
-  * Logstash processing pipeline progresses from input ⟶ filter ⟶ output. More detail on this can be found on the Logstash documentation on <a href="https://www.elastic.co/guide/en/logstash/current/pipeline.html">how it works</a>.
+The sample Filebeat configuration labels Suricata records with `application: suricata`. Logstash's [input](../deployments/docker/conf/logstash/conf.d/00_input.conf) receives them, and [50_suricata.conf](../deployments/docker/conf/logstash/conf.d/50_suricata.conf) prepares their fields.
 
-  * Logstash <a href="https://discuss.elastic.co/t/logstash-priority-order-when-using-multiple-config-files/80507">reads configuration files in alphabetical order</a>. Dsiem <a href="https://github.com/defenxor/dsiem-rs/tree/master/deployments/docker/conf/logstash/conf.d">example configuration files</a> use this fact to construct the appropriate pipeline.
+[70_siem-plugin-suricata.conf](../deployments/docker/conf/logstash/conf.d/70_siem-plugin-suricata.conf) clones matching alert records and converts the copies into [normalized events](dsiem_plugin.md#normalized-event). It labels the copies with `[@metadata][siem_data_type] = normalizedEvent`. Original records go through [99_output.conf](../deployments/docker/conf/logstash/conf.d/99_output.conf) into `suricata-*`.
 
-With that in mind, let's break down how event flows throughout the system.
+[80_siem.conf](../deployments/docker/conf/logstash/conf.d/80_siem.conf) assigns each normalized event a UUID in `event_id`, overwriting any existing value. It sends that event both to Dsiem's `/events` endpoint and to `siem_events-YYYY.MM.dd`, using the same event ID. The stored normalized event is the evidence later retrieved by the UI.
 
-## Processing Initial Events
+The sample uses one Logstash pipeline for these outputs. A separate output destination does not by itself isolate the main ingestion path from a blocked Dsiem output. Separate the delivery paths if that isolation is required.
 
-First, logs are received by Syslog/Filebeat, and are sent (`Incoming Events` in the diagram) to Logstash with a unique identifier. On the example config file, Filebeat adds field <a href="https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/filebeat/filebeat.yml#L33">`{application: suricata}`</a> to the event for this purpose.
+## Correlation output
 
+Dsiem correlates normalized events against configured directives. When a stage completes and integer risk becomes nonzero, it writes an alarm snapshot to `logs/siem_alarms.json`. Later stage completions and expiration can write updates. Matched event links are written separately to `logs/siem_alarm_events.json`, including before an alarm reaches nonzero risk. See [Directive and alarm](directive_and_alarm.md).
 
-Logstash receives the event through <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/00_input.conf">00_input.conf</a>, and process it separately from other events in file <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/50_suricata.conf"> 50_suricata.conf</a> based on the presence of `[application] == suricata` field.
+Filebeat reads both files from the backend's logs volume, attaching `application: siem` and `siem_data_type: alarms` or `alarm_events`. Its [sample configuration](../deployments/docker/conf/filebeat/filebeat.yml) uses `tail_files: true` for these inputs. With no existing registry position, that starts reading at the end of a discovered file, so older output may not be imported.
 
-After that, still based on the same unique identifier, the event is then processed by <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/70_siem-plugin-suricata.conf">70_siem-plugin-suricata.conf</a>, followed by <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/99_output.conf">99_output.conf</a>.
+## Storing and updating alarms
 
-`70_siem-plugin-suricata.conf` *clone* the event, and remove the `[application] == suricata` identifier from the clone so that it will not be processed by `99_output.conf`.
+Logstash converts `created_time` and `update_time` into `timestamp` and `updated_time`, stores event links in `siem_alarm_events-*`, and upserts alarms into daily `siem_alarms-*` indices. The `siem_alarms` alias lets the UI search across those indices.
 
-`99_output.conf` in turn process the original event and send it to Elasticsearch (`Parsed Logs` in the diagram) to be stored in a device-specific index, which in this case `suricata-*`. At this point the processing flow of the initial event is complete.
+The alarm lookup uses `siem_alarms_id_lookup` and `perm_index` to direct later updates back to the original index. The update script preserves analyst status and tag, rejects lower-risk updates, and rejects older updates at equal risk. See [Elasticsearch indices](es_indices.md) for the lookup boundaries.
 
-## Processing Cloned ⟶ Normalized Events
+## Adding sources
 
-As for the cloned event, `70_siem-plugin-suricata.conf` converts it into a `Normalized Event`. This is a standardized format that has a set of common fields shared by all incoming events such as Source IP, Destination IP, Title, and others. The full list of fields of a `Normalized Event` is shown [here](./dsiem_plugin.md#normalized-event).
-
-In addition to converting the cloned event to a normalized event format, `70_siem-plugin-suricata.conf` also adds field `"[@metadata][siem_data_type]" => "normalizedEvent"` to become the new event identifier.
-
-the cloned event is then picked up based on that new identifier by <a href="https://github.com/defenxor/dsiem-rs/blob/master/deployments/docker/conf/logstash/conf.d/80_siem.conf">80_siem.conf</a>. In there, a copy of the cloned event is sent to Elasticsearch for final storage in `siem_events-*` index, and another copy is sent to Dsiem for event correlation. At this point, the processing flow of the cloned event is complete.
-
-## Generating Alarms
-
-Dsiem performs event correlation on all incoming `Normalized Event` based on its configured directive rules. Dsiem generates `Alarm` if the directive rule condition are met by a series of incoming events within a given period of time. Refer to [Directive and Alarm](./directive_and_alarm.md) doc for more detail on how alarms are generated. 
-
-Dsiem stores generated `Alarm` and subsequent updates to it in a log file which is then harvested by a local Filebeat. In addition to the alarm itself, Dsiem also stores `Alarm_events` records that link each alarm to the `Normalized Events` that trigger its creation. Just like `Alarm`, those records are also harvested by the local Filebeat instance.
-
-## Processing Alarms
-
-Dsiem's Filebeat sends both `Alarm` and `Alarm_events` record back to Logstash. Filebeat adds extra field `{application: siem, siem_data_type: alarms}` and `{application: siem, siem_data_type: alarm_events}` to uniquely identify each of them (shown <a href="https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/filebeat/filebeat.yml#L6">here</a> and <a href="https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/filebeat/filebeat.yml#L15">here</a>).
-
-Upon receiving those, Logstash config file <a href="https://github.com/defenxor/dsiem-rs/blob/b37687612f0afacb6e86c41356931d7aed3d88e5/deployments/docker/conf/logstash/conf.d/80_siem.conf#L40">80_siem.conf</a> then perform minor clean-up and formatting, before sending them to the final storage destination, namely elasticsearch index `siem_alarm_events-*` and `siem_alarms`.
-
-## Implications
-For practical purposes, the processing flow described above means that the following guide should be followed:
-
-* All SIEM plugins (i.e. output of `dpluger` tool) file name should start with a number that is less than 80, for example `70_siem-plugin-suricata.conf`. This is to ensure that they will all be read before `80_siem.conf`.
-
-* All log sources filters must be put in a file whose name starts with a number that is less than all the SIEM plugins name. For example if the SIEM plugins names start with 70_\*, then the log source filters should start with 60_\* or 50_\* (like `50_suricata.conf` in the above example). This ensures that they will all be read before the SIEM plugins that expect to clone their results.
+Keep source parsing before normalization in the file ordering, and normalization before the shared SIEM processing. The sample uses `50_*` for source parsing, `70_*` for normalization plugins, and `80_siem.conf` for shared delivery and alarm handling. Adapt these filters together when adding a source; a parsed log that never becomes a valid normalized event will not reach correlation through this pipeline.
